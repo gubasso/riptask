@@ -1,4 +1,4 @@
-use crate::error::TskError;
+use crate::error::RiptskError;
 use std::process::Command;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -9,10 +9,10 @@ pub struct TriageSuggestion {
 }
 
 pub trait AiBackend {
-    fn generate_body(&self, context: &str) -> Result<String, TskError>;
-    fn triage(&self, issue_context: &str) -> Result<TriageSuggestion, TskError>;
-    fn summarize(&self, issues: &str) -> Result<String, TskError>;
-    fn ask(&self, question: &str, context: &str) -> Result<String, TskError>;
+    fn generate_body(&self, context: &str) -> Result<String, RiptskError>;
+    fn triage(&self, issue_context: &str) -> Result<TriageSuggestion, RiptskError>;
+    fn summarize(&self, issues: &str) -> Result<String, RiptskError>;
+    fn ask(&self, question: &str, context: &str) -> Result<String, RiptskError>;
 }
 
 #[derive(Debug, Clone)]
@@ -22,7 +22,7 @@ pub struct CommandAiBackend {
 }
 
 impl AiBackend for CommandAiBackend {
-    fn generate_body(&self, context: &str) -> Result<String, TskError> {
+    fn generate_body(&self, context: &str) -> Result<String, RiptskError> {
         run_ai(
             &self.binary,
             &self.model,
@@ -31,15 +31,16 @@ impl AiBackend for CommandAiBackend {
         )
     }
 
-    fn triage(&self, issue_context: &str) -> Result<TriageSuggestion, TskError> {
+    fn triage(&self, issue_context: &str) -> Result<TriageSuggestion, RiptskError> {
         let output = run_ai(
             &self.binary,
             &self.model,
             "Return JSON with keys state, priority, labels.",
             issue_context,
         )?;
-        let parsed: serde_json::Value = serde_json::from_str(&output)
-            .map_err(|error| TskError::General(format!("invalid AI triage response: {error}")))?;
+        let parsed: serde_json::Value = serde_json::from_str(&output).map_err(|error| {
+            RiptskError::General(format!("invalid AI triage response: {error}"))
+        })?;
         Ok(TriageSuggestion {
             state: parsed
                 .get("state")
@@ -62,7 +63,7 @@ impl AiBackend for CommandAiBackend {
         })
     }
 
-    fn summarize(&self, issues: &str) -> Result<String, TskError> {
+    fn summarize(&self, issues: &str) -> Result<String, RiptskError> {
         run_ai(
             &self.binary,
             &self.model,
@@ -71,7 +72,7 @@ impl AiBackend for CommandAiBackend {
         )
     }
 
-    fn ask(&self, question: &str, context: &str) -> Result<String, TskError> {
+    fn ask(&self, question: &str, context: &str) -> Result<String, RiptskError> {
         run_ai(
             &self.binary,
             &self.model,
@@ -81,7 +82,7 @@ impl AiBackend for CommandAiBackend {
     }
 }
 
-fn run_ai(binary: &str, model: &str, system: &str, input: &str) -> Result<String, TskError> {
+fn run_ai(binary: &str, model: &str, system: &str, input: &str) -> Result<String, RiptskError> {
     let output = Command::new(binary)
         .arg("--system")
         .arg(system)
@@ -89,10 +90,12 @@ fn run_ai(binary: &str, model: &str, system: &str, input: &str) -> Result<String
         .arg(model)
         .arg(input)
         .output()
-        .map_err(|error| TskError::General(format!("failed to invoke {binary}: {error}")))?;
+        .map_err(|error| RiptskError::General(format!("failed to invoke {binary}: {error}")))?;
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
     } else {
-        Err(TskError::General(format!("{binary} exited unsuccessfully")))
+        Err(RiptskError::General(format!(
+            "{binary} exited unsuccessfully"
+        )))
     }
 }

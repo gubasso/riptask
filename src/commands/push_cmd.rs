@@ -1,7 +1,7 @@
 use crate::cli::PushArgs;
 use crate::config::{Config, RemoteConfig, RemoteType, load_config};
 use crate::domain::remote_state::remote_state_key;
-use crate::error::TskError;
+use crate::error::RiptskError;
 use crate::paths::AppPaths;
 use crate::services::auto_commit::maybe_auto_commit;
 use crate::services::remote_mapping::{
@@ -10,12 +10,12 @@ use crate::services::remote_mapping::{
 };
 use crate::storage::{cache, frontmatter, issue_store};
 
-pub fn run(paths: &AppPaths, args: PushArgs) -> Result<(), TskError> {
+pub fn run(paths: &AppPaths, args: PushArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path()).map_err(TskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
     let remote = resolve_remote(&config, &args)?;
     if !matches!(remote.remote_type, RemoteType::Github | RemoteType::Gitlab) {
-        return Err(TskError::Config(format!(
+        return Err(RiptskError::Config(format!(
             "push target must be github or gitlab: {}",
             remote.name
         )));
@@ -25,12 +25,12 @@ pub fn run(paths: &AppPaths, args: PushArgs) -> Result<(), TskError> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-        .map_err(|error| TskError::Other(error.into()))?;
-    let mut remote_state = cache::load_remote_state(paths).map_err(TskError::Other)?;
+        .map_err(|error| RiptskError::Other(error.into()))?;
+    let mut remote_state = cache::load_remote_state(paths).map_err(RiptskError::Other)?;
     let mut changed_paths = Vec::new();
 
     for path in collect_push_paths(paths, remote, &args)? {
-        let issue = frontmatter::load_issue(path.as_std_path()).map_err(TskError::Other)?;
+        let issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
         let issue_id = match remote.remote_type {
             RemoteType::Github => issue
                 .frontmatter
@@ -78,7 +78,7 @@ pub fn run(paths: &AppPaths, args: PushArgs) -> Result<(), TskError> {
 
         let mut updated = issue;
         update_issue_from_remote(&mut updated, &record, remote);
-        frontmatter::save_issue(path.as_std_path(), &updated).map_err(TskError::Other)?;
+        frontmatter::save_issue(path.as_std_path(), &updated).map_err(RiptskError::Other)?;
         changed_paths.push(path.clone());
         remote_state.insert(
             remote_state_key(
@@ -94,7 +94,7 @@ pub fn run(paths: &AppPaths, args: PushArgs) -> Result<(), TskError> {
         );
     }
 
-    cache::save_remote_state(paths, &remote_state).map_err(TskError::Other)?;
+    cache::save_remote_state(paths, &remote_state).map_err(RiptskError::Other)?;
     let mut file_refs = changed_paths
         .iter()
         .map(|path| path.as_std_path())
@@ -104,20 +104,23 @@ pub fn run(paths: &AppPaths, args: PushArgs) -> Result<(), TskError> {
     maybe_auto_commit(
         &config,
         &crate::adapters::git::CliGit,
-        paths.tsk_repo.as_std_path(),
-        &format!("tsk: push local issues to {}", remote.name),
+        paths.riptsk_repo.as_std_path(),
+        &format!("riptsk: push local issues to {}", remote.name),
         &file_refs,
     )?;
     Ok(())
 }
 
-fn resolve_remote<'a>(config: &'a Config, args: &PushArgs) -> Result<&'a RemoteConfig, TskError> {
+fn resolve_remote<'a>(
+    config: &'a Config,
+    args: &PushArgs,
+) -> Result<&'a RemoteConfig, RiptskError> {
     if let Some(project) = args.project.as_deref() {
         return config
             .remotes
             .iter()
             .find(|remote| remote.name == project)
-            .ok_or_else(|| TskError::Unregistered(project.to_owned()));
+            .ok_or_else(|| RiptskError::Unregistered(project.to_owned()));
     }
     let cwd = camino::Utf8PathBuf::from(
         std::env::current_dir()
@@ -130,20 +133,20 @@ fn resolve_remote<'a>(config: &'a Config, args: &PushArgs) -> Result<&'a RemoteC
             .remotes
             .iter()
             .find(|candidate| candidate.name == remote.name)
-            .ok_or_else(|| TskError::Unregistered(remote.name));
+            .ok_or_else(|| RiptskError::Unregistered(remote.name));
     }
     config
         .remotes
         .iter()
         .find(|remote| matches!(remote.remote_type, RemoteType::Github | RemoteType::Gitlab))
-        .ok_or_else(|| TskError::Config("could not determine push target".into()))
+        .ok_or_else(|| RiptskError::Config("could not determine push target".into()))
 }
 
 fn collect_push_paths(
     paths: &AppPaths,
     remote: &RemoteConfig,
     args: &PushArgs,
-) -> Result<Vec<camino::Utf8PathBuf>, TskError> {
+) -> Result<Vec<camino::Utf8PathBuf>, RiptskError> {
     if !args.ids.is_empty() {
         return args
             .ids
@@ -154,7 +157,7 @@ fn collect_push_paths(
 
     let mut paths_to_push = Vec::new();
     for path in issue_store::list_issues(paths)? {
-        let issue = frontmatter::load_issue(path.as_std_path()).map_err(TskError::Other)?;
+        let issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
         if issue.frontmatter.project != remote.name {
             continue;
         }

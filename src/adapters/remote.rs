@@ -1,4 +1,4 @@
-use crate::error::TskError;
+use crate::error::RiptskError;
 use async_trait::async_trait;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -25,26 +25,26 @@ pub struct RemoteIssueUpsert {
 
 #[async_trait]
 pub trait RemoteProvider: Send + Sync {
-    async fn list_issues(&self, repo: &str) -> Result<Vec<RemoteIssueRecord>, TskError>;
+    async fn list_issues(&self, repo: &str) -> Result<Vec<RemoteIssueRecord>, RiptskError>;
     async fn create_issue(
         &self,
         repo: &str,
         issue: &RemoteIssueUpsert,
-    ) -> Result<RemoteIssueRecord, TskError>;
+    ) -> Result<RemoteIssueRecord, RiptskError>;
     async fn update_issue(
         &self,
         repo: &str,
         issue_id: u64,
         issue: &RemoteIssueUpsert,
-    ) -> Result<RemoteIssueRecord, TskError>;
-    async fn close_issue(&self, repo: &str, issue_id: u64) -> Result<(), TskError>;
-    async fn reopen_issue(&self, repo: &str, issue_id: u64) -> Result<(), TskError>;
+    ) -> Result<RemoteIssueRecord, RiptskError>;
+    async fn close_issue(&self, repo: &str, issue_id: u64) -> Result<(), RiptskError>;
+    async fn reopen_issue(&self, repo: &str, issue_id: u64) -> Result<(), RiptskError>;
     async fn sync_labels(
         &self,
         repo: &str,
         issue_id: u64,
         labels: &[String],
-    ) -> Result<(), TskError>;
+    ) -> Result<(), RiptskError>;
     async fn create_pr(
         &self,
         repo: &str,
@@ -52,6 +52,6 @@ pub trait RemoteProvider: Send + Sync {
         base: &str,
         title: &str,
         body: &str,
-    ) -> Result<String, TskError>;
-    async fn default_branch(&self, repo: &str) -> Result<String, TskError>;
+    ) -> Result<String, RiptskError>;
+    async fn default_branch(&self, repo: &str) -> Result<String, RiptskError>;
 }

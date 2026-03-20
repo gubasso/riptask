@@ -1,7 +1,7 @@
 use crate::cli::{LsArgs, NewArgs};
 use crate::config::{Config, RemoteType, parse_priority, parse_state};
 use crate::domain::issue::{IssueDocument, IssueFrontmatter, IssueState, Priority};
-use crate::error::TskError;
+use crate::error::RiptskError;
 use crate::paths::AppPaths;
 use crate::services::issue_ids;
 use crate::services::templates::TemplateService;
@@ -44,11 +44,11 @@ impl<'a> IssueService<'a> {
         Self { paths, config }
     }
 
-    pub fn prepare_issue_draft(&self, args: NewArgs) -> Result<IssueDraft, TskError> {
-        self.paths.ensure_repo_dirs().map_err(TskError::Other)?;
+    pub fn prepare_issue_draft(&self, args: NewArgs) -> Result<IssueDraft, RiptskError> {
+        self.paths.ensure_repo_dirs().map_err(RiptskError::Other)?;
         let title = args
             .title
-            .ok_or_else(|| TskError::General("missing title".into()))?;
+            .ok_or_else(|| RiptskError::General("missing title".into()))?;
         let project = if let Some(p) = args.project {
             p
         } else {
@@ -69,7 +69,7 @@ impl<'a> IssueService<'a> {
         let template_service = TemplateService::new(self.paths, self.config);
         let template = template_service
             .load(&template_name)
-            .map_err(TskError::Other)?;
+            .map_err(RiptskError::Other)?;
         let board = args
             .board
             .or_else(|| self.project_default_board(&project))
@@ -78,18 +78,18 @@ impl<'a> IssueService<'a> {
             .state
             .map(|value| parse_state(&value))
             .transpose()
-            .map_err(TskError::Other)?
+            .map_err(RiptskError::Other)?
             .or(template.default_state)
             .unwrap_or_else(|| self.config.defaults.state.clone());
         let priority = args
             .priority
             .map(|value| parse_priority(&value))
             .transpose()
-            .map_err(TskError::Other)?
+            .map_err(RiptskError::Other)?
             .or(template.default_priority)
             .unwrap_or_else(|| self.config.defaults.priority.clone());
         self.validate_state_for_board(&board, &state)
-            .map_err(TskError::Other)?;
+            .map_err(RiptskError::Other)?;
         Ok(IssueDraft {
             title,
             project: project.clone(),
@@ -102,30 +102,30 @@ impl<'a> IssueService<'a> {
             body: template.body,
             order: self
                 .next_order_for_lane(&board, state.as_str())
-                .map_err(TskError::Other)?,
+                .map_err(RiptskError::Other)?,
             remote_type: self.project_remote_type(&project),
             repo: self.project_repo(&project),
         })
     }
 
-    pub fn persist_issue(&self, document: &IssueDocument) -> Result<(), TskError> {
+    pub fn persist_issue(&self, document: &IssueDocument) -> Result<(), RiptskError> {
         let path = self
             .paths
             .issues_dir()
             .join(format!("{}.md", document.frontmatter.id));
-        frontmatter::save_issue(path.as_std_path(), document).map_err(TskError::Other)?;
+        frontmatter::save_issue(path.as_std_path(), document).map_err(RiptskError::Other)?;
         ViewBuilder::new(self.paths, self.config)
             .regenerate_all(None)
-            .map_err(TskError::Other)
+            .map_err(RiptskError::Other)
     }
 
     pub fn build_local_issue_document(
         &self,
         draft: &IssueDraft,
-    ) -> Result<IssueDocument, TskError> {
+    ) -> Result<IssueDocument, RiptskError> {
         let scope = issue_ids::derive_scope(&RemoteType::Local, None, &draft.project);
         let sequence =
-            issue_ids::next_local_sequence(self.paths, &scope).map_err(TskError::Other)?;
+            issue_ids::next_local_sequence(self.paths, &scope).map_err(RiptskError::Other)?;
         let id = issue_ids::format_id(&scope, sequence);
         Ok(IssueDocument {
             frontmatter: IssueFrontmatter {
@@ -159,56 +159,57 @@ impl<'a> IssueService<'a> {
         })
     }
 
-    pub fn edit_issue(&self, id: Option<String>) -> Result<(), TskError> {
-        let id = id.ok_or_else(|| TskError::General("<ID> required".into()))?;
+    pub fn edit_issue(&self, id: Option<String>) -> Result<(), RiptskError> {
+        let id = id.ok_or_else(|| RiptskError::General("<ID> required".into()))?;
         let path = issue_store::find_issue(self.paths, &id)?;
         let before = fs::metadata(&path)?.modified()?;
         let editor = std::env::var("EDITOR")
-            .map_err(|_| TskError::General("set $EDITOR to edit issues".into()))?;
+            .map_err(|_| RiptskError::General("set $EDITOR to edit issues".into()))?;
         let parts: Vec<&str> = editor.split_whitespace().collect();
         let (program, editor_args) = parts
             .split_first()
-            .ok_or_else(|| TskError::General("empty $EDITOR".into()))?;
+            .ok_or_else(|| RiptskError::General("empty $EDITOR".into()))?;
         let status = Command::new(program)
             .args(editor_args)
             .arg(&path)
             .status()
             .context("failed to launch editor")
-            .map_err(TskError::Other)?;
+            .map_err(RiptskError::Other)?;
         if !status.success() {
             return Ok(());
         }
         let after = fs::metadata(&path)?.modified()?;
         if after > before {
-            let mut issue = frontmatter::load_issue(path.as_std_path()).map_err(TskError::Other)?;
+            let mut issue =
+                frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
             issue.frontmatter.local_updated_at = now_utc();
-            frontmatter::save_issue(path.as_std_path(), &issue).map_err(TskError::Other)?;
+            frontmatter::save_issue(path.as_std_path(), &issue).map_err(RiptskError::Other)?;
             ViewBuilder::new(self.paths, self.config)
                 .regenerate_all(None)
-                .map_err(TskError::Other)?;
+                .map_err(RiptskError::Other)?;
         }
         Ok(())
     }
 
-    pub fn move_issue(&self, id: &str, state: &str) -> Result<(), TskError> {
+    pub fn move_issue(&self, id: &str, state: &str) -> Result<(), RiptskError> {
         let path = issue_store::find_issue(self.paths, id)?;
-        let mut issue = frontmatter::load_issue(path.as_std_path()).map_err(TskError::Other)?;
-        let state = parse_state(state).map_err(TskError::Other)?;
+        let mut issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
+        let state = parse_state(state).map_err(RiptskError::Other)?;
         self.validate_state_for_board(&issue.frontmatter.board, &state)
-            .map_err(TskError::Other)?;
+            .map_err(RiptskError::Other)?;
         issue.frontmatter.state = state.clone();
         issue.frontmatter.order = Some(
             self.next_order_for_lane(&issue.frontmatter.board, state.as_str())
-                .map_err(TskError::Other)?,
+                .map_err(RiptskError::Other)?,
         );
         issue.frontmatter.local_updated_at = now_utc();
-        frontmatter::save_issue(path.as_std_path(), &issue).map_err(TskError::Other)?;
+        frontmatter::save_issue(path.as_std_path(), &issue).map_err(RiptskError::Other)?;
         ViewBuilder::new(self.paths, self.config)
             .regenerate_all(None)
-            .map_err(TskError::Other)
+            .map_err(RiptskError::Other)
     }
 
-    pub fn remove_issue(&self, id: &str) -> Result<(), TskError> {
+    pub fn remove_issue(&self, id: &str) -> Result<(), RiptskError> {
         let path = issue_store::find_issue(self.paths, id)?;
         fs::remove_file(path)?;
         let remote = self.paths.issues_dir().join(format!("{id}.REMOTE.md"));
@@ -217,17 +218,18 @@ impl<'a> IssueService<'a> {
         }
         ViewBuilder::new(self.paths, self.config)
             .regenerate_all(None)
-            .map_err(TskError::Other)
+            .map_err(RiptskError::Other)
     }
 
     pub fn list_matching(
         &self,
         args: &LsArgs,
         scope: &crate::scope::ProjectScope,
-    ) -> Result<Vec<IssueDocument>, TskError> {
+    ) -> Result<Vec<IssueDocument>, RiptskError> {
         let mut documents = Vec::new();
         for path in issue_store::list_issues(self.paths)? {
-            let document = frontmatter::load_issue(path.as_std_path()).map_err(TskError::Other)?;
+            let document =
+                frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
             if !scope.matches(&document.frontmatter.project) {
                 continue;
             }
@@ -253,7 +255,7 @@ impl<'a> IssueService<'a> {
     pub fn next_order_for_lane(&self, board: &str, state: &str) -> Result<u32> {
         let mut max = 0u32;
         for path in issue_store::list_issues(self.paths)? {
-            let issue = frontmatter::load_issue(path.as_std_path()).map_err(TskError::Other)?;
+            let issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
             if issue.frontmatter.board == board && issue.frontmatter.state.as_str() == state {
                 max = max.max(issue.frontmatter.order.unwrap_or(0));
             }
@@ -261,16 +263,20 @@ impl<'a> IssueService<'a> {
         Ok(max + 1)
     }
 
-    pub fn shift_issue_order(&self, id: &str, direction: ShiftDirection) -> Result<(), TskError> {
+    pub fn shift_issue_order(
+        &self,
+        id: &str,
+        direction: ShiftDirection,
+    ) -> Result<(), RiptskError> {
         let target_path = issue_store::find_issue(self.paths, id)?;
         let target_issue =
-            frontmatter::load_issue(target_path.as_std_path()).map_err(TskError::Other)?;
+            frontmatter::load_issue(target_path.as_std_path()).map_err(RiptskError::Other)?;
         let mut lane = self.load_lane(
             &target_issue.frontmatter.board,
             &target_issue.frontmatter.state,
         )?;
         let Some(index) = lane.iter().position(|(issue_id, _)| issue_id == id) else {
-            return Err(TskError::NotFound(id.to_owned()));
+            return Err(RiptskError::NotFound(id.to_owned()));
         };
         let swap_index = match direction {
             ShiftDirection::Up if index > 0 => index - 1,
@@ -287,7 +293,7 @@ impl<'a> IssueService<'a> {
         board: &str,
         state: &IssueState,
         ordered_ids: &[String],
-    ) -> Result<(), TskError> {
+    ) -> Result<(), RiptskError> {
         let lane = self.load_lane(board, state)?;
         if lane.is_empty() || ordered_ids.is_empty() {
             return Ok(());
@@ -299,7 +305,7 @@ impl<'a> IssueService<'a> {
             .collect::<std::collections::HashSet<_>>();
         for id in ordered_ids {
             if !known_ids.contains(id.as_str()) {
-                return Err(TskError::NotFound(id.clone()));
+                return Err(RiptskError::NotFound(id.clone()));
             }
         }
 
@@ -369,10 +375,10 @@ impl<'a> IssueService<'a> {
         &self,
         board: &str,
         state: &IssueState,
-    ) -> Result<Vec<(String, camino::Utf8PathBuf)>, TskError> {
+    ) -> Result<Vec<(String, camino::Utf8PathBuf)>, RiptskError> {
         let mut lane = Vec::new();
         for path in issue_store::list_issues(self.paths)? {
-            let issue = frontmatter::load_issue(path.as_std_path()).map_err(TskError::Other)?;
+            let issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
             if issue.frontmatter.board == board && issue.frontmatter.state == *state {
                 lane.push((issue.frontmatter.id, path));
             }
@@ -391,16 +397,17 @@ impl<'a> IssueService<'a> {
         Ok(lane)
     }
 
-    fn persist_lane(&self, lane: &[(String, camino::Utf8PathBuf)]) -> Result<(), TskError> {
+    fn persist_lane(&self, lane: &[(String, camino::Utf8PathBuf)]) -> Result<(), RiptskError> {
         for (index, (_, path)) in lane.iter().enumerate() {
-            let mut issue = frontmatter::load_issue(path.as_std_path()).map_err(TskError::Other)?;
+            let mut issue =
+                frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
             issue.frontmatter.order = Some((index + 1) as u32);
             issue.frontmatter.local_updated_at = now_utc();
-            frontmatter::save_issue(path.as_std_path(), &issue).map_err(TskError::Other)?;
+            frontmatter::save_issue(path.as_std_path(), &issue).map_err(RiptskError::Other)?;
         }
         ViewBuilder::new(self.paths, self.config)
             .regenerate_all(None)
-            .map_err(TskError::Other)?;
+            .map_err(RiptskError::Other)?;
         Ok(())
     }
 }
@@ -501,12 +508,12 @@ mod tests {
         std::fs::create_dir_all(repo.join("issues")).expect("issues dir");
         std::fs::create_dir_all(repo.join("templates")).expect("templates dir");
         std::fs::write(
-            repo.join("tsk.yaml"),
-            include_str!("../../tests/fixtures/tsk.yaml"),
+            repo.join("riptsk.yaml"),
+            include_str!("../../tests/fixtures/riptsk.yaml"),
         )
         .expect("config");
         let paths = AppPaths {
-            tsk_repo: repo.to_string_lossy().as_ref().into(),
+            riptsk_repo: repo.to_string_lossy().as_ref().into(),
             cache_root: cache.to_string_lossy().as_ref().into(),
         };
         let config = load_config(paths.config_path().as_std_path()).expect("config");

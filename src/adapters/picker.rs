@@ -1,5 +1,5 @@
 use crate::domain::issue::{IssueDocument, Priority};
-use crate::error::TskError;
+use crate::error::RiptskError;
 use std::process::{Command, Stdio};
 
 pub trait Picker {
@@ -7,9 +7,10 @@ pub trait Picker {
         &self,
         issues: &[IssueDocument],
         prompt: &str,
-    ) -> Result<Option<String>, TskError>;
-    fn pick_many(&self, issues: &[IssueDocument], prompt: &str) -> Result<Vec<String>, TskError>;
-    fn pick_enum(&self, choices: &[String], prompt: &str) -> Result<Option<String>, TskError>;
+    ) -> Result<Option<String>, RiptskError>;
+    fn pick_many(&self, issues: &[IssueDocument], prompt: &str)
+    -> Result<Vec<String>, RiptskError>;
+    fn pick_enum(&self, choices: &[String], prompt: &str) -> Result<Option<String>, RiptskError>;
 }
 
 #[derive(Debug, Clone, Default)]
@@ -22,7 +23,7 @@ impl Picker for FzfPicker {
         &self,
         issues: &[IssueDocument],
         prompt: &str,
-    ) -> Result<Option<String>, TskError> {
+    ) -> Result<Option<String>, RiptskError> {
         let input = issues
             .iter()
             .map(format_issue_picker_line)
@@ -31,7 +32,11 @@ impl Picker for FzfPicker {
         run_fzf(&input, prompt, self.fzf_opts.as_deref())
     }
 
-    fn pick_many(&self, issues: &[IssueDocument], prompt: &str) -> Result<Vec<String>, TskError> {
+    fn pick_many(
+        &self,
+        issues: &[IssueDocument],
+        prompt: &str,
+    ) -> Result<Vec<String>, RiptskError> {
         let input = issues
             .iter()
             .map(format_issue_picker_line)
@@ -47,7 +52,7 @@ impl Picker for FzfPicker {
             .collect())
     }
 
-    fn pick_enum(&self, choices: &[String], prompt: &str) -> Result<Option<String>, TskError> {
+    fn pick_enum(&self, choices: &[String], prompt: &str) -> Result<Option<String>, RiptskError> {
         let input = choices.join("\n");
         run_fzf(&input, prompt, self.fzf_opts.as_deref())
     }
@@ -73,7 +78,7 @@ fn run_fzf(
     input: &str,
     prompt: &str,
     extra_opts: Option<&str>,
-) -> Result<Option<String>, TskError> {
+) -> Result<Option<String>, RiptskError> {
     run_fzf_with_args(input, prompt, extra_opts, &[])
 }
 
@@ -81,7 +86,7 @@ fn run_fzf_multi(
     input: &str,
     prompt: &str,
     extra_opts: Option<&str>,
-) -> Result<Option<String>, TskError> {
+) -> Result<Option<String>, RiptskError> {
     run_fzf_with_args(input, prompt, extra_opts, &["--multi"])
 }
 
@@ -90,7 +95,7 @@ fn run_fzf_with_args(
     prompt: &str,
     extra_opts: Option<&str>,
     args: &[&str],
-) -> Result<Option<String>, TskError> {
+) -> Result<Option<String>, RiptskError> {
     let mut command = Command::new("fzf");
     if let Some(extra_opts) = extra_opts {
         for option in extra_opts.split_whitespace() {
@@ -101,7 +106,7 @@ fn run_fzf_with_args(
     command.args(args);
     command.stdin(Stdio::piped()).stdout(Stdio::piped());
     let mut child = command.spawn().map_err(|_| {
-        TskError::General("<ID> required (install fzf for interactive selection)".into())
+        RiptskError::General("<ID> required (install fzf for interactive selection)".into())
     })?;
     if let Some(stdin) = child.stdin.as_mut() {
         use std::io::Write;

@@ -1,11 +1,14 @@
 use crate::adapters::prompts::PromptBackend;
 use crate::config::{Config, RemoteConfig, RemoteType};
-use crate::error::TskError;
+use crate::error::RiptskError;
 use anyhow::Context;
 use camino::Utf8Path;
 use std::process::Command;
 
-pub fn detect_from_cwd(cwd: &Utf8Path, config: &Config) -> Result<Option<RemoteConfig>, TskError> {
+pub fn detect_from_cwd(
+    cwd: &Utf8Path,
+    config: &Config,
+) -> Result<Option<RemoteConfig>, RiptskError> {
     let output = Command::new("git")
         .arg("-C")
         .arg(cwd)
@@ -14,7 +17,7 @@ pub fn detect_from_cwd(cwd: &Utf8Path, config: &Config) -> Result<Option<RemoteC
         .arg("origin")
         .output()
         .context("failed to detect git remote")
-        .map_err(TskError::Other)?;
+        .map_err(RiptskError::Other)?;
 
     if !output.status.success() {
         // No git remote — try matching by path for local projects
@@ -117,7 +120,7 @@ pub fn normalized_remote(remote: &RemoteConfig) -> String {
 pub fn register_project_auto(
     cwd: &Utf8Path,
     config: &mut Config,
-) -> Result<Option<RemoteConfig>, TskError> {
+) -> Result<Option<RemoteConfig>, RiptskError> {
     if let Some(existing) = detect_from_cwd(cwd, config)? {
         return Ok(Some(existing));
     }
@@ -128,7 +131,7 @@ pub fn register_project_auto(
         // Use rsplit to find the repo part (everything after the last ':' that
         // contains a '/'), falling back to split_once for the common case.
         let (host, repo) = split_host_repo(&normalized)
-            .ok_or_else(|| TskError::General("failed to normalize git remote URL".into()))?;
+            .ok_or_else(|| RiptskError::General("failed to normalize git remote URL".into()))?;
         let name = repo.rsplit('/').next().unwrap_or(repo).to_owned();
         let remote = RemoteConfig {
             name: name.clone(),
@@ -178,7 +181,7 @@ fn split_host_repo(normalized: &str) -> Option<(&str, &str)> {
     normalized.split_once(':')
 }
 
-fn git_origin_url(cwd: &Utf8Path) -> Result<Option<String>, TskError> {
+fn git_origin_url(cwd: &Utf8Path) -> Result<Option<String>, RiptskError> {
     let output = Command::new("git")
         .arg("-C")
         .arg(cwd)
@@ -187,7 +190,7 @@ fn git_origin_url(cwd: &Utf8Path) -> Result<Option<String>, TskError> {
         .arg("origin")
         .output()
         .context("failed to detect git remote")
-        .map_err(TskError::Other)?;
+        .map_err(RiptskError::Other)?;
     if !output.status.success() {
         return Ok(None);
     }
@@ -200,7 +203,7 @@ pub fn register_project_interactive(
     config: &mut Config,
     prompts: &dyn PromptBackend,
     cwd: &Utf8Path,
-) -> Result<RemoteConfig, TskError> {
+) -> Result<RemoteConfig, RiptskError> {
     if let Some(existing) = detect_from_cwd(cwd, config)? {
         return Ok(existing);
     }
@@ -210,7 +213,7 @@ pub fn register_project_interactive(
         if let Some(url) = repo_url {
             let normalized = normalize_url(&url);
             let (host, repo) = split_host_repo(&normalized)
-                .ok_or_else(|| TskError::General("failed to normalize git remote URL".into()))?;
+                .ok_or_else(|| RiptskError::General("failed to normalize git remote URL".into()))?;
             (
                 repo.rsplit('/').next().unwrap_or(repo).to_owned(),
                 infer_type(host),
@@ -295,7 +298,7 @@ pub fn register_project_interactive(
     Ok(remote)
 }
 
-fn is_inside_work_tree(cwd: &Utf8Path) -> Result<bool, TskError> {
+fn is_inside_work_tree(cwd: &Utf8Path) -> Result<bool, RiptskError> {
     let status = Command::new("git")
         .arg("-C")
         .arg(cwd)
@@ -303,17 +306,17 @@ fn is_inside_work_tree(cwd: &Utf8Path) -> Result<bool, TskError> {
         .arg("--is-inside-work-tree")
         .status()
         .context("failed to inspect git work tree")
-        .map_err(TskError::Other)?;
+        .map_err(RiptskError::Other)?;
     Ok(status.success())
 }
 
-fn validate_new_remote(config: &Config, remote: &RemoteConfig) -> Result<(), TskError> {
+fn validate_new_remote(config: &Config, remote: &RemoteConfig) -> Result<(), RiptskError> {
     if config
         .remotes
         .iter()
         .any(|candidate| candidate.name == remote.name)
     {
-        return Err(TskError::Config(format!(
+        return Err(RiptskError::Config(format!(
             "remote name already exists: {}",
             remote.name
         )));

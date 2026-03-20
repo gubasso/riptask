@@ -1,34 +1,34 @@
-use crate::error::TskError;
+use crate::error::RiptskError;
 use anyhow::{Context, Result};
 use camino::Utf8PathBuf;
 use std::fs;
 
 #[derive(Debug, Clone)]
 pub struct AppPaths {
-    pub tsk_repo: Utf8PathBuf,
+    pub riptsk_repo: Utf8PathBuf,
     pub cache_root: Utf8PathBuf,
 }
 
 impl AppPaths {
     pub fn from_env() -> Result<Self> {
-        let tsk_repo = resolve_tsk_repo()?;
+        let riptsk_repo = resolve_riptsk_repo()?;
         let cache_root = resolve_cache_root()?;
         Ok(Self {
-            tsk_repo,
+            riptsk_repo,
             cache_root,
         })
     }
 
     pub fn config_path(&self) -> Utf8PathBuf {
-        self.tsk_repo.join("tsk.yaml")
+        self.riptsk_repo.join("riptsk.yaml")
     }
 
     pub fn issues_dir(&self) -> Utf8PathBuf {
-        self.tsk_repo.join("issues")
+        self.riptsk_repo.join("issues")
     }
 
     pub fn templates_dir(&self) -> Utf8PathBuf {
-        self.tsk_repo.join("templates")
+        self.riptsk_repo.join("templates")
     }
 
     pub fn views_root(&self) -> Utf8PathBuf {
@@ -54,9 +54,9 @@ impl AppPaths {
         Ok(())
     }
 
-    pub fn require_initialized(&self) -> Result<(), TskError> {
+    pub fn require_initialized(&self) -> Result<(), RiptskError> {
         if !self.config_path().exists() {
-            return Err(TskError::General(
+            return Err(RiptskError::General(
                 "not initialized — run 'tsk init' first".into(),
             ));
         }
@@ -64,8 +64,8 @@ impl AppPaths {
     }
 }
 
-pub fn resolve_tsk_repo() -> Result<Utf8PathBuf> {
-    if let Ok(value) = std::env::var("TSK_REPO") {
+pub fn resolve_riptsk_repo() -> Result<Utf8PathBuf> {
+    if let Ok(value) = std::env::var("RIPTSK_REPO") {
         return Ok(Utf8PathBuf::from(value));
     }
 
@@ -78,11 +78,11 @@ pub fn resolve_tsk_repo() -> Result<Utf8PathBuf> {
                 std::env::var("HOME").unwrap_or_else(|_| ".".into())
             ))
         })
-        .join("tsk")
+        .join("riptsk")
         .join("config.env");
     if let Ok(content) = fs::read_to_string(&config_home) {
         for line in content.lines() {
-            if let Some(rest) = line.strip_prefix("TSK_REPO=") {
+            if let Some(rest) = line.strip_prefix("RIPTSK_REPO=") {
                 return Ok(Utf8PathBuf::from(rest.trim_matches('"')));
             }
         }
@@ -96,7 +96,7 @@ pub fn resolve_tsk_repo() -> Result<Utf8PathBuf> {
                 std::env::var("HOME").unwrap_or_else(|_| ".".into())
             ))
         })
-        .join("tsk");
+        .join("riptsk");
     Utf8PathBuf::from_path_buf(data_home)
         .map_err(|_| anyhow::anyhow!("XDG data home is not valid UTF-8"))
 }
@@ -111,7 +111,7 @@ pub fn resolve_cache_root() -> Result<Utf8PathBuf> {
                 std::env::var("HOME").unwrap_or_else(|_| ".".into())
             ))
         })
-        .join("tsk");
+        .join("riptsk");
     Utf8PathBuf::from_path_buf(cache_home)
         .map_err(|_| anyhow::anyhow!("XDG cache home is not valid UTF-8"))
 }
@@ -123,10 +123,10 @@ mod tests {
     #[test]
     fn builds_standard_subpaths() {
         let paths = AppPaths {
-            tsk_repo: "/tmp/tsk".into(),
+            riptsk_repo: "/tmp/riptsk".into(),
             cache_root: "/tmp/cache".into(),
         };
-        assert_eq!(paths.config_path(), "/tmp/tsk/tsk.yaml");
+        assert_eq!(paths.config_path(), "/tmp/riptsk/riptsk.yaml");
         assert_eq!(paths.remote_state_path(), "/tmp/cache/remote_state.json");
     }
 }

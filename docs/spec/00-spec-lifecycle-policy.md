@@ -2,7 +2,7 @@
 
 Status: active (permanent)
 
-This document governs how specifications in `docs/spec/` are managed throughout the tsk development lifecycle. It applies to both LLM agents and human contributors.
+This document governs how specifications in `docs/spec/` are managed throughout the riptsk development lifecycle. It applies to both LLM agents and human contributors.
 
 ### 0.1 Source of Truth Invariant
 
@@ -102,4 +102,4 @@ The suggestion should include a checklist mapping spec sections to their corresp
 - [[02-philosophy-design-principles]] — Foundation for §0.1 (SoT invariant) and all lifecycle decisions
 - [[archive/17-codebase-structure]] — Where implementation artifacts live
 - [[archive/18-implementation-roadmap]] — Sequencing of spec implementation
-- [[archive/13-llm-agent-integration]] — How agents interact with the tsk system (complementary to §0.7 which covers how agents interact with specs)
+- [[archive/13-llm-agent-integration]] — How agents interact with the riptsk system (complementary to §0.7 which covers how agents interact with specs)

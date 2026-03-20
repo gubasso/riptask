@@ -1,8 +1,8 @@
 use insta::assert_snapshot;
-use tsk::config::load_config;
-use tsk::domain::id_map::IdMap;
-use tsk::domain::remote_state::RemoteState;
-use tsk::storage::frontmatter;
+use riptsk::config::load_config;
+use riptsk::domain::id_map::IdMap;
+use riptsk::domain::remote_state::RemoteState;
+use riptsk::storage::frontmatter;
 
 fn round_trip_issue(name: &str) -> String {
     let path = format!("tests/fixtures/issues/{name}");
@@ -46,15 +46,16 @@ fn issue_fixtures_round_trip() {
 
 #[test]
 fn config_fixtures_round_trip() {
-    let config = load_config(std::path::Path::new("tests/fixtures/tsk.yaml")).expect("load config");
+    let config =
+        load_config(std::path::Path::new("tests/fixtures/riptsk.yaml")).expect("load config");
     assert_snapshot!(
-        "tsk_yaml",
+        "riptsk_yaml",
         serde_yaml_ng::to_string(&config).expect("serialize config")
     );
-    let multi = load_config(std::path::Path::new("tests/fixtures/tsk_multi.yaml"))
+    let multi = load_config(std::path::Path::new("tests/fixtures/riptsk_multi.yaml"))
         .expect("load multi config");
     assert_snapshot!(
-        "tsk_multi_yaml",
+        "riptsk_multi_yaml",
         serde_yaml_ng::to_string(&multi).expect("serialize multi config")
     );
 }

@@ -81,7 +81,7 @@ mod tests {
     fn missing_cache_files_default_to_empty_maps() {
         let temp = tempdir().expect("temp dir");
         let paths = AppPaths {
-            tsk_repo: temp.path().join("repo").to_string_lossy().as_ref().into(),
+            riptsk_repo: temp.path().join("repo").to_string_lossy().as_ref().into(),
             cache_root: temp.path().join("cache").to_string_lossy().as_ref().into(),
         };
         assert!(super::load_id_map(&paths).expect("id map").is_empty());

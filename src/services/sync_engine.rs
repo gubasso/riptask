@@ -2,7 +2,7 @@ use crate::adapters::remote::RemoteProvider;
 use crate::config::{Config, RemoteConfig, RemoteType};
 use crate::domain::issue::{ConflictMeta, IssueDocument};
 use crate::domain::remote_state::remote_state_key;
-use crate::error::TskError;
+use crate::error::RiptskError;
 use crate::paths::AppPaths;
 use crate::services::issue_ids;
 use crate::services::remote_mapping::{
@@ -48,12 +48,11 @@ impl<'a> SyncEngine<'a> {
         provider: &P,
         remote: &RemoteConfig,
         force: bool,
-    ) -> Result<PullSummary, TskError> {
-        let repo = remote
-            .repo
-            .as_deref()
-            .ok_or_else(|| TskError::Config(format!("remote {} is missing repo", remote.name)))?;
-        let mut remote_state = cache::load_remote_state(self.paths).map_err(TskError::Other)?;
+    ) -> Result<PullSummary, RiptskError> {
+        let repo = remote.repo.as_deref().ok_or_else(|| {
+            RiptskError::Config(format!("remote {} is missing repo", remote.name))
+        })?;
+        let mut remote_state = cache::load_remote_state(self.paths).map_err(RiptskError::Other)?;
         let records = provider.list_issues(repo).await?;
         let mut summary = PullSummary::default();
         let mut seen_ids = HashSet::new();
@@ -66,7 +65,7 @@ impl<'a> SyncEngine<'a> {
 
             if let Some(path) = local_path {
                 let mut issue =
-                    frontmatter::load_issue(path.as_std_path()).map_err(TskError::Other)?;
+                    frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
                 let local_changed = cached
                     .as_ref()
                     .is_some_and(|entry| issue.frontmatter.local_updated_at > entry.updated_at);
@@ -81,7 +80,8 @@ impl<'a> SyncEngine<'a> {
                 } else if remote_changed {
                     update_issue_from_remote(&mut issue, &record, remote);
                     issue.frontmatter.remote_deleted = false;
-                    frontmatter::save_issue(path.as_std_path(), &issue).map_err(TskError::Other)?;
+                    frontmatter::save_issue(path.as_std_path(), &issue)
+                        .map_err(RiptskError::Other)?;
                     summary.updated.push(issue.frontmatter.id.clone());
                 }
             } else {
@@ -90,7 +90,8 @@ impl<'a> SyncEngine<'a> {
                     .paths
                     .issues_dir()
                     .join(format!("{}.md", document.frontmatter.id));
-                frontmatter::save_issue(path.as_std_path(), &document).map_err(TskError::Other)?;
+                frontmatter::save_issue(path.as_std_path(), &document)
+                    .map_err(RiptskError::Other)?;
                 summary.created.push(document.frontmatter.id.clone());
             }
 
@@ -98,7 +99,8 @@ impl<'a> SyncEngine<'a> {
         }
 
         for path in issue_store::list_issues(self.paths)? {
-            let mut issue = frontmatter::load_issue(path.as_std_path()).map_err(TskError::Other)?;
+            let mut issue =
+                frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
             let meta = match remote.remote_type {
                 RemoteType::Github => issue
                     .frontmatter
@@ -120,12 +122,12 @@ impl<'a> SyncEngine<'a> {
             }
             if !issue.frontmatter.remote_deleted {
                 issue.frontmatter.remote_deleted = true;
-                frontmatter::save_issue(path.as_std_path(), &issue).map_err(TskError::Other)?;
+                frontmatter::save_issue(path.as_std_path(), &issue).map_err(RiptskError::Other)?;
                 summary.deleted.push(issue.frontmatter.id.clone());
             }
         }
 
-        cache::save_remote_state(self.paths, &remote_state).map_err(TskError::Other)?;
+        cache::save_remote_state(self.paths, &remote_state).map_err(RiptskError::Other)?;
         Ok(summary)
     }
 
@@ -133,16 +135,15 @@ impl<'a> SyncEngine<'a> {
         &self,
         provider: &P,
         remote: &RemoteConfig,
-    ) -> Result<PushSummary, TskError> {
-        let repo = remote
-            .repo
-            .as_deref()
-            .ok_or_else(|| TskError::Config(format!("remote {} is missing repo", remote.name)))?;
-        let mut remote_state = cache::load_remote_state(self.paths).map_err(TskError::Other)?;
+    ) -> Result<PushSummary, RiptskError> {
+        let repo = remote.repo.as_deref().ok_or_else(|| {
+            RiptskError::Config(format!("remote {} is missing repo", remote.name))
+        })?;
+        let mut remote_state = cache::load_remote_state(self.paths).map_err(RiptskError::Other)?;
         let mut summary = PushSummary::default();
 
         for path in issue_store::list_issues(self.paths)? {
-            let issue = frontmatter::load_issue(path.as_std_path()).map_err(TskError::Other)?;
+            let issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
             if issue.frontmatter.project != remote.name || issue.frontmatter.remote_deleted {
                 continue;
             }
@@ -194,20 +195,20 @@ impl<'a> SyncEngine<'a> {
 
             let mut updated = issue;
             update_issue_from_remote(&mut updated, &record, remote);
-            frontmatter::save_issue(path.as_std_path(), &updated).map_err(TskError::Other)?;
+            frontmatter::save_issue(path.as_std_path(), &updated).map_err(RiptskError::Other)?;
             remote_state.insert(key, remote_state_entry(&record));
             summary.updated.push(updated.frontmatter.id.clone());
         }
 
-        cache::save_remote_state(self.paths, &remote_state).map_err(TskError::Other)?;
+        cache::save_remote_state(self.paths, &remote_state).map_err(RiptskError::Other)?;
         Ok(summary)
     }
 
-    pub fn status(&self) -> Result<StatusSummary, TskError> {
-        let remote_state = cache::load_remote_state(self.paths).map_err(TskError::Other)?;
+    pub fn status(&self) -> Result<StatusSummary, RiptskError> {
+        let remote_state = cache::load_remote_state(self.paths).map_err(RiptskError::Other)?;
         let mut summary = StatusSummary::default();
         for path in issue_store::list_issues(self.paths)? {
-            let issue = frontmatter::load_issue(path.as_std_path()).map_err(TskError::Other)?;
+            let issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
             if issue.frontmatter.conflict.is_some() {
                 summary.conflicts.push(issue.frontmatter.id.clone());
                 continue;
@@ -239,14 +240,14 @@ impl<'a> SyncEngine<'a> {
         &self,
         remote: &RemoteConfig,
         issue_id: u64,
-    ) -> Result<Option<camino::Utf8PathBuf>, TskError> {
+    ) -> Result<Option<camino::Utf8PathBuf>, RiptskError> {
         let exact_id = issue_ids::format_id(&issue_ids::derive_scope_from_remote(remote), issue_id);
         if let Ok(path) = issue_store::find_issue(self.paths, &exact_id) {
             return Ok(Some(path));
         }
 
         for path in issue_store::list_issues(self.paths)? {
-            let issue = frontmatter::load_issue(path.as_std_path()).map_err(TskError::Other)?;
+            let issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
             let matches = match remote.remote_type {
                 RemoteType::Github => issue.frontmatter.github.as_ref().is_some_and(|meta| {
                     meta.repo == remote.repo.clone().unwrap_or_default()
@@ -272,7 +273,7 @@ impl<'a> SyncEngine<'a> {
         issue: &mut IssueDocument,
         issue_path: &camino::Utf8PathBuf,
         cached: Option<&crate::domain::remote_state::RemoteStateEntry>,
-    ) -> Result<(), TskError> {
+    ) -> Result<(), RiptskError> {
         let mut remote_doc = remote_to_local(record, remote);
         remote_doc.frontmatter.conflict_role = Some("remote".into());
         remote_doc.frontmatter.conflict_parent = Some(issue.frontmatter.id.clone());
@@ -280,7 +281,8 @@ impl<'a> SyncEngine<'a> {
             .paths
             .issues_dir()
             .join(format!("{}.REMOTE.md", issue.frontmatter.id));
-        frontmatter::save_issue(remote_path.as_std_path(), &remote_doc).map_err(TskError::Other)?;
+        frontmatter::save_issue(remote_path.as_std_path(), &remote_doc)
+            .map_err(RiptskError::Other)?;
         issue.frontmatter.conflict = Some(ConflictMeta {
             detected_at: current_timestamp(),
             remote_file: remote_path.file_name().unwrap_or_default().to_string(),
@@ -292,7 +294,7 @@ impl<'a> SyncEngine<'a> {
         });
         issue.frontmatter.conflict_role = None;
         issue.frontmatter.conflict_parent = None;
-        frontmatter::save_issue(issue_path.as_std_path(), issue).map_err(TskError::Other)?;
+        frontmatter::save_issue(issue_path.as_std_path(), issue).map_err(RiptskError::Other)?;
         Ok(())
     }
 }

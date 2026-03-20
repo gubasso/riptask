@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub enum TskError {
+pub enum RiptskError {
     #[error("{0}")]
     General(String),
     #[error("not found: {0}")]
@@ -24,7 +24,7 @@ pub enum TskError {
     Other(#[from] anyhow::Error),
 }
 
-impl TskError {
+impl RiptskError {
     pub fn exit_code(&self) -> i32 {
         match self {
             Self::General(_) | Self::Store(_) | Self::Io(_) | Self::Other(_) => 1,
@@ -55,15 +55,15 @@ pub enum StoreError {
 
 #[cfg(test)]
 mod tests {
-    use super::TskError;
+    use super::RiptskError;
 
     #[test]
     fn exit_codes_match_contract() {
-        assert_eq!(TskError::General("x".into()).exit_code(), 1);
-        assert_eq!(TskError::NotFound("x".into()).exit_code(), 2);
-        assert_eq!(TskError::Conflict("x".into()).exit_code(), 3);
-        assert_eq!(TskError::Unreachable("x".into()).exit_code(), 4);
-        assert_eq!(TskError::Config("x".into()).exit_code(), 5);
-        assert_eq!(TskError::Unregistered("x".into()).exit_code(), 6);
+        assert_eq!(RiptskError::General("x".into()).exit_code(), 1);
+        assert_eq!(RiptskError::NotFound("x".into()).exit_code(), 2);
+        assert_eq!(RiptskError::Conflict("x".into()).exit_code(), 3);
+        assert_eq!(RiptskError::Unreachable("x".into()).exit_code(), 4);
+        assert_eq!(RiptskError::Config("x".into()).exit_code(), 5);
+        assert_eq!(RiptskError::Unregistered("x".into()).exit_code(), 6);
     }
 }

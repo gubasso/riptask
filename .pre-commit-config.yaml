@@ -1,4 +1,4 @@
-# tsk – Rust CLI pre-commit configuration
+# riptsk – Rust CLI pre-commit configuration
 
 default_install_hook_types: [pre-commit, commit-msg, pre-push]
 

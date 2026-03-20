@@ -11,7 +11,7 @@ fn new_creates_issue_file() {
     let cache = temp.path().join("cache");
     Command::cargo_bin("tsk")
         .expect("binary")
-        .env("TSK_REPO", &repo)
+        .env("RIPTSK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .arg("init")
         .assert()
@@ -20,7 +20,7 @@ fn new_creates_issue_file() {
     Command::cargo_bin("tsk")
         .expect("binary")
         .current_dir(temp.path())
-        .env("TSK_REPO", &repo)
+        .env("RIPTSK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .args(["new", "--title", "Test issue"])
         .assert()
@@ -37,7 +37,7 @@ fn new_auto_registers_unregistered_repo() {
 
     Command::cargo_bin("tsk")
         .expect("binary")
-        .env("TSK_REPO", &repo)
+        .env("RIPTSK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .arg("init")
         .assert()
@@ -55,14 +55,14 @@ fn new_auto_registers_unregistered_repo() {
     Command::cargo_bin("tsk")
         .expect("binary")
         .current_dir(&worktree)
-        .env("TSK_REPO", &repo)
+        .env("RIPTSK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .args(["new", "--title", "Auto registered"])
         .assert()
         .success()
         .stdout(predicate::str::contains("LO-WOR-WOR--1"));
 
-    let config = fs::read_to_string(repo.join("tsk.yaml")).expect("read config");
+    let config = fs::read_to_string(repo.join("riptsk.yaml")).expect("read config");
     assert!(config.contains("name: worktree"));
 
     let issue_path = fs::read_dir(repo.join("issues"))
@@ -85,14 +85,14 @@ fn new_ai_falls_back_to_template_body_when_backend_unavailable() {
 
     Command::cargo_bin("tsk")
         .expect("binary")
-        .env("TSK_REPO", &repo)
+        .env("RIPTSK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .arg("init")
         .assert()
         .success();
 
     // Enable AI in config
-    let config_path = repo.join("tsk.yaml");
+    let config_path = repo.join("riptsk.yaml");
     let config = fs::read_to_string(&config_path).expect("read config");
     fs::write(
         &config_path,
@@ -121,7 +121,7 @@ fn new_ai_falls_back_to_template_body_when_backend_unavailable() {
     Command::cargo_bin("tsk")
         .expect("binary")
         .current_dir(temp.path())
-        .env("TSK_REPO", &repo)
+        .env("RIPTSK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("PATH", &restricted_path)
         .args(["new", "--title", "AI fallback test", "--ai"])
@@ -153,7 +153,7 @@ fn new_requires_initialization() {
 
     Command::cargo_bin("tsk")
         .expect("binary")
-        .env("TSK_REPO", &repo)
+        .env("RIPTSK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .args(["new", "--title", "Test issue"])
         .assert()
@@ -170,7 +170,7 @@ fn new_without_title_non_tty_errors() {
     let cache = temp.path().join("cache");
     Command::cargo_bin("tsk")
         .expect("binary")
-        .env("TSK_REPO", &repo)
+        .env("RIPTSK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .arg("init")
         .assert()
@@ -179,7 +179,7 @@ fn new_without_title_non_tty_errors() {
     Command::cargo_bin("tsk")
         .expect("binary")
         .current_dir(temp.path())
-        .env("TSK_REPO", &repo)
+        .env("RIPTSK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .arg("new")
         .assert()
