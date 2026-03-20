@@ -1,6 +1,6 @@
 ---
 source: tests/format_contracts.rs
-expression: canonical_json(&remote_state)
+expression: canonical_json(&backend_state)
 ---
 {
   "github:Penguin-Chrono-Labs/fish-from-the-future:17": {

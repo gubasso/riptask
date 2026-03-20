@@ -1,11 +1,12 @@
 use crate::adapters::git::{CliGit, GitBackend};
 use crate::cli::IdArgs;
-use crate::config::{RemoteType, load_config};
+use crate::config::load_config;
 use crate::error::RiptskError;
+use crate::models::Backend;
 use crate::paths::AppPaths;
 use crate::services::auto_commit::maybe_auto_commit;
+use crate::services::backend_mapping::build_provider_for_backend;
 use crate::services::issue_service::generate_slug;
-use crate::services::remote_mapping::build_provider_for_remote;
 use crate::storage::{frontmatter, issue_store};
 
 pub fn branch(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
@@ -84,36 +85,36 @@ pub async fn pr(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
         issue.frontmatter.branch = Some(current_branch.clone());
     }
 
-    let remote = config
-        .remotes
+    let backend = config
+        .backends
         .iter()
-        .find(|remote| remote.name == issue.frontmatter.project)
+        .find(|backend| backend.name == issue.frontmatter.project)
         .ok_or_else(|| RiptskError::Unregistered(issue.frontmatter.project.clone()))?;
-    if !matches!(remote.remote_type, RemoteType::Github | RemoteType::Gitlab) {
+    if !matches!(backend.backend, Backend::Github | Backend::Gitlab) {
         return Err(RiptskError::Config(format!(
-            "project {} does not have a hosted remote",
-            remote.name
+            "project {} does not have a hosted backend",
+            backend.name
         )));
     }
-    let provider = build_provider_for_remote(remote)?;
-    let repo_name = remote.repo.as_deref().unwrap_or_default();
+    let provider = build_provider_for_backend(backend)?;
+    let repo_name = backend.repo.as_deref().unwrap_or_default();
     let base = provider.default_branch(repo_name).await?;
-    let issue_number = match remote.remote_type {
-        RemoteType::Github => issue
+    let issue_number = match backend.backend {
+        Backend::Github => issue
             .frontmatter
             .github
             .as_ref()
             .and_then(|meta| meta.issue_id),
-        RemoteType::Gitlab => issue
+        Backend::Gitlab => issue
             .frontmatter
             .gitlab
             .as_ref()
             .and_then(|meta| meta.issue_id),
-        RemoteType::Local => None,
+        Backend::Local => None,
     }
     .ok_or_else(|| {
         RiptskError::Config(format!(
-            "issue {} is missing remote metadata",
+            "issue {} is missing backend metadata",
             issue.frontmatter.id
         ))
     })?;

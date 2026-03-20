@@ -1,5 +1,6 @@
-use crate::config::{Config, RemoteConfig};
+use crate::config::Config;
 use crate::error::RiptskError;
+use crate::models::BackendConfig;
 use crate::services::project_detection;
 use camino::Utf8Path;
 
@@ -33,13 +34,13 @@ pub fn resolve_scope(
         return Ok(ProjectScope::Explicit(projects.to_vec()));
     }
     match project_detection::detect_from_cwd(cwd, config)? {
-        Some(remote) => Ok(ProjectScope::CurrentProject(remote.name)),
+        Some(backend) => Ok(ProjectScope::CurrentProject(backend.name)),
         None => Ok(ProjectScope::AllProjects),
     }
 }
 
-pub fn lookup_project<'a>(config: &'a Config, name: &str) -> Option<&'a RemoteConfig> {
-    config.remotes.iter().find(|remote| remote.name == name)
+pub fn lookup_project<'a>(config: &'a Config, name: &str) -> Option<&'a BackendConfig> {
+    config.backends.iter().find(|backend| backend.name == name)
 }
 
 #[cfg(test)]

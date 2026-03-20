@@ -35,8 +35,8 @@ impl AppPaths {
         self.cache_root.join("views")
     }
 
-    pub fn remote_state_path(&self) -> Utf8PathBuf {
-        self.cache_root.join("remote_state.json")
+    pub fn backend_state_path(&self) -> Utf8PathBuf {
+        self.cache_root.join("backend_state.json")
     }
 
     pub fn id_map_path(&self) -> Utf8PathBuf {
@@ -127,6 +127,6 @@ mod tests {
             cache_root: "/tmp/cache".into(),
         };
         assert_eq!(paths.config_path(), "/tmp/riptsk/riptsk.yaml");
-        assert_eq!(paths.remote_state_path(), "/tmp/cache/remote_state.json");
+        assert_eq!(paths.backend_state_path(), "/tmp/cache/backend_state.json");
     }
 }

@@ -5,7 +5,7 @@ defaults:
   priority: medium
   assignee: tester
   template: task
-remotes:
+backends:
   - name: wormhole-router
     type: gitlab
     host: https://gitlab.example.com

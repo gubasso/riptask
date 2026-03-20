@@ -1,32 +1,32 @@
-use crate::adapters::remote::RemoteIssueRecord;
+use crate::adapters::backend::BackendIssueRecord;
+use crate::domain::backend_state::BackendState;
+use crate::domain::backend_state::backend_state_key;
 use crate::domain::id_map::IdMap;
-use crate::domain::remote_state::RemoteState;
-use crate::domain::remote_state::remote_state_key;
 use crate::paths::AppPaths;
-use crate::services::remote_mapping::remote_state_entry;
+use crate::services::backend_mapping::backend_state_entry;
 use anyhow::{Context, Result};
 use std::fs;
 
-pub fn load_remote_state(paths: &AppPaths) -> Result<RemoteState> {
-    load_json(paths.remote_state_path().as_str())
+pub fn load_backend_state(paths: &AppPaths) -> Result<BackendState> {
+    load_json(paths.backend_state_path().as_str())
 }
 
-pub fn save_remote_state(paths: &AppPaths, state: &RemoteState) -> Result<()> {
-    save_json(paths.remote_state_path().as_str(), state)
+pub fn save_backend_state(paths: &AppPaths, state: &BackendState) -> Result<()> {
+    save_json(paths.backend_state_path().as_str(), state)
 }
 
-pub fn seed_remote_state_entry(
+pub fn seed_backend_state_entry(
     paths: &AppPaths,
     provider_name: &str,
     repo: &str,
-    record: &RemoteIssueRecord,
+    record: &BackendIssueRecord,
 ) -> Result<()> {
-    let mut state = load_remote_state(paths)?;
+    let mut state = load_backend_state(paths)?;
     state.insert(
-        remote_state_key(provider_name, repo, record.issue_id),
-        remote_state_entry(record),
+        backend_state_key(provider_name, repo, record.issue_id),
+        backend_state_entry(record),
     );
-    save_remote_state(paths, &state)
+    save_backend_state(paths, &state)
 }
 
 pub fn load_id_map(paths: &AppPaths) -> Result<IdMap> {
@@ -86,8 +86,8 @@ mod tests {
         };
         assert!(super::load_id_map(&paths).expect("id map").is_empty());
         assert!(
-            super::load_remote_state(&paths)
-                .expect("remote state")
+            super::load_backend_state(&paths)
+                .expect("backend state")
                 .is_empty()
         );
     }

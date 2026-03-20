@@ -1,4 +1,4 @@
-use crate::adapters::remote::{RemoteIssueRecord, RemoteIssueUpsert, RemoteProvider};
+use crate::adapters::backend::{BackendIssueRecord, BackendIssueUpsert, BackendProvider};
 use crate::error::RiptskError;
 use async_trait::async_trait;
 use gitlab::api::AsyncQuery;
@@ -34,8 +34,8 @@ impl GitlabProvider {
 }
 
 #[async_trait]
-impl RemoteProvider for GitlabProvider {
-    async fn list_issues(&self, repo: &str) -> Result<Vec<RemoteIssueRecord>, RiptskError> {
+impl BackendProvider for GitlabProvider {
+    async fn list_issues(&self, repo: &str) -> Result<Vec<BackendIssueRecord>, RiptskError> {
         let client = self.client().await?;
         let endpoint = gitlab::api::issues::ProjectIssues::builder()
             .project(repo)
@@ -51,8 +51,8 @@ impl RemoteProvider for GitlabProvider {
     async fn create_issue(
         &self,
         repo: &str,
-        issue: &RemoteIssueUpsert,
-    ) -> Result<RemoteIssueRecord, RiptskError> {
+        issue: &BackendIssueUpsert,
+    ) -> Result<BackendIssueRecord, RiptskError> {
         let client = self.client().await?;
         let mut builder = gitlab::api::projects::issues::CreateIssue::builder();
         builder.project(repo).title(issue.title.as_str());
@@ -74,8 +74,8 @@ impl RemoteProvider for GitlabProvider {
         &self,
         repo: &str,
         issue_id: u64,
-        issue: &RemoteIssueUpsert,
-    ) -> Result<RemoteIssueRecord, RiptskError> {
+        issue: &BackendIssueUpsert,
+    ) -> Result<BackendIssueRecord, RiptskError> {
         let client = self.client().await?;
         let mut builder = gitlab::api::projects::issues::EditIssue::builder();
         builder.project(repo).issue(issue_id);
@@ -219,8 +219,8 @@ struct GitlabProject {
     default_branch: String,
 }
 
-fn map_issue(issue: GitlabIssue) -> RemoteIssueRecord {
-    RemoteIssueRecord {
+fn map_issue(issue: GitlabIssue) -> BackendIssueRecord {
+    BackendIssueRecord {
         issue_id: issue.iid,
         title: issue.title,
         state: issue.state,

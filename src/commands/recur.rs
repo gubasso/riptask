@@ -1,9 +1,8 @@
 use crate::adapters::git::CliGit;
 use crate::cli::{NewArgs, RecurArgs, RecurNewArgs, RecurSubcommand};
-use crate::config::{
-    RecurrenceFrequency, RecurringDef, load_config, parse_priority, parse_state, save_config,
-};
+use crate::config::{load_config, parse_priority, parse_state, save_config};
 use crate::error::RiptskError;
+use crate::models::{RecurrenceFrequency, RecurringDef};
 use crate::paths::AppPaths;
 use crate::services::auto_commit::maybe_auto_commit;
 use crate::services::issue_service::IssueService;

@@ -1,7 +1,7 @@
 use insta::assert_snapshot;
 use riptsk::config::load_config;
+use riptsk::domain::backend_state::BackendState;
 use riptsk::domain::id_map::IdMap;
-use riptsk::domain::remote_state::RemoteState;
 use riptsk::storage::frontmatter;
 
 fn round_trip_issue(name: &str) -> String {
@@ -62,11 +62,11 @@ fn config_fixtures_round_trip() {
 
 #[test]
 fn cache_fixtures_round_trip() {
-    let remote_state: RemoteState = serde_json::from_str(
-        &std::fs::read_to_string("tests/fixtures/remote_state.json").expect("remote state"),
+    let backend_state: BackendState = serde_json::from_str(
+        &std::fs::read_to_string("tests/fixtures/backend_state.json").expect("backend state"),
     )
-    .expect("parse remote state");
-    assert_snapshot!("remote_state", canonical_json(&remote_state));
+    .expect("parse backend state");
+    assert_snapshot!("backend_state", canonical_json(&backend_state));
 
     let id_map: IdMap = serde_json::from_str(
         &std::fs::read_to_string("tests/fixtures/id_map.json").expect("id map"),

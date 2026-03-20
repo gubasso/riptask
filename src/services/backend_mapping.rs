@@ -1,11 +1,11 @@
+use crate::adapters::backend::{BackendIssueRecord, BackendIssueUpsert, BackendProvider};
 use crate::adapters::github::GithubProvider;
 use crate::adapters::gitlab::GitlabProvider;
-use crate::adapters::remote::{RemoteIssueRecord, RemoteIssueUpsert, RemoteProvider};
-use crate::config::{RemoteConfig, RemoteType};
 use crate::domain::issue::{
     GithubIssueMeta, GitlabIssueMeta, IssueDocument, IssueFrontmatter, IssueState, Priority,
 };
 use crate::error::RiptskError;
+use crate::models::{Backend, BackendConfig};
 use crate::services::issue_ids;
 use crate::services::issue_service::{generate_slug, now_utc};
 use std::process::Command;
@@ -23,36 +23,36 @@ impl std::fmt::Display for CredentialSource {
     }
 }
 
-pub fn build_provider_for_remote(
-    remote: &RemoteConfig,
-) -> Result<Box<dyn RemoteProvider>, RiptskError> {
-    match remote.remote_type {
-        RemoteType::Github => {
-            let (token, source) = resolve_github_token(&remote.name)?;
-            eprintln!("auth: github remote '{}' using {}", remote.name, source);
+pub fn build_provider_for_backend(
+    backend: &BackendConfig,
+) -> Result<Box<dyn BackendProvider>, RiptskError> {
+    match backend.backend {
+        Backend::Github => {
+            let (token, source) = resolve_github_token(&backend.name)?;
+            eprintln!("auth: github backend '{}' using {}", backend.name, source);
             Ok(Box::new(GithubProvider::new(&token)?))
         }
-        RemoteType::Gitlab => {
-            let host = remote
+        Backend::Gitlab => {
+            let host = backend
                 .host
                 .as_deref()
                 .unwrap_or("https://gitlab.com")
                 .trim_start_matches("https://")
                 .trim_start_matches("http://")
                 .to_owned();
-            let (token, source) = resolve_gitlab_token(&remote.name, &host)?;
-            eprintln!("auth: gitlab remote '{}' using {}", remote.name, source);
+            let (token, source) = resolve_gitlab_token(&backend.name, &host)?;
+            eprintln!("auth: gitlab backend '{}' using {}", backend.name, source);
             Ok(Box::new(GitlabProvider::new(&host, &token)?))
         }
-        RemoteType::Local => Err(RiptskError::Config(format!(
-            "remote {} is local-only",
-            remote.name
+        Backend::Local => Err(RiptskError::Config(format!(
+            "backend {} is local-only",
+            backend.name
         ))),
     }
 }
 
-pub fn issue_to_upsert(doc: &IssueDocument) -> RemoteIssueUpsert {
-    RemoteIssueUpsert {
+pub fn issue_to_upsert(doc: &IssueDocument) -> BackendIssueUpsert {
+    BackendIssueUpsert {
         title: doc.frontmatter.title.clone(),
         body: doc.body.clone(),
         labels: build_state_labels(&doc.frontmatter.state, &doc.frontmatter.labels),
@@ -60,10 +60,10 @@ pub fn issue_to_upsert(doc: &IssueDocument) -> RemoteIssueUpsert {
     }
 }
 
-pub fn remote_to_local(record: &RemoteIssueRecord, remote: &RemoteConfig) -> IssueDocument {
-    let state = state_from_remote(record);
+pub fn backend_to_local(record: &BackendIssueRecord, backend: &BackendConfig) -> IssueDocument {
+    let state = state_from_backend(record);
     let issue_id = issue_ids::format_id(
-        &issue_ids::derive_scope_from_remote(remote),
+        &issue_ids::derive_scope_from_backend(backend),
         record.issue_id,
     );
     IssueDocument {
@@ -71,21 +71,21 @@ pub fn remote_to_local(record: &RemoteIssueRecord, remote: &RemoteConfig) -> Iss
             id: issue_id.clone(),
             title: record.title.clone(),
             state: state.clone(),
-            board: remote
+            board: backend
                 .default_board
                 .clone()
                 .unwrap_or_else(|| "personal".into()),
-            project: remote.name.clone(),
-            org: remote.default_org.clone(),
+            project: backend.name.clone(),
+            org: backend.default_org.clone(),
             priority: Some(Priority::Medium),
             labels: labels_without_status(&record.labels),
             assignee: record.assignee.clone(),
             milestone: None,
             cycle: None,
             order: Some(1),
-            gitlab: if remote.remote_type == RemoteType::Gitlab {
+            gitlab: if backend.backend == Backend::Gitlab {
                 Some(GitlabIssueMeta {
-                    repo: remote.repo.clone().unwrap_or_default(),
+                    repo: backend.repo.clone().unwrap_or_default(),
                     issue_id: Some(record.issue_id),
                     url: Some(record.url.clone()),
                     updated_at: record.updated_at.clone(),
@@ -94,9 +94,9 @@ pub fn remote_to_local(record: &RemoteIssueRecord, remote: &RemoteConfig) -> Iss
             } else {
                 None
             },
-            github: if remote.remote_type == RemoteType::Github {
+            github: if backend.backend == Backend::Github {
                 Some(GithubIssueMeta {
-                    repo: remote.repo.clone().unwrap_or_default(),
+                    repo: backend.repo.clone().unwrap_or_default(),
                     issue_id: Some(record.issue_id),
                     url: Some(record.url.clone()),
                     updated_at: record.updated_at.clone(),
@@ -131,12 +131,12 @@ pub fn build_state_labels(state: &IssueState, labels: &[String]) -> Vec<String> 
     labels
 }
 
-pub fn update_issue_from_remote(
+pub fn update_issue_from_backend(
     issue: &mut IssueDocument,
-    record: &RemoteIssueRecord,
-    remote: &RemoteConfig,
+    record: &BackendIssueRecord,
+    backend: &BackendConfig,
 ) {
-    let state = state_from_remote(record);
+    let state = state_from_backend(record);
     issue.frontmatter.title = record.title.clone();
     issue.frontmatter.state = state.clone();
     issue.frontmatter.labels = labels_without_status(&record.labels);
@@ -144,33 +144,33 @@ pub fn update_issue_from_remote(
     issue.frontmatter.local_updated_at = record.updated_at.clone();
     issue.frontmatter.id_slug = Some(generate_slug(&issue.frontmatter.id, &record.title));
     issue.body = record.body.clone().unwrap_or_default();
-    match remote.remote_type {
-        RemoteType::Github => {
+    match backend.backend {
+        Backend::Github => {
             issue.frontmatter.github = Some(GithubIssueMeta {
-                repo: remote.repo.clone().unwrap_or_default(),
+                repo: backend.repo.clone().unwrap_or_default(),
                 issue_id: Some(record.issue_id),
                 url: Some(record.url.clone()),
                 updated_at: record.updated_at.clone(),
                 last_pushed_state: Some(state),
             });
         }
-        RemoteType::Gitlab => {
+        Backend::Gitlab => {
             issue.frontmatter.gitlab = Some(GitlabIssueMeta {
-                repo: remote.repo.clone().unwrap_or_default(),
+                repo: backend.repo.clone().unwrap_or_default(),
                 issue_id: Some(record.issue_id),
                 url: Some(record.url.clone()),
                 updated_at: record.updated_at.clone(),
                 last_pushed_state: Some(state),
             });
         }
-        RemoteType::Local => {}
+        Backend::Local => {}
     }
 }
 
-pub fn remote_state_entry(
-    record: &RemoteIssueRecord,
-) -> crate::domain::remote_state::RemoteStateEntry {
-    crate::domain::remote_state::RemoteStateEntry {
+pub fn backend_state_entry(
+    record: &BackendIssueRecord,
+) -> crate::domain::backend_state::BackendStateEntry {
+    crate::domain::backend_state::BackendStateEntry {
         title: record.title.clone(),
         state: record.state.clone(),
         labels: record.labels.clone(),
@@ -228,7 +228,7 @@ fn parse_glab_token(stdout: &str) -> Option<String> {
     })
 }
 
-fn resolve_github_token(remote_name: &str) -> Result<(String, CredentialSource), RiptskError> {
+fn resolve_github_token(backend_name: &str) -> Result<(String, CredentialSource), RiptskError> {
     if let Some(token) = non_empty_env("GITHUB_TOKEN") {
         return Ok((token, CredentialSource::EnvVar("GITHUB_TOKEN")));
     }
@@ -239,7 +239,7 @@ fn resolve_github_token(remote_name: &str) -> Result<(String, CredentialSource),
     match run_cli_token("gh", &["auth", "token", "--hostname", "github.com"]) {
         Ok(token) => Ok((token, CredentialSource::CliTool("gh auth token"))),
         Err(reason) => Err(RiptskError::Auth(format!(
-            "GitHub authentication failed for remote '{remote_name}'\n\n\
+            "GitHub authentication failed for backend '{backend_name}'\n\n\
 Tried: GITHUB_TOKEN, GH_TOKEN, gh auth token\n\n\
 {reason}\n\n\
 To fix, do one of:\n\
@@ -251,7 +251,7 @@ To fix, do one of:\n\
 }
 
 fn resolve_gitlab_token(
-    remote_name: &str,
+    backend_name: &str,
     host: &str,
 ) -> Result<(String, CredentialSource), RiptskError> {
     if let Some(token) = non_empty_env("GITLAB_TOKEN") {
@@ -269,7 +269,7 @@ fn resolve_gitlab_token(
                 CredentialSource::CliTool("glab auth status --show-token"),
             )),
             None => Err(RiptskError::Auth(format!(
-                "GitLab authentication failed for remote '{remote_name}' (host: {host})\n\n\
+                "GitLab authentication failed for backend '{backend_name}' (host: {host})\n\n\
 Tried: GITLAB_TOKEN, glab auth status --show-token\n\n\
 glab returned no Token line\n\n\
 To fix, do one of:\n\
@@ -278,7 +278,7 @@ To fix, do one of:\n\
             ))),
         },
         Err(reason) => Err(RiptskError::Auth(format!(
-            "GitLab authentication failed for remote '{remote_name}' (host: {host})\n\n\
+            "GitLab authentication failed for backend '{backend_name}' (host: {host})\n\n\
 Tried: GITLAB_TOKEN, glab auth status --show-token\n\n\
 {reason}\n\n\
 To fix, do one of:\n\
@@ -288,7 +288,7 @@ To fix, do one of:\n\
     }
 }
 
-fn state_from_remote(record: &RemoteIssueRecord) -> IssueState {
+fn state_from_backend(record: &BackendIssueRecord) -> IssueState {
     if record.state.eq_ignore_ascii_case("closed") || record.state.eq_ignore_ascii_case("done") {
         return IssueState::Done;
     }
