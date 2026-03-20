@@ -1,0 +1,25 @@
+---
+source: tests/format_contracts.rs
+expression: canonical_json(&remote_state)
+---
+{
+  "github:Penguin-Chrono-Labs/fish-from-the-future:17": {
+    "assignee": "tester",
+    "labels": [
+      "status::todo"
+    ],
+    "state": "open",
+    "title": "Investigate temporal image drift",
+    "updated_at": "2026-03-10T08:00:00Z"
+  },
+  "gitlab:chrono/wormhole-router:42": {
+    "assignee": "tester",
+    "labels": [
+      "status::in-progress",
+      "bug"
+    ],
+    "state": "opened",
+    "title": "Fix wormhole stabilizer retry logic",
+    "updated_at": "2026-03-13T10:22:00Z"
+  }
+}

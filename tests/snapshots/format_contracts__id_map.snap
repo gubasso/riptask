@@ -1,0 +1,5 @@
+---
+source: tests/format_contracts.rs
+expression: canonical_json(&id_map)
+---
+{}

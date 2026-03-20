@@ -1,0 +1,230 @@
+use crate::cli::{
+    CommitArgs, ResolveArgs, SessionArgs, SessionSubcommand, SyncArgs, SyncSubcommand,
+};
+use crate::config::load_config;
+use crate::domain::session::SessionState;
+use crate::error::TskError;
+use crate::paths::AppPaths;
+use crate::services::remote_mapping::build_provider_for_remote;
+use crate::services::sync_engine::SyncEngine;
+use crate::storage::session as session_store;
+use crate::{adapters::git::CliGit, adapters::git::GitBackend};
+use anyhow::Context;
+
+pub async fn run(paths: &AppPaths, args: SyncArgs) -> Result<(), TskError> {
+    paths.require_initialized()?;
+    match args.subcommand.clone() {
+        Some(SyncSubcommand::Pull) => pull(paths, &args).await,
+        Some(SyncSubcommand::Push) => push(paths, &args).await,
+        Some(SyncSubcommand::Status) => status(paths, &args),
+        None => {
+            // Bare `tsk sync` = pull then push (matches Bash behavior)
+            pull(paths, &args).await?;
+            push(paths, &args).await
+        }
+    }
+}
+
+async fn pull(paths: &AppPaths, args: &SyncArgs) -> Result<(), TskError> {
+    let config = load_config(paths.config_path().as_std_path()).map_err(TskError::Other)?;
+    let engine = SyncEngine::new(paths, &config);
+    for remote in config.remotes.iter().filter(|remote| {
+        matches!(
+            remote.remote_type,
+            crate::config::RemoteType::Github | crate::config::RemoteType::Gitlab
+        ) && args
+            .remote
+            .as_deref()
+            .is_none_or(|name| remote.name == name)
+    }) {
+        let provider = build_provider_for_remote(remote)?;
+        let _ = engine.pull(provider.as_ref(), remote, args.force).await?;
+    }
+    Ok(())
+}
+
+async fn push(paths: &AppPaths, args: &SyncArgs) -> Result<(), TskError> {
+    let config = load_config(paths.config_path().as_std_path()).map_err(TskError::Other)?;
+    let engine = SyncEngine::new(paths, &config);
+    for remote in config.remotes.iter().filter(|remote| {
+        matches!(
+            remote.remote_type,
+            crate::config::RemoteType::Github | crate::config::RemoteType::Gitlab
+        ) && args
+            .remote
+            .as_deref()
+            .is_none_or(|name| remote.name == name)
+    }) {
+        let provider = build_provider_for_remote(remote)?;
+        let _ = engine.push(provider.as_ref(), remote).await?;
+    }
+    Ok(())
+}
+
+fn status(paths: &AppPaths, _args: &SyncArgs) -> Result<(), TskError> {
+    let config = load_config(paths.config_path().as_std_path()).map_err(TskError::Other)?;
+    let summary = SyncEngine::new(paths, &config).status()?;
+    for id in summary.conflicts {
+        println!("CONFLICT {id}");
+    }
+    for id in summary.pushes {
+        println!("PUSH {id}");
+    }
+    Ok(())
+}
+
+pub fn resolve(paths: &AppPaths, args: ResolveArgs) -> Result<(), TskError> {
+    if !args.take_remote && !args.take_local {
+        return Err(TskError::General(
+            "specify --take-remote or --take-local".into(),
+        ));
+    }
+    if args.take_remote && args.take_local {
+        return Err(TskError::General(
+            "cannot specify both --take-remote and --take-local".into(),
+        ));
+    }
+    let path = crate::storage::issue_store::find_issue(paths, &args.id)?;
+    let mut issue =
+        crate::storage::frontmatter::load_issue(path.as_std_path()).map_err(TskError::Other)?;
+    let remote_file = issue
+        .frontmatter
+        .conflict
+        .as_ref()
+        .map(|conflict| paths.issues_dir().join(&conflict.remote_file))
+        .ok_or_else(|| TskError::Conflict(format!("no conflict for {}", args.id)))?;
+
+    if args.take_remote {
+        let mut remote = crate::storage::frontmatter::load_issue(remote_file.as_std_path())
+            .map_err(TskError::Other)?;
+        remote.frontmatter.conflict = None;
+        remote.frontmatter.conflict_role = None;
+        remote.frontmatter.conflict_parent = None;
+        remote.frontmatter.local_updated_at = crate::services::issue_service::now_utc();
+        crate::storage::frontmatter::save_issue(path.as_std_path(), &remote)
+            .map_err(TskError::Other)?;
+    } else {
+        issue.frontmatter.conflict = None;
+        issue.frontmatter.conflict_role = None;
+        issue.frontmatter.conflict_parent = None;
+        issue.frontmatter.local_updated_at = crate::services::issue_service::now_utc();
+        crate::storage::frontmatter::save_issue(path.as_std_path(), &issue)
+            .map_err(TskError::Other)?;
+    }
+
+    if remote_file.exists() {
+        std::fs::remove_file(remote_file)?;
+    }
+    Ok(())
+}
+
+pub fn session(paths: &AppPaths, args: SessionArgs) -> Result<(), TskError> {
+    paths.require_initialized()?;
+    match args.subcommand {
+        SessionSubcommand::Start { id } => session_start(paths, id),
+        SessionSubcommand::End => session_end(paths),
+    }
+}
+
+pub fn commit(paths: &AppPaths, args: CommitArgs) -> Result<(), TskError> {
+    paths.require_initialized()?;
+    let git = CliGit;
+    let repo = paths.tsk_repo.as_std_path().to_path_buf();
+    let tracked = [
+        paths.tsk_repo.join("issues"),
+        paths.tsk_repo.join("templates"),
+        paths.config_path(),
+    ];
+    let refs = tracked
+        .iter()
+        .map(|path| path.as_std_path())
+        .collect::<Vec<_>>();
+    git.add(repo.as_path(), &refs)?;
+    let message = format!(
+        "tsk: manual commit {}",
+        crate::services::issue_service::now_utc()
+    );
+    if args.edit {
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .arg("commit")
+            .arg("--edit")
+            .arg("-m")
+            .arg(&message)
+            .status()
+            .context("failed to run git commit")
+            .map_err(TskError::Other)?;
+        if !status.success() {
+            return Err(TskError::General("git commit failed".into()));
+        }
+        return Ok(());
+    }
+    git.commit(repo.as_path(), &message)
+}
+
+fn session_start(paths: &AppPaths, id: Option<String>) -> Result<(), TskError> {
+    if session_store::load_session(paths.session_state_path().as_std_path())?.is_some() {
+        return Err(TskError::Conflict("session already active".into()));
+    }
+    let git = CliGit;
+    let repo = current_repo()?;
+    let previous_branch = git.current_branch(repo.as_path())?;
+    let session_branch = if let Some(ref id) = id {
+        let path = crate::storage::issue_store::find_issue(paths, id)?;
+        let mut issue =
+            crate::storage::frontmatter::load_issue(path.as_std_path()).map_err(TskError::Other)?;
+        let branch = issue.frontmatter.id_slug.clone().unwrap_or_else(|| {
+            crate::services::issue_service::generate_slug(
+                &issue.frontmatter.id,
+                &issue.frontmatter.title,
+            )
+        });
+        if !git.branch_exists(repo.as_path(), &branch)? {
+            git.create_branch(repo.as_path(), &branch)?;
+        } else {
+            git.checkout(repo.as_path(), &branch)?;
+        }
+        issue.frontmatter.branch = Some(branch.clone());
+        crate::storage::frontmatter::save_issue(path.as_std_path(), &issue)
+            .map_err(TskError::Other)?;
+        branch
+    } else {
+        let branch = format!(
+            "tsk-session-{}",
+            crate::services::issue_service::now_utc().replace(':', "-")
+        );
+        git.create_branch(repo.as_path(), &branch)?;
+        branch
+    };
+    session_store::save_session(
+        paths.session_state_path().as_std_path(),
+        &SessionState {
+            previous_branch,
+            session_branch: session_branch.clone(),
+            issue_id: id,
+            started_at: crate::services::issue_service::now_utc(),
+        },
+    )?;
+    println!("{session_branch}");
+    Ok(())
+}
+
+fn session_end(paths: &AppPaths) -> Result<(), TskError> {
+    let Some(session) = session_store::load_session(paths.session_state_path().as_std_path())?
+    else {
+        return Err(TskError::NotFound("no active session".into()));
+    };
+    let git = CliGit;
+    let repo = current_repo()?;
+    if git.has_working_tree_changes(paths.tsk_repo.as_std_path())? {
+        commit(paths, CommitArgs { edit: false })?;
+    }
+    git.checkout(repo.as_path(), &session.previous_branch)?;
+    session_store::clear_session(paths.session_state_path().as_std_path())?;
+    Ok(())
+}
+
+fn current_repo() -> Result<std::path::PathBuf, TskError> {
+    std::env::current_dir().map_err(TskError::from)
+}

@@ -1,0 +1,32 @@
+version: 1
+defaults:
+  board: personal
+  state: todo
+  priority: medium
+  assignee: tester
+  template: task
+remotes:
+  - name: wormhole-router
+    type: gitlab
+    host: https://gitlab.example.com
+    repo: chrono/wormhole-router
+    default_board: personal
+    default_org: chrono
+boards:
+  - name: personal
+    states: [backlog, todo, in-progress, review, done]
+ui:
+  opener: "nvim -R"
+  tree_depth: 2
+  fzf_opts: "--border"
+ai:
+  enabled: false
+  model: claude-haiku-4-5-20251001
+  features:
+    new_body_gen: true
+    triage: true
+    summarize: true
+    ask: true
+sync:
+  conflict_detection: true
+recurring: []
