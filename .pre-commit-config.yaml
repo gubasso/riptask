@@ -56,6 +56,14 @@ repos:
         types: [rust]
         pass_filenames: false
 
+      - id: cargo-nextest-lib
+        name: cargo nextest (unit)
+        entry: cargo nextest run --lib
+        language: system           # requires: cargo-nextest
+        types: [rust]
+        pass_filenames: false
+        stages: [pre-commit]
+
       - id: taplo-format
         name: taplo format
         entry: taplo format
@@ -114,6 +122,13 @@ repos:
         name: cargo deny
         entry: cargo deny check advisories bans sources
         language: system           # requires: cargo-deny
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: cargo-nextest-full
+        name: cargo nextest (full)
+        entry: cargo nextest run
+        language: system           # requires: cargo-nextest
         pass_filenames: false
         stages: [pre-push]
 
