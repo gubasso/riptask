@@ -41,3 +41,44 @@ pub fn resolve_scope(
 pub fn lookup_project<'a>(config: &'a Config, name: &str) -> Option<&'a RemoteConfig> {
     config.remotes.iter().find(|remote| remote.name == name)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{ProjectScope, resolve_scope};
+    use crate::config::default_config;
+    use camino::Utf8PathBuf;
+    use tempfile::tempdir;
+
+    #[test]
+    fn resolve_scope_returns_all_projects_when_flag_is_set() {
+        let temp = tempdir().expect("temp dir");
+        let cwd = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).expect("utf8 path");
+        let config = default_config();
+
+        let scope = resolve_scope(&[], true, &cwd, &config).expect("scope");
+
+        assert_eq!(scope, ProjectScope::AllProjects);
+    }
+
+    #[test]
+    fn resolve_scope_returns_explicit_projects_when_provided() {
+        let temp = tempdir().expect("temp dir");
+        let cwd = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).expect("utf8 path");
+        let config = default_config();
+
+        let scope = resolve_scope(&["foo".into()], false, &cwd, &config).expect("scope");
+
+        assert_eq!(scope, ProjectScope::Explicit(vec!["foo".into()]));
+    }
+
+    #[test]
+    fn resolve_scope_falls_back_to_all_projects_when_detection_fails() {
+        let temp = tempdir().expect("temp dir");
+        let cwd = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).expect("utf8 path");
+        let config = default_config();
+
+        let scope = resolve_scope(&[], false, &cwd, &config).expect("scope");
+
+        assert_eq!(scope, ProjectScope::AllProjects);
+    }
+}

@@ -1,7 +1,7 @@
 use crate::cli::{
     CommitArgs, ResolveArgs, SessionArgs, SessionSubcommand, SyncArgs, SyncSubcommand,
 };
-use crate::config::load_config;
+use crate::config::{Config, RemoteConfig, RemoteType, load_config};
 use crate::domain::session::SessionState;
 use crate::error::RiptskError;
 use crate::paths::AppPaths;
@@ -10,6 +10,7 @@ use crate::services::sync_engine::SyncEngine;
 use crate::storage::session as session_store;
 use crate::{adapters::git::CliGit, adapters::git::GitBackend};
 use anyhow::Context;
+use std::collections::HashSet;
 
 pub async fn run(paths: &AppPaths, args: SyncArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
@@ -28,15 +29,7 @@ pub async fn run(paths: &AppPaths, args: SyncArgs) -> Result<(), RiptskError> {
 async fn pull(paths: &AppPaths, args: &SyncArgs) -> Result<(), RiptskError> {
     let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
     let engine = SyncEngine::new(paths, &config);
-    for remote in config.remotes.iter().filter(|remote| {
-        matches!(
-            remote.remote_type,
-            crate::config::RemoteType::Github | crate::config::RemoteType::Gitlab
-        ) && args
-            .remote
-            .as_deref()
-            .is_none_or(|name| remote.name == name)
-    }) {
+    for remote in resolve_sync_remotes(args, &config)? {
         let provider = build_provider_for_remote(remote)?;
         let _ = engine.pull(provider.as_ref(), remote, args.force).await?;
     }
@@ -46,31 +39,111 @@ async fn pull(paths: &AppPaths, args: &SyncArgs) -> Result<(), RiptskError> {
 async fn push(paths: &AppPaths, args: &SyncArgs) -> Result<(), RiptskError> {
     let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
     let engine = SyncEngine::new(paths, &config);
-    for remote in config.remotes.iter().filter(|remote| {
-        matches!(
-            remote.remote_type,
-            crate::config::RemoteType::Github | crate::config::RemoteType::Gitlab
-        ) && args
-            .remote
-            .as_deref()
-            .is_none_or(|name| remote.name == name)
-    }) {
+    for remote in resolve_sync_remotes(args, &config)? {
         let provider = build_provider_for_remote(remote)?;
         let _ = engine.push(provider.as_ref(), remote).await?;
     }
     Ok(())
 }
 
-fn status(paths: &AppPaths, _args: &SyncArgs) -> Result<(), RiptskError> {
+fn status(paths: &AppPaths, args: &SyncArgs) -> Result<(), RiptskError> {
     let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let remote_names = resolve_sync_remotes(args, &config)?
+        .into_iter()
+        .map(|remote| remote.name.as_str())
+        .collect::<HashSet<_>>();
     let summary = SyncEngine::new(paths, &config).status()?;
     for id in summary.conflicts {
-        println!("CONFLICT {id}");
+        if issue_matches_remote_scope(paths, &id, &remote_names)? {
+            println!("CONFLICT {id}");
+        }
     }
     for id in summary.pushes {
-        println!("PUSH {id}");
+        if issue_matches_remote_scope(paths, &id, &remote_names)? {
+            println!("PUSH {id}");
+        }
     }
     Ok(())
+}
+
+fn resolve_sync_remotes<'a>(
+    args: &SyncArgs,
+    config: &'a Config,
+) -> Result<Vec<&'a RemoteConfig>, RiptskError> {
+    if let Some(name) = args.remote.as_deref() {
+        return Ok(hosted_remotes(config)
+            .into_iter()
+            .filter(|remote| remote.name == name)
+            .collect());
+    }
+    if args.scope.all_projects {
+        return Ok(hosted_remotes(config));
+    }
+    if !args.scope.projects.is_empty() {
+        return args
+            .scope
+            .projects
+            .iter()
+            .map(|project| {
+                config
+                    .remotes
+                    .iter()
+                    .find(|remote| remote.name == *project)
+                    .ok_or_else(|| RiptskError::Unregistered(project.clone()))
+            })
+            .map(|result| {
+                result.and_then(|remote| {
+                    if matches!(remote.remote_type, RemoteType::Github | RemoteType::Gitlab) {
+                        Ok(remote)
+                    } else {
+                        Err(RiptskError::Config(format!(
+                            "sync target must be github or gitlab: {}",
+                            remote.name
+                        )))
+                    }
+                })
+            })
+            .collect();
+    }
+
+    let cwd = camino::Utf8PathBuf::from(
+        std::env::current_dir()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string(),
+    );
+    if let Ok(Some(remote)) = crate::services::project_detection::detect_from_cwd(&cwd, config)
+        && let Some(candidate) = config.remotes.iter().find(|candidate| {
+            candidate.name == remote.name
+                && matches!(
+                    candidate.remote_type,
+                    RemoteType::Github | RemoteType::Gitlab
+                )
+        })
+    {
+        return Ok(vec![candidate]);
+    }
+
+    Ok(hosted_remotes(config))
+}
+
+fn issue_matches_remote_scope(
+    paths: &AppPaths,
+    id: &str,
+    remote_names: &HashSet<&str>,
+) -> Result<bool, RiptskError> {
+    let path = crate::storage::issue_store::find_issue(paths, id)?;
+    let issue =
+        crate::storage::frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
+    Ok(remote_names.contains(issue.frontmatter.project.as_str()))
+}
+
+fn hosted_remotes(config: &Config) -> Vec<&RemoteConfig> {
+    config
+        .remotes
+        .iter()
+        .filter(|remote| matches!(remote.remote_type, RemoteType::Github | RemoteType::Gitlab))
+        .collect()
 }
 
 pub fn resolve(paths: &AppPaths, args: ResolveArgs) -> Result<(), RiptskError> {

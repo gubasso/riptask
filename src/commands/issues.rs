@@ -40,7 +40,8 @@ pub fn list(paths: &AppPaths, args: LsArgs) -> Result<(), RiptskError> {
             .to_string_lossy()
             .to_string(),
     );
-    let scope = crate::scope::resolve_scope(&args.projects, args.all_projects, &cwd, &config)?;
+    let scope =
+        crate::scope::resolve_scope(&args.scope.projects, args.scope.all_projects, &cwd, &config)?;
     let service = IssueService::new(paths, &config);
     for issue in service.list_matching(&args, &scope)? {
         let marker = if issue.frontmatter.conflict.is_some() {

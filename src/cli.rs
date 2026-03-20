@@ -16,7 +16,7 @@ pub struct Cli {
 pub struct ScopeArgs {
     #[arg(long = "project", short = 'p')]
     pub projects: Vec<String>,
-    #[arg(long = "all-projects", short = 'A')]
+    #[arg(long = "all-projects", short = 'a')]
     pub all_projects: bool,
 }
 
@@ -99,14 +99,12 @@ pub struct MoveArgs {
 
 #[derive(Debug, Clone, Args, Default)]
 pub struct LsArgs {
+    #[command(flatten)]
+    pub scope: ScopeArgs,
     #[arg(long)]
     pub state: Option<String>,
     #[arg(long)]
     pub priority: Option<String>,
-    #[arg(long = "project")]
-    pub projects: Vec<String>,
-    #[arg(long = "all-projects", short = 'A')]
-    pub all_projects: bool,
     #[arg(long)]
     pub board: Option<String>,
     #[arg(long)]
@@ -147,6 +145,8 @@ pub struct ReorderArgs {
 pub struct SyncArgs {
     #[command(subcommand)]
     pub subcommand: Option<SyncSubcommand>,
+    #[command(flatten)]
+    pub scope: ScopeArgs,
     #[arg(long)]
     pub all: bool,
     #[arg(long = "remote")]
@@ -168,10 +168,8 @@ pub enum SyncSubcommand {
 
 #[derive(Debug, Clone, Args, Default)]
 pub struct PushArgs {
-    #[arg(long)]
-    pub project: Option<String>,
-    #[arg(long = "all-projects", short = 'A')]
-    pub all_projects: bool,
+    #[command(flatten)]
+    pub scope: ScopeArgs,
     #[arg(long)]
     pub all: bool,
     pub ids: Vec<String>,
@@ -328,4 +326,43 @@ pub enum HooksSubcommand {
         #[arg(long)]
         force: bool,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Cli, Commands};
+    use clap::Parser;
+
+    #[test]
+    fn ls_short_all_projects_parses() {
+        let cli = Cli::try_parse_from(["tsk", "ls", "-a"]).expect("parse");
+        let Commands::Ls(args) = cli.command.expect("command") else {
+            panic!("expected ls command");
+        };
+        assert!(args.scope.all_projects);
+    }
+
+    #[test]
+    fn ls_long_all_projects_parses() {
+        let cli = Cli::try_parse_from(["tsk", "ls", "--all-projects"]).expect("parse");
+        let Commands::Ls(args) = cli.command.expect("command") else {
+            panic!("expected ls command");
+        };
+        assert!(args.scope.all_projects);
+    }
+
+    #[test]
+    fn ls_project_parses_into_scope() {
+        let cli = Cli::try_parse_from(["tsk", "ls", "-p", "foo"]).expect("parse");
+        let Commands::Ls(args) = cli.command.expect("command") else {
+            panic!("expected ls command");
+        };
+        assert_eq!(args.scope.projects, vec!["foo"]);
+    }
+
+    #[test]
+    fn uppercase_all_projects_no_longer_parses() {
+        let result = Cli::try_parse_from(["tsk", "ls", "-A"]);
+        assert!(result.is_err());
+    }
 }
