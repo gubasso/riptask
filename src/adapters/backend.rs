@@ -53,5 +53,12 @@ pub trait BackendProvider: Send + Sync {
         title: &str,
         body: &str,
     ) -> Result<String, RiptskError>;
+    async fn create_branch(
+        &self,
+        repo: &str,
+        branch_name: &str,
+        base_ref: &str,
+        issue_id: u64,
+    ) -> Result<(), RiptskError>;
     async fn default_branch(&self, repo: &str) -> Result<String, RiptskError>;
 }

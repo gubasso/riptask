@@ -6,10 +6,10 @@ use crate::models::Backend;
 use crate::paths::AppPaths;
 use crate::services::auto_commit::maybe_auto_commit;
 use crate::services::backend_mapping::build_provider_for_backend;
-use crate::services::issue_service::generate_slug;
+use crate::services::issue_service::generate_branch_slug;
 use crate::storage::{frontmatter, issue_store};
 
-pub fn branch(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
+pub async fn branch(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
     let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
     let id = args
@@ -17,20 +17,59 @@ pub fn branch(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
         .ok_or_else(|| RiptskError::General("<ID> required".into()))?;
     let path = issue_store::find_issue(paths, &id)?;
     let mut issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
-    let slug = issue
-        .frontmatter
-        .id_slug
-        .clone()
-        .unwrap_or_else(|| generate_slug(&issue.frontmatter.id, &issue.frontmatter.title));
+
+    let backend = config
+        .backends
+        .iter()
+        .find(|b| b.name == issue.frontmatter.project)
+        .ok_or_else(|| RiptskError::Unregistered(issue.frontmatter.project.clone()))?;
+    if backend.backend == Backend::Local {
+        return Err(RiptskError::Config(
+            "cannot create remote branch for local-only project".into(),
+        ));
+    }
+
+    let issue_number = match backend.backend {
+        Backend::Github => issue.frontmatter.github.as_ref().and_then(|m| m.issue_id),
+        Backend::Gitlab => issue.frontmatter.gitlab.as_ref().and_then(|m| m.issue_id),
+        Backend::Local => None,
+    }
+    .ok_or_else(|| {
+        RiptskError::Config(format!(
+            "issue {} is missing backend metadata (remote issue ID)",
+            issue.frontmatter.id
+        ))
+    })?;
+
+    let slug = generate_branch_slug(issue_number, &issue.frontmatter.title);
+
     let repo = current_repo()?;
     let git = CliGit;
-    if git.branch_exists(repo.as_path(), &slug)? {
-        return Err(RiptskError::General(format!(
-            "branch already exists: {slug}"
-        )));
+
+    let provider = build_provider_for_backend(backend)?;
+    let repo_name = backend.repo.as_deref().unwrap_or_default();
+    let base = provider.default_branch(repo_name).await?;
+
+    // Always attempt remote branch creation to ensure the remote state is correct,
+    // even if a local branch already exists from a prior partial run.
+    // Tolerate "already exists" so reruns are idempotent.
+    match provider
+        .create_branch(repo_name, &slug, &base, issue_number)
+        .await
+    {
+        Ok(()) => {}
+        Err(ref e) if e.to_string().to_lowercase().contains("already exists") => {
+            eprintln!("remote branch already exists, continuing with local checkout");
+        }
+        Err(e) => return Err(e),
     }
-    git.create_branch(repo.as_path(), &slug)?;
-    git.push_with_upstream(repo.as_path(), &slug)?;
+
+    if !git.branch_exists(repo.as_path(), &slug)? {
+        git.fetch_and_checkout_tracking(repo.as_path(), &slug)?;
+    } else {
+        git.checkout(repo.as_path(), &slug)?;
+    }
+
     issue.frontmatter.id_slug = Some(slug.clone());
     issue.frontmatter.branch = Some(slug.clone());
     frontmatter::save_issue(path.as_std_path(), &issue).map_err(RiptskError::Other)?;

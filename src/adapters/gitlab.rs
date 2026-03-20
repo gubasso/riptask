@@ -158,6 +158,27 @@ impl BackendProvider for GitlabProvider {
         Ok(merge_request.web_url)
     }
 
+    async fn create_branch(
+        &self,
+        repo: &str,
+        branch_name: &str,
+        base_ref: &str,
+        _issue_id: u64,
+    ) -> Result<(), RiptskError> {
+        let client = self.client().await?;
+        let endpoint = gitlab::api::projects::repository::branches::CreateBranch::builder()
+            .project(repo)
+            .branch(branch_name)
+            .ref_(base_ref)
+            .build()
+            .map_err(|e| RiptskError::Config(e.to_string()))?;
+        let _: serde_json::Value = endpoint
+            .query_async(&client)
+            .await
+            .map_err(|e| RiptskError::Unreachable(e.to_string()))?;
+        Ok(())
+    }
+
     async fn default_branch(&self, repo: &str) -> Result<String, RiptskError> {
         let client = self.client().await?;
         let endpoint = gitlab::api::projects::Project::builder()

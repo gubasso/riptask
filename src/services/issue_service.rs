@@ -440,6 +440,24 @@ pub fn generate_slug(id: &str, title: &str) -> String {
     format!("{id}{suffix}")
 }
 
+pub fn generate_branch_slug(issue_number: u64, title: &str) -> String {
+    let slug = title
+        .to_ascii_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect::<String>();
+    let slug = slug
+        .split('-')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
+    if slug.is_empty() {
+        format!("{issue_number}")
+    } else {
+        format!("{issue_number}-{slug}")
+    }
+}
+
 fn matches_issue(issue: &IssueDocument, args: &LsArgs) -> bool {
     if !args.include_done && issue.frontmatter.state == IssueState::Done {
         return false;
@@ -482,7 +500,7 @@ fn matches_issue(issue: &IssueDocument, args: &LsArgs) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{IssueService, generate_slug};
+    use super::{IssueService, generate_branch_slug, generate_slug};
     use crate::config::load_config;
     use crate::paths::AppPaths;
     use tempfile::tempdir;
@@ -493,6 +511,24 @@ mod tests {
             generate_slug("WHL-042", "Fix wormhole stabilizer"),
             "WHL-042-fix-wormhole-stabilizer"
         );
+    }
+
+    #[test]
+    fn branch_slug_basic() {
+        assert_eq!(
+            generate_branch_slug(42, "Fix wormhole stabilizer"),
+            "42-fix-wormhole-stabilizer"
+        );
+    }
+
+    #[test]
+    fn branch_slug_empty_title() {
+        assert_eq!(generate_branch_slug(7, ""), "7");
+    }
+
+    #[test]
+    fn branch_slug_special_chars() {
+        assert_eq!(generate_branch_slug(99, "foo/bar: baz!"), "99-foo-bar-baz");
     }
 
     #[test]
