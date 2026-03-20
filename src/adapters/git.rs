@@ -12,6 +12,7 @@ pub trait GitBackend {
     fn checkout(&self, repo: &Path, branch: &str) -> Result<(), RiptskError>;
     fn create_branch(&self, repo: &Path, name: &str) -> Result<(), RiptskError>;
     fn branch_exists(&self, repo: &Path, name: &str) -> Result<bool, RiptskError>;
+    fn fetch_and_checkout_tracking(&self, repo: &Path, branch: &str) -> Result<(), RiptskError>;
     fn push_with_upstream(&self, repo: &Path, branch: &str) -> Result<(), RiptskError>;
     fn has_working_tree_changes(&self, repo: &Path) -> Result<bool, RiptskError>;
     fn diff_names(&self, repo: &Path) -> Result<Vec<String>, RiptskError>;
@@ -69,12 +70,19 @@ impl GitBackend for CliGit {
     }
 
     fn branch_exists(&self, repo: &Path, name: &str) -> Result<bool, RiptskError> {
+        let refname = format!("refs/heads/{name}");
         let status = Command::new("git")
             .arg("-C")
             .arg(repo)
-            .args(["rev-parse", "--verify", name])
+            .args(["rev-parse", "--verify", &refname])
             .status()?;
         Ok(status.success())
+    }
+
+    fn fetch_and_checkout_tracking(&self, repo: &Path, branch: &str) -> Result<(), RiptskError> {
+        run_git(repo, ["fetch", "origin", branch])?;
+        let tracking = format!("origin/{branch}");
+        run_git_dynamic(repo, &["checkout", "-b", branch, "--track", &tracking])
     }
 
     fn push_with_upstream(&self, repo: &Path, branch: &str) -> Result<(), RiptskError> {

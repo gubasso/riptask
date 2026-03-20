@@ -157,6 +157,72 @@ impl BackendProvider for GithubProvider {
             .ok_or_else(|| RiptskError::Unreachable(format!("missing PR url for {repo}")))
     }
 
+    async fn create_branch(
+        &self,
+        repo: &str,
+        branch_name: &str,
+        base_ref: &str,
+        issue_id: u64,
+    ) -> Result<(), RiptskError> {
+        let (owner, repo_name) = self.split_owner_repo(repo)?;
+
+        // Resolve base branch to SHA
+        let base = self
+            .client
+            .repos(owner, repo_name)
+            .get_ref(&octocrab::params::repos::Reference::Branch(
+                base_ref.to_owned(),
+            ))
+            .await
+            .map_err(|e| RiptskError::Unreachable(e.to_string()))?;
+        let sha = match base.object {
+            octocrab::models::repos::Object::Commit { sha, .. }
+            | octocrab::models::repos::Object::Tag { sha, .. } => sha,
+            _ => {
+                return Err(RiptskError::Unreachable(format!(
+                    "unsupported git ref object for base branch {base_ref}"
+                )));
+            }
+        };
+
+        // Get issue node_id for GraphQL linking
+        let issue = self
+            .client
+            .issues(owner, repo_name)
+            .get(issue_id)
+            .await
+            .map_err(|e| RiptskError::Unreachable(e.to_string()))?;
+        let issue_node_id = issue.node_id;
+
+        // Use createLinkedBranch GraphQL mutation to create branch linked to issue
+        let query = r#"mutation($issueId: ID!, $oid: GitObjectID!, $name: String) {
+            createLinkedBranch(input: {issueId: $issueId, oid: $oid, name: $name}) {
+                linkedBranch { ref { name } }
+            }
+        }"#;
+        let payload = serde_json::json!({
+            "query": query,
+            "variables": {
+                "issueId": issue_node_id,
+                "oid": sha,
+                "name": branch_name,
+            }
+        });
+        let response: serde_json::Value = self
+            .client
+            .graphql(&payload)
+            .await
+            .map_err(|e| RiptskError::Unreachable(e.to_string()))?;
+
+        if let Some(errors) = response.get("errors") {
+            return Err(RiptskError::Unreachable(format!(
+                "GitHub createLinkedBranch failed: {errors}"
+            )));
+        }
+
+        Ok(())
+    }
+
     async fn default_branch(&self, repo: &str) -> Result<String, RiptskError> {
         let (owner, repo_name) = self.split_owner_repo(repo)?;
         let repository = self
