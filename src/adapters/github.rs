@@ -9,13 +9,10 @@ pub struct GithubProvider {
 }
 
 impl GithubProvider {
-    pub fn new(token: Option<&str>) -> Result<Self, RiptskError> {
+    pub fn new(token: &str) -> Result<Self, RiptskError> {
         let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-        let mut builder = octocrab::Octocrab::builder();
-        if let Some(token) = token {
-            builder = builder.personal_token(token.to_owned());
-        }
-        let client = builder
+        let client = octocrab::Octocrab::builder()
+            .personal_token(token.to_owned())
             .build()
             .map_err(|error| RiptskError::Unreachable(error.to_string()))?;
         Ok(Self { client })
