@@ -1,6 +1,7 @@
 use crate::adapters::prompts::PromptBackend;
-use crate::config::{Config, RemoteConfig, RemoteType};
+use crate::config::Config;
 use crate::error::RiptskError;
+use crate::models::{Backend, BackendConfig};
 use anyhow::Context;
 use camino::Utf8Path;
 use std::process::Command;
@@ -8,7 +9,7 @@ use std::process::Command;
 pub fn detect_from_cwd(
     cwd: &Utf8Path,
     config: &Config,
-) -> Result<Option<RemoteConfig>, RiptskError> {
+) -> Result<Option<BackendConfig>, RiptskError> {
     let output = Command::new("git")
         .arg("-C")
         .arg(cwd)
@@ -22,10 +23,10 @@ pub fn detect_from_cwd(
     if !output.status.success() {
         // No git remote — try matching by path for local projects
         return Ok(config
-            .remotes
+            .backends
             .iter()
-            .find(|remote| {
-                remote
+            .find(|backend| {
+                backend
                     .path
                     .as_ref()
                     .is_some_and(|p| path_is_under(cwd.as_str(), p))
@@ -36,19 +37,19 @@ pub fn detect_from_cwd(
     let url = String::from_utf8_lossy(&output.stdout);
     let normalized = normalize_url(url.trim());
     // First try URL-based matching
-    if let Some(remote) = config
-        .remotes
+    if let Some(backend) = config
+        .backends
         .iter()
-        .find(|remote| normalized == normalized_remote(remote))
+        .find(|backend| normalized == normalized_backend(backend))
     {
-        return Ok(Some(remote.clone()));
+        return Ok(Some(backend.clone()));
     }
     // Fallback: match local projects by path
     Ok(config
-        .remotes
+        .backends
         .iter()
-        .find(|remote| {
-            remote
+        .find(|backend| {
+            backend
                 .path
                 .as_ref()
                 .is_some_and(|p| path_is_under(cwd.as_str(), p))
@@ -90,16 +91,16 @@ pub fn normalize_url(url: &str) -> String {
     }
 }
 
-pub fn infer_type(host: &str) -> RemoteType {
+pub fn infer_type(host: &str) -> Backend {
     match host {
-        "github.com" => RemoteType::Github,
-        value if value.contains("gitlab") => RemoteType::Gitlab,
-        _ => RemoteType::Local,
+        "github.com" => Backend::Github,
+        value if value.contains("gitlab") => Backend::Gitlab,
+        _ => Backend::Local,
     }
 }
 
-pub fn normalized_remote(remote: &RemoteConfig) -> String {
-    match (&remote.host, &remote.repo) {
+pub fn normalized_backend(backend: &BackendConfig) -> String {
+    match (&backend.host, &backend.repo) {
         (Some(host), Some(repo)) => {
             let host = host
                 .strip_prefix("https://")
@@ -107,10 +108,10 @@ pub fn normalized_remote(remote: &RemoteConfig) -> String {
                 .unwrap_or(host);
             format!("{}:{}", host.trim_end_matches('/'), repo)
         }
-        (None, Some(repo)) if remote.remote_type == RemoteType::Github => {
+        (None, Some(repo)) if backend.backend == Backend::Github => {
             format!("github.com:{repo}")
         }
-        (None, Some(repo)) if remote.remote_type == RemoteType::Gitlab => {
+        (None, Some(repo)) if backend.backend == Backend::Gitlab => {
             format!("gitlab.com:{repo}")
         }
         _ => String::new(),
@@ -120,7 +121,7 @@ pub fn normalized_remote(remote: &RemoteConfig) -> String {
 pub fn register_project_auto(
     cwd: &Utf8Path,
     config: &mut Config,
-) -> Result<Option<RemoteConfig>, RiptskError> {
+) -> Result<Option<BackendConfig>, RiptskError> {
     if let Some(existing) = detect_from_cwd(cwd, config)? {
         return Ok(Some(existing));
     }
@@ -133,17 +134,17 @@ pub fn register_project_auto(
         let (host, repo) = split_host_repo(&normalized)
             .ok_or_else(|| RiptskError::General("failed to normalize git remote URL".into()))?;
         let name = repo.rsplit('/').next().unwrap_or(repo).to_owned();
-        let remote = RemoteConfig {
+        let backend = BackendConfig {
             name: name.clone(),
-            remote_type: infer_type(host),
+            backend: infer_type(host),
             host: Some(format!("https://{}", host.trim_end_matches('/'))),
             repo: Some(repo.to_owned()),
             default_board: Some("personal".into()),
             default_org: None,
             path: None,
         };
-        config.remotes.push(remote.clone());
-        return Ok(Some(remote));
+        config.backends.push(backend.clone());
+        return Ok(Some(backend));
     }
 
     if is_inside_work_tree(cwd)? {
@@ -151,17 +152,17 @@ pub fn register_project_auto(
         let path = std::fs::canonicalize(cwd.as_std_path())
             .map(|value| value.to_string_lossy().to_string())
             .unwrap_or_else(|_| cwd.as_str().to_owned());
-        let remote = RemoteConfig {
+        let backend = BackendConfig {
             name: name.clone(),
-            remote_type: RemoteType::Local,
+            backend: Backend::Local,
             host: None,
             repo: None,
             default_board: Some("personal".into()),
             default_org: None,
             path: Some(path),
         };
-        config.remotes.push(remote.clone());
-        return Ok(Some(remote));
+        config.backends.push(backend.clone());
+        return Ok(Some(backend));
     }
 
     Ok(None)
@@ -203,7 +204,7 @@ pub fn register_project_interactive(
     config: &mut Config,
     prompts: &dyn PromptBackend,
     cwd: &Utf8Path,
-) -> Result<RemoteConfig, RiptskError> {
+) -> Result<BackendConfig, RiptskError> {
     if let Some(existing) = detect_from_cwd(cwd, config)? {
         return Ok(existing);
     }
@@ -224,7 +225,7 @@ pub fn register_project_interactive(
         } else {
             (
                 cwd.file_name().unwrap_or("project").to_owned(),
-                RemoteType::Local,
+                Backend::Local,
                 None,
                 None,
                 Some(
@@ -235,30 +236,30 @@ pub fn register_project_interactive(
             )
         };
 
-    let name = prompts.input("Remote name", Some(&default_name))?;
-    let remote_type = match prompts
+    let name = prompts.input("Backend name", Some(&default_name))?;
+    let backend = match prompts
         .select(
-            "Remote type",
+            "Backend type",
             &["github".into(), "gitlab".into(), "local".into()],
             match default_type {
-                RemoteType::Github => 0,
-                RemoteType::Gitlab => 1,
-                RemoteType::Local => 2,
+                Backend::Github => 0,
+                Backend::Gitlab => 1,
+                Backend::Local => 2,
             },
         )?
         .as_str()
     {
-        "github" => RemoteType::Github,
-        "gitlab" => RemoteType::Gitlab,
-        _ => RemoteType::Local,
+        "github" => Backend::Github,
+        "gitlab" => Backend::Gitlab,
+        _ => Backend::Local,
     };
-    let host = if remote_type == RemoteType::Local {
+    let host = if backend == Backend::Local {
         None
     } else {
-        let default_host = default_host.as_deref().unwrap_or(match remote_type {
-            RemoteType::Github => "github.com",
-            RemoteType::Gitlab => "gitlab.com",
-            RemoteType::Local => "",
+        let default_host = default_host.as_deref().unwrap_or(match backend {
+            Backend::Github => "github.com",
+            Backend::Gitlab => "gitlab.com",
+            Backend::Local => "",
         });
         let host = prompts.input("Host", Some(default_host))?;
         Some(format!(
@@ -267,7 +268,7 @@ pub fn register_project_interactive(
                 .trim_start_matches("http://")
         ))
     };
-    let repo = if remote_type == RemoteType::Local {
+    let repo = if backend == Backend::Local {
         None
     } else {
         Some(prompts.input("Repo", default_repo.as_deref())?)
@@ -279,23 +280,23 @@ pub fn register_project_interactive(
         .unwrap_or("personal");
     let default_board = Some(prompts.input("Default board", Some(board_default))?);
 
-    let path = if remote_type == RemoteType::Local {
+    let path = if backend == Backend::Local {
         default_path
     } else {
         None
     };
-    let remote = RemoteConfig {
+    let backend_config = BackendConfig {
         name,
-        remote_type,
+        backend,
         host,
         repo,
         default_board,
         default_org: None,
         path,
     };
-    validate_new_remote(config, &remote)?;
-    config.remotes.push(remote.clone());
-    Ok(remote)
+    validate_new_backend(config, &backend_config)?;
+    config.backends.push(backend_config.clone());
+    Ok(backend_config)
 }
 
 fn is_inside_work_tree(cwd: &Utf8Path) -> Result<bool, RiptskError> {
@@ -310,15 +311,15 @@ fn is_inside_work_tree(cwd: &Utf8Path) -> Result<bool, RiptskError> {
     Ok(status.success())
 }
 
-fn validate_new_remote(config: &Config, remote: &RemoteConfig) -> Result<(), RiptskError> {
+fn validate_new_backend(config: &Config, backend: &BackendConfig) -> Result<(), RiptskError> {
     if config
-        .remotes
+        .backends
         .iter()
-        .any(|candidate| candidate.name == remote.name)
+        .any(|candidate| candidate.name == backend.name)
     {
         return Err(RiptskError::Config(format!(
-            "remote name already exists: {}",
-            remote.name
+            "backend name already exists: {}",
+            backend.name
         )));
     }
     Ok(())
@@ -327,7 +328,7 @@ fn validate_new_remote(config: &Config, remote: &RemoteConfig) -> Result<(), Rip
 #[cfg(test)]
 mod tests {
     use super::{infer_type, normalize_url, split_host_repo};
-    use crate::config::RemoteType;
+    use crate::models::Backend;
 
     #[test]
     fn normalizes_ssh_and_https_urls() {
@@ -343,9 +344,9 @@ mod tests {
 
     #[test]
     fn infers_remote_type_from_host() {
-        assert_eq!(infer_type("github.com"), RemoteType::Github);
-        assert_eq!(infer_type("gitlab.example.com"), RemoteType::Gitlab);
-        assert_eq!(infer_type("codeberg.org"), RemoteType::Local);
+        assert_eq!(infer_type("github.com"), Backend::Github);
+        assert_eq!(infer_type("gitlab.example.com"), Backend::Gitlab);
+        assert_eq!(infer_type("codeberg.org"), Backend::Local);
     }
 
     #[test]

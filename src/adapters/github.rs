@@ -1,4 +1,4 @@
-use crate::adapters::remote::{RemoteIssueRecord, RemoteIssueUpsert, RemoteProvider};
+use crate::adapters::backend::{BackendIssueRecord, BackendIssueUpsert, BackendProvider};
 use crate::error::RiptskError;
 use async_trait::async_trait;
 use octocrab::models;
@@ -25,8 +25,8 @@ impl GithubProvider {
 }
 
 #[async_trait]
-impl RemoteProvider for GithubProvider {
-    async fn list_issues(&self, repo: &str) -> Result<Vec<RemoteIssueRecord>, RiptskError> {
+impl BackendProvider for GithubProvider {
+    async fn list_issues(&self, repo: &str) -> Result<Vec<BackendIssueRecord>, RiptskError> {
         let (owner, repo_name) = self.split_owner_repo(repo)?;
         let page = self
             .client
@@ -52,8 +52,8 @@ impl RemoteProvider for GithubProvider {
     async fn create_issue(
         &self,
         repo: &str,
-        issue: &RemoteIssueUpsert,
-    ) -> Result<RemoteIssueRecord, RiptskError> {
+        issue: &BackendIssueUpsert,
+    ) -> Result<BackendIssueRecord, RiptskError> {
         let (owner, repo_name) = self.split_owner_repo(repo)?;
         let handler = self.client.issues(owner, repo_name);
         let mut builder = handler
@@ -74,8 +74,8 @@ impl RemoteProvider for GithubProvider {
         &self,
         repo: &str,
         issue_id: u64,
-        issue: &RemoteIssueUpsert,
-    ) -> Result<RemoteIssueRecord, RiptskError> {
+        issue: &BackendIssueUpsert,
+    ) -> Result<BackendIssueRecord, RiptskError> {
         let (owner, repo_name) = self.split_owner_repo(repo)?;
         let handler = self.client.issues(owner, repo_name);
         let assignees = issue
@@ -171,8 +171,8 @@ impl RemoteProvider for GithubProvider {
     }
 }
 
-fn map_issue(issue: models::issues::Issue) -> RemoteIssueRecord {
-    RemoteIssueRecord {
+fn map_issue(issue: models::issues::Issue) -> BackendIssueRecord {
+    BackendIssueRecord {
         issue_id: issue.number,
         title: issue.title,
         state: match issue.state {

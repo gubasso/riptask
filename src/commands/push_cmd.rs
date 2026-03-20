@@ -1,64 +1,65 @@
 use crate::cli::PushArgs;
-use crate::config::{Config, RemoteConfig, RemoteType, load_config};
-use crate::domain::remote_state::remote_state_key;
+use crate::config::{Config, load_config};
+use crate::domain::backend_state::backend_state_key;
 use crate::error::RiptskError;
+use crate::models::{Backend, BackendConfig};
 use crate::paths::AppPaths;
 use crate::services::auto_commit::maybe_auto_commit;
-use crate::services::remote_mapping::{
-    build_provider_for_remote, current_timestamp, issue_to_upsert, remote_state_entry,
-    update_issue_from_remote,
+use crate::services::backend_mapping::{
+    backend_state_entry, build_provider_for_backend, current_timestamp, issue_to_upsert,
+    update_issue_from_backend,
 };
 use crate::storage::{cache, frontmatter, issue_store};
 
 pub fn run(paths: &AppPaths, args: PushArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
     let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
-    let remotes = resolve_remotes(&config, &args)?;
-    for remote in remotes {
-        push_remote(paths, &config, remote, &args)?;
+    let backends = resolve_backends(&config, &args)?;
+    for backend in backends {
+        push_backend(paths, &config, backend, &args)?;
     }
     Ok(())
 }
 
-fn push_remote(
+fn push_backend(
     paths: &AppPaths,
     config: &Config,
-    remote: &RemoteConfig,
+    backend: &BackendConfig,
     args: &PushArgs,
 ) -> Result<(), RiptskError> {
-    if !matches!(remote.remote_type, RemoteType::Github | RemoteType::Gitlab) {
+    if !matches!(backend.backend, Backend::Github | Backend::Gitlab) {
         return Err(RiptskError::Config(format!(
             "push target must be github or gitlab: {}",
-            remote.name
+            backend.name
         )));
     }
 
-    let provider = build_provider_for_remote(remote)?;
+    let provider = build_provider_for_backend(backend)?;
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|error| RiptskError::Other(error.into()))?;
-    let mut remote_state = cache::load_remote_state(paths).map_err(RiptskError::Other)?;
+    let mut backend_state = cache::load_backend_state(paths).map_err(RiptskError::Other)?;
     let mut changed_paths = Vec::new();
 
-    for path in collect_push_paths(paths, remote, args)? {
+    for path in collect_push_paths(paths, backend, args)? {
         let issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
-        let issue_id = match remote.remote_type {
-            RemoteType::Github => issue
+        let issue_id = match backend.backend {
+            Backend::Github => issue
                 .frontmatter
                 .github
                 .as_ref()
                 .and_then(|meta| meta.issue_id),
-            RemoteType::Gitlab => issue
+            Backend::Gitlab => issue
                 .frontmatter
                 .gitlab
                 .as_ref()
                 .and_then(|meta| meta.issue_id),
-            RemoteType::Local => None,
+            Backend::Local => None,
         };
         let Some(issue_id) = issue_id else {
             eprintln!(
-                "skipping {}: missing remote issue metadata",
+                "skipping {}: missing backend issue metadata",
                 issue.frontmatter.id
             );
             continue;
@@ -66,47 +67,47 @@ fn push_remote(
 
         let upsert = issue_to_upsert(&issue);
         let mut record = runtime.block_on(provider.update_issue(
-            remote.repo.as_deref().unwrap_or_default(),
+            backend.repo.as_deref().unwrap_or_default(),
             issue_id,
             &upsert,
         ))?;
         runtime.block_on(provider.sync_labels(
-            remote.repo.as_deref().unwrap_or_default(),
+            backend.repo.as_deref().unwrap_or_default(),
             issue_id,
             &upsert.labels,
         ))?;
         if issue.frontmatter.state == crate::domain::issue::IssueState::Done {
             runtime.block_on(
-                provider.close_issue(remote.repo.as_deref().unwrap_or_default(), issue_id),
+                provider.close_issue(backend.repo.as_deref().unwrap_or_default(), issue_id),
             )?;
             record.state = "closed".into();
         } else {
             runtime.block_on(
-                provider.reopen_issue(remote.repo.as_deref().unwrap_or_default(), issue_id),
+                provider.reopen_issue(backend.repo.as_deref().unwrap_or_default(), issue_id),
             )?;
             record.state = "open".into();
         }
         record.updated_at = current_timestamp();
 
         let mut updated = issue;
-        update_issue_from_remote(&mut updated, &record, remote);
+        update_issue_from_backend(&mut updated, &record, backend);
         frontmatter::save_issue(path.as_std_path(), &updated).map_err(RiptskError::Other)?;
         changed_paths.push(path.clone());
-        remote_state.insert(
-            remote_state_key(
-                match remote.remote_type {
-                    RemoteType::Github => "github",
-                    RemoteType::Gitlab => "gitlab",
-                    RemoteType::Local => "local",
+        backend_state.insert(
+            backend_state_key(
+                match backend.backend {
+                    Backend::Github => "github",
+                    Backend::Gitlab => "gitlab",
+                    Backend::Local => "local",
                 },
-                remote.repo.as_deref().unwrap_or_default(),
+                backend.repo.as_deref().unwrap_or_default(),
                 record.issue_id,
             ),
-            remote_state_entry(&record),
+            backend_state_entry(&record),
         );
     }
 
-    cache::save_remote_state(paths, &remote_state).map_err(RiptskError::Other)?;
+    cache::save_backend_state(paths, &backend_state).map_err(RiptskError::Other)?;
     let mut file_refs = changed_paths
         .iter()
         .map(|path| path.as_std_path())
@@ -117,18 +118,18 @@ fn push_remote(
         config,
         &crate::adapters::git::CliGit,
         paths.riptsk_repo.as_std_path(),
-        &format!("riptsk: push local issues to {}", remote.name),
+        &format!("riptsk: push local issues to {}", backend.name),
         &file_refs,
     )?;
     Ok(())
 }
 
-fn resolve_remotes<'a>(
+fn resolve_backends<'a>(
     config: &'a Config,
     args: &PushArgs,
-) -> Result<Vec<&'a RemoteConfig>, RiptskError> {
+) -> Result<Vec<&'a BackendConfig>, RiptskError> {
     if args.scope.all_projects {
-        return Ok(hosted_remotes(config));
+        return Ok(hosted_backends(config));
     }
     if !args.scope.projects.is_empty() {
         return args
@@ -137,9 +138,9 @@ fn resolve_remotes<'a>(
             .iter()
             .map(|project| {
                 config
-                    .remotes
+                    .backends
                     .iter()
-                    .find(|remote| remote.name == *project)
+                    .find(|backend| backend.name == *project)
                     .ok_or_else(|| RiptskError::Unregistered(project.clone()))
             })
             .collect();
@@ -150,20 +151,20 @@ fn resolve_remotes<'a>(
             .to_string_lossy()
             .to_string(),
     );
-    if let Ok(Some(remote)) = crate::services::project_detection::detect_from_cwd(&cwd, config) {
+    if let Ok(Some(backend)) = crate::services::project_detection::detect_from_cwd(&cwd, config) {
         return config
-            .remotes
+            .backends
             .iter()
-            .find(|candidate| candidate.name == remote.name)
+            .find(|candidate| candidate.name == backend.name)
             .map(|candidate| vec![candidate])
-            .ok_or_else(|| RiptskError::Unregistered(remote.name));
+            .ok_or_else(|| RiptskError::Unregistered(backend.name));
     }
-    Ok(hosted_remotes(config))
+    Ok(hosted_backends(config))
 }
 
 fn collect_push_paths(
     paths: &AppPaths,
-    remote: &RemoteConfig,
+    backend: &BackendConfig,
     args: &PushArgs,
 ) -> Result<Vec<camino::Utf8PathBuf>, RiptskError> {
     if !args.ids.is_empty() {
@@ -175,7 +176,7 @@ fn collect_push_paths(
             .collect::<Result<Vec<_>, _>>()?
         {
             let issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
-            if issue.frontmatter.project == remote.name {
+            if issue.frontmatter.project == backend.name {
                 paths_to_push.push(path);
             }
         }
@@ -185,7 +186,7 @@ fn collect_push_paths(
     let mut paths_to_push = Vec::new();
     for path in issue_store::list_issues(paths)? {
         let issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
-        if issue.frontmatter.project != remote.name {
+        if issue.frontmatter.project != backend.name {
             continue;
         }
         paths_to_push.push(path);
@@ -193,10 +194,10 @@ fn collect_push_paths(
     Ok(paths_to_push)
 }
 
-fn hosted_remotes(config: &Config) -> Vec<&RemoteConfig> {
+fn hosted_backends(config: &Config) -> Vec<&BackendConfig> {
     config
-        .remotes
+        .backends
         .iter()
-        .filter(|remote| matches!(remote.remote_type, RemoteType::Github | RemoteType::Gitlab))
+        .filter(|backend| matches!(backend.backend, Backend::Github | Backend::Gitlab))
         .collect()
 }

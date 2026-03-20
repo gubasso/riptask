@@ -2,7 +2,7 @@ use crate::error::RiptskError;
 use async_trait::async_trait;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct RemoteIssueRecord {
+pub struct BackendIssueRecord {
     pub issue_id: u64,
     pub title: String,
     pub state: String,
@@ -16,7 +16,7 @@ pub struct RemoteIssueRecord {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct RemoteIssueUpsert {
+pub struct BackendIssueUpsert {
     pub title: String,
     pub body: String,
     pub labels: Vec<String>,
@@ -24,19 +24,19 @@ pub struct RemoteIssueUpsert {
 }
 
 #[async_trait]
-pub trait RemoteProvider: Send + Sync {
-    async fn list_issues(&self, repo: &str) -> Result<Vec<RemoteIssueRecord>, RiptskError>;
+pub trait BackendProvider: Send + Sync {
+    async fn list_issues(&self, repo: &str) -> Result<Vec<BackendIssueRecord>, RiptskError>;
     async fn create_issue(
         &self,
         repo: &str,
-        issue: &RemoteIssueUpsert,
-    ) -> Result<RemoteIssueRecord, RiptskError>;
+        issue: &BackendIssueUpsert,
+    ) -> Result<BackendIssueRecord, RiptskError>;
     async fn update_issue(
         &self,
         repo: &str,
         issue_id: u64,
-        issue: &RemoteIssueUpsert,
-    ) -> Result<RemoteIssueRecord, RiptskError>;
+        issue: &BackendIssueUpsert,
+    ) -> Result<BackendIssueRecord, RiptskError>;
     async fn close_issue(&self, repo: &str, issue_id: u64) -> Result<(), RiptskError>;
     async fn reopen_issue(&self, repo: &str, issue_id: u64) -> Result<(), RiptskError>;
     async fn sync_labels(

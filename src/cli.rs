@@ -149,8 +149,8 @@ pub struct SyncArgs {
     pub scope: ScopeArgs,
     #[arg(long)]
     pub all: bool,
-    #[arg(long = "remote")]
-    pub remote: Option<String>,
+    #[arg(long = "backend")]
+    pub backend: Option<String>,
     #[arg(long)]
     pub force: bool,
     #[arg(long)]

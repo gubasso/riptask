@@ -1,7 +1,8 @@
 use crate::cli::{LsArgs, NewArgs};
-use crate::config::{Config, RemoteType, parse_priority, parse_state};
+use crate::config::{Config, parse_priority, parse_state};
 use crate::domain::issue::{IssueDocument, IssueFrontmatter, IssueState, Priority};
 use crate::error::RiptskError;
+use crate::models::Backend;
 use crate::paths::AppPaths;
 use crate::services::issue_ids;
 use crate::services::templates::TemplateService;
@@ -35,7 +36,7 @@ pub struct IssueDraft {
     pub org: Option<String>,
     pub body: String,
     pub order: u32,
-    pub remote_type: Option<RemoteType>,
+    pub backend: Option<Backend>,
     pub repo: Option<String>,
 }
 
@@ -103,7 +104,7 @@ impl<'a> IssueService<'a> {
             order: self
                 .next_order_for_lane(&board, state.as_str())
                 .map_err(RiptskError::Other)?,
-            remote_type: self.project_remote_type(&project),
+            backend: self.project_backend(&project),
             repo: self.project_repo(&project),
         })
     }
@@ -123,7 +124,7 @@ impl<'a> IssueService<'a> {
         &self,
         draft: &IssueDraft,
     ) -> Result<IssueDocument, RiptskError> {
-        let scope = issue_ids::derive_scope(&RemoteType::Local, None, &draft.project);
+        let scope = issue_ids::derive_scope(&Backend::Local, None, &draft.project);
         let sequence =
             issue_ids::next_local_sequence(self.paths, &scope).map_err(RiptskError::Other)?;
         let id = issue_ids::format_id(&scope, sequence);
@@ -243,9 +244,7 @@ impl<'a> IssueService<'a> {
 
     pub fn next_local_sequence(&self, project: &str) -> Result<u64> {
         let scope = issue_ids::derive_scope(
-            &self
-                .project_remote_type(project)
-                .unwrap_or(RemoteType::Local),
+            &self.project_backend(project).unwrap_or(Backend::Local),
             self.project_repo(project).as_deref(),
             project,
         );
@@ -339,36 +338,36 @@ impl<'a> IssueService<'a> {
         }
     }
 
-    fn project_remote_type(&self, project: &str) -> Option<RemoteType> {
+    fn project_backend(&self, project: &str) -> Option<Backend> {
         self.config
-            .remotes
+            .backends
             .iter()
-            .find(|remote| remote.name == project)
-            .map(|remote| remote.remote_type.clone())
+            .find(|backend| backend.name == project)
+            .map(|backend| backend.backend.clone())
     }
 
     fn project_repo(&self, project: &str) -> Option<String> {
         self.config
-            .remotes
+            .backends
             .iter()
-            .find(|remote| remote.name == project)
-            .and_then(|remote| remote.repo.clone())
+            .find(|backend| backend.name == project)
+            .and_then(|backend| backend.repo.clone())
     }
 
     fn project_default_board(&self, project: &str) -> Option<String> {
         self.config
-            .remotes
+            .backends
             .iter()
-            .find(|remote| remote.name == project)
-            .and_then(|remote| remote.default_board.clone())
+            .find(|backend| backend.name == project)
+            .and_then(|backend| backend.default_board.clone())
     }
 
     fn project_default_org(&self, project: &str) -> Option<String> {
         self.config
-            .remotes
+            .backends
             .iter()
-            .find(|remote| remote.name == project)
-            .and_then(|remote| remote.default_org.clone())
+            .find(|backend| backend.name == project)
+            .and_then(|backend| backend.default_org.clone())
     }
 
     fn load_lane(

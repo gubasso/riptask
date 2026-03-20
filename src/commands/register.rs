@@ -8,8 +8,8 @@ pub fn run(paths: &AppPaths, args: RegisterArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
     let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
     if args.list {
-        for remote in config.remotes {
-            println!("{}\t{:?}", remote.name, remote.remote_type);
+        for backend in config.backends {
+            println!("{}\t{:?}", backend.name, backend.backend);
         }
         return Ok(());
     }
@@ -20,12 +20,12 @@ pub fn run(paths: &AppPaths, args: RegisterArgs) -> Result<(), RiptskError> {
             .to_string(),
     );
     let mut config = config;
-    let remote = crate::services::project_detection::register_project_interactive(
+    let backend = crate::services::project_detection::register_project_interactive(
         &mut config,
         &DialoguerPrompts,
         &cwd,
     )?;
     save_config(paths.config_path().as_std_path(), &config).map_err(RiptskError::Other)?;
-    println!("{}\t{:?}", remote.name, remote.remote_type);
+    println!("{}\t{:?}", backend.name, backend.backend);
     Ok(())
 }

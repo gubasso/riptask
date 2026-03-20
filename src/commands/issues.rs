@@ -1,14 +1,15 @@
+use crate::adapters::backend::BackendIssueUpsert;
 use crate::adapters::git::CliGit;
-use crate::adapters::remote::RemoteIssueUpsert;
 use crate::cli::{IdArgs, LsArgs, MoveArgs, NewArgs};
 use crate::config::{load_config, save_config};
 use crate::domain::issue::{GithubIssueMeta, GitlabIssueMeta, IssueDocument, IssueFrontmatter};
 use crate::error::RiptskError;
+use crate::models::{Backend, BackendConfig};
 use crate::paths::AppPaths;
 use crate::services::auto_commit::maybe_auto_commit;
+use crate::services::backend_mapping::{build_provider_for_backend, build_state_labels};
 use crate::services::issue_ids;
 use crate::services::issue_service::{IssueDraft, IssueService, generate_slug};
-use crate::services::remote_mapping::{build_provider_for_remote, build_state_labels};
 use crate::storage::{cache, frontmatter, issue_store};
 use std::io::IsTerminal;
 
@@ -79,12 +80,12 @@ pub async fn new(paths: &AppPaths, args: NewArgs) -> Result<(), RiptskError> {
                 .to_string_lossy()
                 .to_string(),
         );
-        if let Some(remote) = crate::services::project_detection::detect_from_cwd(&cwd, &config)? {
-            args.project = Some(remote.name);
-        } else if let Some(remote) =
+        if let Some(backend) = crate::services::project_detection::detect_from_cwd(&cwd, &config)? {
+            args.project = Some(backend.name);
+        } else if let Some(backend) =
             crate::services::project_detection::register_project_auto(&cwd, &mut config)?
         {
-            args.project = Some(remote.name);
+            args.project = Some(backend.name);
             config_changed = true;
         }
     }
@@ -107,16 +108,17 @@ pub async fn new(paths: &AppPaths, args: NewArgs) -> Result<(), RiptskError> {
             }
         };
     }
-    let issue = if matches!(
-        draft.remote_type.as_ref(),
-        Some(crate::config::RemoteType::Github | crate::config::RemoteType::Gitlab)
-    ) {
-        let remote = config
-            .remotes
+    let issue = if draft
+        .backend
+        .as_ref()
+        .is_some_and(|backend| matches!(backend, Backend::Github | Backend::Gitlab))
+    {
+        let backend = config
+            .backends
             .iter()
-            .find(|remote| remote.name == draft.project)
+            .find(|backend| backend.name == draft.project)
             .ok_or_else(|| RiptskError::Unregistered(draft.project.clone()))?;
-        create_remote_issue(paths, &service, &draft, remote).await?
+        create_backend_issue(paths, &service, &draft, backend).await?
     } else {
         create_local_issue(&service, &draft)?
     };
@@ -229,25 +231,25 @@ pub fn remove(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
     Ok(())
 }
 
-async fn create_remote_issue(
+async fn create_backend_issue(
     paths: &AppPaths,
     service: &IssueService<'_>,
     draft: &IssueDraft,
-    remote: &crate::config::RemoteConfig,
+    backend: &BackendConfig,
 ) -> Result<IssueDocument, RiptskError> {
-    let provider = build_provider_for_remote(remote)?;
-    let repo = remote
+    let provider = build_provider_for_backend(backend)?;
+    let repo = backend
         .repo
         .as_deref()
-        .ok_or_else(|| RiptskError::Config(format!("remote {} is missing repo", remote.name)))?;
-    let upsert = RemoteIssueUpsert {
+        .ok_or_else(|| RiptskError::Config(format!("backend {} is missing repo", backend.name)))?;
+    let upsert = BackendIssueUpsert {
         title: draft.title.clone(),
         body: draft.body.clone(),
         labels: build_state_labels(&draft.state, &draft.labels),
         assignee: draft.assignee.clone(),
     };
     let record = provider.create_issue(repo, &upsert).await?;
-    let scope = issue_ids::derive_scope_from_remote(remote);
+    let scope = issue_ids::derive_scope_from_backend(backend);
     let id = issue_ids::format_id(&scope, record.issue_id);
     let document = IssueDocument {
         frontmatter: IssueFrontmatter {
@@ -263,7 +265,7 @@ async fn create_remote_issue(
             milestone: None,
             cycle: None,
             order: Some(draft.order),
-            gitlab: if remote.remote_type == crate::config::RemoteType::Gitlab {
+            gitlab: if backend.backend == Backend::Gitlab {
                 Some(GitlabIssueMeta {
                     repo: repo.to_owned(),
                     issue_id: Some(record.issue_id),
@@ -274,7 +276,7 @@ async fn create_remote_issue(
             } else {
                 None
             },
-            github: if remote.remote_type == crate::config::RemoteType::Github {
+            github: if backend.backend == Backend::Github {
                 Some(GithubIssueMeta {
                     repo: repo.to_owned(),
                     issue_id: Some(record.issue_id),
@@ -300,7 +302,7 @@ async fn create_remote_issue(
         remote_section: None,
     };
     service.persist_issue(&document)?;
-    cache::seed_remote_state_entry(paths, provider_name(remote), repo, &record)
+    cache::seed_backend_state_entry(paths, provider_name(backend), repo, &record)
         .map_err(RiptskError::Other)?;
     Ok(document)
 }
@@ -314,10 +316,10 @@ fn create_local_issue(
     Ok(document)
 }
 
-fn provider_name(remote: &crate::config::RemoteConfig) -> &'static str {
-    match remote.remote_type {
-        crate::config::RemoteType::Github => "github",
-        crate::config::RemoteType::Gitlab => "gitlab",
-        crate::config::RemoteType::Local => "local",
+fn provider_name(backend: &BackendConfig) -> &'static str {
+    match backend.backend {
+        Backend::Github => "github",
+        Backend::Gitlab => "gitlab",
+        Backend::Local => "local",
     }
 }

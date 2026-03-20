@@ -1,14 +1,15 @@
-use crate::adapters::remote::RemoteProvider;
-use crate::config::{Config, RemoteConfig, RemoteType};
+use crate::adapters::backend::{BackendIssueRecord, BackendProvider};
+use crate::config::Config;
+use crate::domain::backend_state::backend_state_key;
 use crate::domain::issue::{ConflictMeta, IssueDocument};
-use crate::domain::remote_state::remote_state_key;
 use crate::error::RiptskError;
+use crate::models::{Backend, BackendConfig};
 use crate::paths::AppPaths;
-use crate::services::issue_ids;
-use crate::services::remote_mapping::{
-    current_timestamp, issue_to_upsert, remote_state_entry, remote_to_local,
-    update_issue_from_remote,
+use crate::services::backend_mapping::{
+    backend_state_entry, backend_to_local, current_timestamp, issue_to_upsert,
+    update_issue_from_backend,
 };
+use crate::services::issue_ids;
 use crate::storage::{cache, frontmatter, issue_store};
 use std::collections::HashSet;
 
@@ -43,25 +44,26 @@ impl<'a> SyncEngine<'a> {
         Self { paths, config }
     }
 
-    pub async fn pull<P: RemoteProvider + ?Sized>(
+    pub async fn pull<P: BackendProvider + ?Sized>(
         &self,
         provider: &P,
-        remote: &RemoteConfig,
+        backend: &BackendConfig,
         force: bool,
     ) -> Result<PullSummary, RiptskError> {
-        let repo = remote.repo.as_deref().ok_or_else(|| {
-            RiptskError::Config(format!("remote {} is missing repo", remote.name))
+        let repo = backend.repo.as_deref().ok_or_else(|| {
+            RiptskError::Config(format!("backend {} is missing repo", backend.name))
         })?;
-        let mut remote_state = cache::load_remote_state(self.paths).map_err(RiptskError::Other)?;
+        let mut backend_state =
+            cache::load_backend_state(self.paths).map_err(RiptskError::Other)?;
         let records = provider.list_issues(repo).await?;
         let mut summary = PullSummary::default();
         let mut seen_ids = HashSet::new();
 
         for record in records {
             seen_ids.insert(record.issue_id);
-            let key = remote_state_key(provider_name(remote), repo, record.issue_id);
-            let cached = remote_state.get(&key).cloned();
-            let local_path = self.find_local_issue(remote, record.issue_id)?;
+            let key = backend_state_key(provider_name(backend), repo, record.issue_id);
+            let cached = backend_state.get(&key).cloned();
+            let local_path = self.find_local_issue(backend, record.issue_id)?;
 
             if let Some(path) = local_path {
                 let mut issue =
@@ -75,17 +77,17 @@ impl<'a> SyncEngine<'a> {
 
                 if !force && self.config.sync.conflict_detection && local_changed && remote_changed
                 {
-                    self.write_conflict(remote, &record, &mut issue, &path, cached.as_ref())?;
+                    self.write_conflict(backend, &record, &mut issue, &path, cached.as_ref())?;
                     summary.conflicts.push(issue.frontmatter.id.clone());
                 } else if remote_changed {
-                    update_issue_from_remote(&mut issue, &record, remote);
+                    update_issue_from_backend(&mut issue, &record, backend);
                     issue.frontmatter.remote_deleted = false;
                     frontmatter::save_issue(path.as_std_path(), &issue)
                         .map_err(RiptskError::Other)?;
                     summary.updated.push(issue.frontmatter.id.clone());
                 }
             } else {
-                let document = remote_to_local(&record, remote);
+                let document = backend_to_local(&record, backend);
                 let path = self
                     .paths
                     .issues_dir()
@@ -95,24 +97,24 @@ impl<'a> SyncEngine<'a> {
                 summary.created.push(document.frontmatter.id.clone());
             }
 
-            remote_state.insert(key, remote_state_entry(&record));
+            backend_state.insert(key, backend_state_entry(&record));
         }
 
         for path in issue_store::list_issues(self.paths)? {
             let mut issue =
                 frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
-            let meta = match remote.remote_type {
-                RemoteType::Github => issue
+            let meta = match backend.backend {
+                Backend::Github => issue
                     .frontmatter
                     .github
                     .as_ref()
                     .and_then(|meta| (meta.repo == repo).then_some(meta.issue_id).flatten()),
-                RemoteType::Gitlab => issue
+                Backend::Gitlab => issue
                     .frontmatter
                     .gitlab
                     .as_ref()
                     .and_then(|meta| (meta.repo == repo).then_some(meta.issue_id).flatten()),
-                RemoteType::Local => None,
+                Backend::Local => None,
             };
             let Some(issue_id) = meta else {
                 continue;
@@ -127,24 +129,25 @@ impl<'a> SyncEngine<'a> {
             }
         }
 
-        cache::save_remote_state(self.paths, &remote_state).map_err(RiptskError::Other)?;
+        cache::save_backend_state(self.paths, &backend_state).map_err(RiptskError::Other)?;
         Ok(summary)
     }
 
-    pub async fn push<P: RemoteProvider + ?Sized>(
+    pub async fn push<P: BackendProvider + ?Sized>(
         &self,
         provider: &P,
-        remote: &RemoteConfig,
+        backend: &BackendConfig,
     ) -> Result<PushSummary, RiptskError> {
-        let repo = remote.repo.as_deref().ok_or_else(|| {
-            RiptskError::Config(format!("remote {} is missing repo", remote.name))
+        let repo = backend.repo.as_deref().ok_or_else(|| {
+            RiptskError::Config(format!("backend {} is missing repo", backend.name))
         })?;
-        let mut remote_state = cache::load_remote_state(self.paths).map_err(RiptskError::Other)?;
+        let mut backend_state =
+            cache::load_backend_state(self.paths).map_err(RiptskError::Other)?;
         let mut summary = PushSummary::default();
 
         for path in issue_store::list_issues(self.paths)? {
             let issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
-            if issue.frontmatter.project != remote.name || issue.frontmatter.remote_deleted {
+            if issue.frontmatter.project != backend.name || issue.frontmatter.remote_deleted {
                 continue;
             }
             if issue.frontmatter.conflict.is_some() {
@@ -153,26 +156,26 @@ impl<'a> SyncEngine<'a> {
             }
 
             let upsert = issue_to_upsert(&issue);
-            let issue_id = match remote.remote_type {
-                RemoteType::Github => issue
+            let issue_id = match backend.backend {
+                Backend::Github => issue
                     .frontmatter
                     .github
                     .as_ref()
                     .and_then(|meta| meta.issue_id),
-                RemoteType::Gitlab => issue
+                Backend::Gitlab => issue
                     .frontmatter
                     .gitlab
                     .as_ref()
                     .and_then(|meta| meta.issue_id),
-                RemoteType::Local => None,
+                Backend::Local => None,
             };
             let Some(issue_id) = issue_id else {
                 summary.skipped.push(issue.frontmatter.id.clone());
                 continue;
             };
 
-            let key = remote_state_key(provider_name(remote), repo, issue_id);
-            let cached = remote_state.get(&key);
+            let key = backend_state_key(provider_name(backend), repo, issue_id);
+            let cached = backend_state.get(&key);
             if cached
                 .as_ref()
                 .is_some_and(|entry| issue.frontmatter.local_updated_at <= entry.updated_at)
@@ -194,18 +197,18 @@ impl<'a> SyncEngine<'a> {
             record.updated_at = current_timestamp();
 
             let mut updated = issue;
-            update_issue_from_remote(&mut updated, &record, remote);
+            update_issue_from_backend(&mut updated, &record, backend);
             frontmatter::save_issue(path.as_std_path(), &updated).map_err(RiptskError::Other)?;
-            remote_state.insert(key, remote_state_entry(&record));
+            backend_state.insert(key, backend_state_entry(&record));
             summary.updated.push(updated.frontmatter.id.clone());
         }
 
-        cache::save_remote_state(self.paths, &remote_state).map_err(RiptskError::Other)?;
+        cache::save_backend_state(self.paths, &backend_state).map_err(RiptskError::Other)?;
         Ok(summary)
     }
 
     pub fn status(&self) -> Result<StatusSummary, RiptskError> {
-        let remote_state = cache::load_remote_state(self.paths).map_err(RiptskError::Other)?;
+        let backend_state = cache::load_backend_state(self.paths).map_err(RiptskError::Other)?;
         let mut summary = StatusSummary::default();
         for path in issue_store::list_issues(self.paths)? {
             let issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
@@ -213,19 +216,19 @@ impl<'a> SyncEngine<'a> {
                 summary.conflicts.push(issue.frontmatter.id.clone());
                 continue;
             }
-            let remote_key = if let Some(meta) = issue.frontmatter.github.as_ref() {
+            let backend_key = if let Some(meta) = issue.frontmatter.github.as_ref() {
                 meta.issue_id
-                    .map(|issue_id| remote_state_key("github", &meta.repo, issue_id))
+                    .map(|issue_id| backend_state_key("github", &meta.repo, issue_id))
             } else if let Some(meta) = issue.frontmatter.gitlab.as_ref() {
                 meta.issue_id
-                    .map(|issue_id| remote_state_key("gitlab", &meta.repo, issue_id))
+                    .map(|issue_id| backend_state_key("gitlab", &meta.repo, issue_id))
             } else {
                 None
             };
-            let Some(remote_key) = remote_key else {
+            let Some(backend_key) = backend_key else {
                 continue;
             };
-            let Some(entry) = remote_state.get(&remote_key) else {
+            let Some(entry) = backend_state.get(&backend_key) else {
                 summary.pushes.push(issue.frontmatter.id.clone());
                 continue;
             };
@@ -238,26 +241,27 @@ impl<'a> SyncEngine<'a> {
 
     fn find_local_issue(
         &self,
-        remote: &RemoteConfig,
+        backend: &BackendConfig,
         issue_id: u64,
     ) -> Result<Option<camino::Utf8PathBuf>, RiptskError> {
-        let exact_id = issue_ids::format_id(&issue_ids::derive_scope_from_remote(remote), issue_id);
+        let exact_id =
+            issue_ids::format_id(&issue_ids::derive_scope_from_backend(backend), issue_id);
         if let Ok(path) = issue_store::find_issue(self.paths, &exact_id) {
             return Ok(Some(path));
         }
 
         for path in issue_store::list_issues(self.paths)? {
             let issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
-            let matches = match remote.remote_type {
-                RemoteType::Github => issue.frontmatter.github.as_ref().is_some_and(|meta| {
-                    meta.repo == remote.repo.clone().unwrap_or_default()
+            let matches = match backend.backend {
+                Backend::Github => issue.frontmatter.github.as_ref().is_some_and(|meta| {
+                    meta.repo == backend.repo.clone().unwrap_or_default()
                         && meta.issue_id == Some(issue_id)
                 }),
-                RemoteType::Gitlab => issue.frontmatter.gitlab.as_ref().is_some_and(|meta| {
-                    meta.repo == remote.repo.clone().unwrap_or_default()
+                Backend::Gitlab => issue.frontmatter.gitlab.as_ref().is_some_and(|meta| {
+                    meta.repo == backend.repo.clone().unwrap_or_default()
                         && meta.issue_id == Some(issue_id)
                 }),
-                RemoteType::Local => false,
+                Backend::Local => false,
             };
             if matches {
                 return Ok(Some(path));
@@ -268,13 +272,13 @@ impl<'a> SyncEngine<'a> {
 
     fn write_conflict(
         &self,
-        remote: &RemoteConfig,
-        record: &crate::adapters::remote::RemoteIssueRecord,
+        backend: &BackendConfig,
+        record: &BackendIssueRecord,
         issue: &mut IssueDocument,
         issue_path: &camino::Utf8PathBuf,
-        cached: Option<&crate::domain::remote_state::RemoteStateEntry>,
+        cached: Option<&crate::domain::backend_state::BackendStateEntry>,
     ) -> Result<(), RiptskError> {
-        let mut remote_doc = remote_to_local(record, remote);
+        let mut remote_doc = backend_to_local(record, backend);
         remote_doc.frontmatter.conflict_role = Some("remote".into());
         remote_doc.frontmatter.conflict_parent = Some(issue.frontmatter.id.clone());
         let remote_path = self
@@ -299,10 +303,10 @@ impl<'a> SyncEngine<'a> {
     }
 }
 
-fn provider_name(remote: &RemoteConfig) -> &'static str {
-    match remote.remote_type {
-        RemoteType::Github => "github",
-        RemoteType::Gitlab => "gitlab",
-        RemoteType::Local => "local",
+fn provider_name(backend: &BackendConfig) -> &'static str {
+    match backend.backend {
+        Backend::Github => "github",
+        Backend::Gitlab => "gitlab",
+        Backend::Local => "local",
     }
 }

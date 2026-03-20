@@ -1,4 +1,5 @@
-use crate::config::{Config, RecurrenceFrequency, RecurringDef};
+use crate::config::Config;
+use crate::models::{RecurrenceFrequency, RecurringDef};
 use anyhow::Result;
 use jiff::civil::{Date, Weekday};
 
@@ -79,8 +80,8 @@ fn weekday_name(weekday: Weekday) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{expand_tokens, is_due};
-    use crate::config::{RecurrenceFrequency, RecurringDef};
     use crate::domain::issue::{IssueState, Priority};
+    use crate::models::{RecurrenceFrequency, RecurringDef};
     use jiff::civil::date;
 
     fn sample_def() -> RecurringDef {

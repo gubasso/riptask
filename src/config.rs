@@ -1,4 +1,8 @@
 use crate::domain::issue::{IssueState, Priority};
+use crate::models::{
+    AiConfig, AiFeatures, BackendConfig, BoardConfig, DefaultsConfig, RecurringDef, SyncConfig,
+    UiConfig,
+};
 use crate::services::issue_ids;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -13,7 +17,7 @@ pub struct Config {
     pub auto_commit: bool,
     pub defaults: DefaultsConfig,
     #[serde(default)]
-    pub remotes: Vec<RemoteConfig>,
+    pub backends: Vec<BackendConfig>,
     #[serde(default)]
     pub boards: Vec<BoardConfig>,
     #[serde(default)]
@@ -24,131 +28,6 @@ pub struct Config {
     pub sync: SyncConfig,
     #[serde(default)]
     pub recurring: Vec<RecurringDef>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct DefaultsConfig {
-    pub board: String,
-    pub state: IssueState,
-    pub priority: Priority,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub assignee: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub template: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum RemoteType {
-    Github,
-    Gitlab,
-    Local,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct RemoteConfig {
-    pub name: String,
-    #[serde(rename = "type")]
-    pub remote_type: RemoteType,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub host: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub repo: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub default_board: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub default_org: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub path: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct BoardConfig {
-    pub name: String,
-    pub states: Vec<IssueState>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-pub struct UiConfig {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub opener: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tree_depth: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fzf_opts: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-pub struct AiConfig {
-    #[serde(default)]
-    pub enabled: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
-    #[serde(default)]
-    pub features: AiFeatures,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-pub struct AiFeatures {
-    #[serde(default)]
-    pub new_body_gen: bool,
-    #[serde(default)]
-    pub triage: bool,
-    #[serde(default)]
-    pub summarize: bool,
-    #[serde(default)]
-    pub ask: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-pub struct SyncConfig {
-    #[serde(default = "default_true")]
-    pub conflict_detection: bool,
-}
-
-fn default_true() -> bool {
-    true
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum RecurrenceFrequency {
-    Daily,
-    Weekly,
-    Monthly,
-    Yearly,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct RecurringDef {
-    pub id: String,
-    pub template: String,
-    pub title_pattern: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub board: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub project: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub org: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub state: Option<IssueState>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub priority: Option<Priority>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub assignee: Option<String>,
-    #[serde(default)]
-    pub labels: Vec<String>,
-    pub frequency: RecurrenceFrequency,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub day_of_week: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub day_of_month: Option<u8>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub start: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub end: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_run: Option<String>,
 }
 
 pub fn default_config() -> Config {
@@ -162,7 +41,7 @@ pub fn default_config() -> Config {
             assignee: None,
             template: Some("task".into()),
         },
-        remotes: Vec::new(),
+        backends: Vec::new(),
         boards: vec![BoardConfig {
             name: "personal".into(),
             states: vec![
@@ -219,10 +98,10 @@ pub fn save_config(path: &Path, config: &Config) -> Result<()> {
 }
 
 pub fn validate_config(config: &Config) -> Result<()> {
-    issue_ids::validate_no_scope_collisions(&config.remotes)?;
+    issue_ids::validate_no_scope_collisions(&config.backends)?;
     require_unique(
-        config.remotes.iter().map(|remote| remote.name.as_str()),
-        "duplicate remote name in riptsk.yaml",
+        config.backends.iter().map(|backend| backend.name.as_str()),
+        "duplicate backend name in riptsk.yaml",
     )?;
     require_unique(
         config.boards.iter().map(|board| board.name.as_str()),
@@ -313,7 +192,7 @@ mod tests {
         let config = load_config(std::path::Path::new("tests/fixtures/riptsk.yaml"))
             .expect("load fixture config");
         assert_eq!(config.version, 1);
-        assert_eq!(config.remotes.len(), 1);
+        assert_eq!(config.backends.len(), 1);
     }
 
     #[test]
