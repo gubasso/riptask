@@ -25,7 +25,7 @@ fn new_creates_issue_file() {
         .args(["new", "--title", "Test issue"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("LO-PER-PER--1"));
+        .stdout(predicate::str::contains("LO-PER--1"));
 }
 
 #[test]
@@ -60,7 +60,7 @@ fn new_auto_registers_unregistered_repo() {
         .args(["new", "--title", "Auto registered"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("LO-WOR-WOR--1"));
+        .stdout(predicate::str::contains("LO-WOR--1"));
 
     let config = fs::read_to_string(repo.join("riptsk.yaml")).expect("read config");
     assert!(config.contains("name: worktree"));

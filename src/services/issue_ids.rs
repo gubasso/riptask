@@ -19,8 +19,7 @@ pub fn derive_scope(remote_type: &RemoteType, repo: Option<&str>, name: &str) ->
             (scope_token(owner), scope_token(project_name))
         }
         RemoteType::Local => {
-            let token = scope_token(name);
-            (token.clone(), token)
+            return format!("{server}-{}", scope_token(name));
         }
     };
 

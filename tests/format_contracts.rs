@@ -37,7 +37,7 @@ fn sort_json_value(value: serde_json::Value) -> serde_json::Value {
 fn issue_fixtures_round_trip() {
     assert_snapshot!("gl_chr_wor_42", round_trip_issue("GL-CHR-WOR--42.md"));
     assert_snapshot!("gh_pen_fis_17", round_trip_issue("GH-PEN-FIS--17.md"));
-    assert_snapshot!("lo_ice_ice_1", round_trip_issue("LO-ICE-ICE--1.md"));
+    assert_snapshot!("lo_ice_1", round_trip_issue("LO-ICE--1.md"));
     assert_snapshot!(
         "gl_chr_wor_42_remote",
         round_trip_issue("GL-CHR-WOR--42.REMOTE.md")
