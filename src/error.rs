@@ -10,6 +10,8 @@ pub enum RiptskError {
     Conflict(String),
     #[error("remote unreachable: {0}")]
     Unreachable(String),
+    #[error("authentication failed: {0}")]
+    Auth(String),
     #[error("configuration error: {0}")]
     Config(String),
     #[error("project not registered: {0}")]
@@ -33,6 +35,7 @@ impl RiptskError {
             Self::Unreachable(_) => 4,
             Self::Config(_) | Self::Frontmatter(_) => 5,
             Self::Unregistered(_) => 6,
+            Self::Auth(_) => 7,
         }
     }
 }
@@ -65,5 +68,6 @@ mod tests {
         assert_eq!(RiptskError::Unreachable("x".into()).exit_code(), 4);
         assert_eq!(RiptskError::Config("x".into()).exit_code(), 5);
         assert_eq!(RiptskError::Unregistered("x".into()).exit_code(), 6);
+        assert_eq!(RiptskError::Auth("x".into()).exit_code(), 7);
     }
 }
