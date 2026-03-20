@@ -1,0 +1,8 @@
+[advisories]
+# RUSTSEC-2023-0071: Marvin Attack (CVE-2023-49092) - RSA timing side-channel
+# CVSS 5.9 (Medium). Affects `rsa` crate v0.9.x via: octocrab -> jsonwebtoken -> rsa.
+# Not exploitable in our context: we use RSA for JWT signing/verification only,
+# not PKCS#1 v1.5 decryption (the vulnerable code path). No stable fix exists;
+# rsa 0.10.0 is still in pre-release and jsonwebtoken hasn't adopted it yet.
+# Safe to ignore until upstream ships a stable fix.
+ignore = ["RUSTSEC-2023-0071"]

@@ -1,0 +1,71 @@
+---
+source: tests/format_contracts.rs
+expression: "serde_yaml_ng::to_string(&multi).expect(\"serialize multi config\")"
+---
+version: 1
+auto_commit: false
+defaults:
+  board: personal
+  state: todo
+  priority: medium
+  assignee: tester
+  template: task
+remotes:
+- name: wormhole-router
+  type: gitlab
+  host: https://gitlab.example.com
+  repo: chrono/wormhole-router
+  default_board: penguin-chrono-labs
+  default_org: chrono
+- name: fish-from-the-future
+  type: github
+  repo: Penguin-Chrono-Labs/fish-from-the-future
+  default_board: penguin-chrono-labs
+  default_org: chrono
+- name: penguin-scratch
+  type: local
+  default_board: personal
+  path: /tmp/penguin-scratch
+boards:
+- name: penguin-chrono-labs
+  states:
+  - backlog
+  - todo
+  - in-progress
+  - review
+  - done
+- name: personal
+  states:
+  - backlog
+  - todo
+  - in-progress
+  - done
+ui:
+  opener: nvim -R
+  tree_depth: 2
+  fzf_opts: --border
+ai:
+  enabled: false
+  model: claude-haiku-4-5-20251001
+  features:
+    new_body_gen: true
+    triage: true
+    summarize: true
+    ask: true
+sync:
+  conflict_detection: true
+recurring:
+- id: recur-weekly-review
+  template: templates/weekly-review.md
+  title_pattern: Weekly review - {YYYY-MM-DD}
+  board: personal
+  project: personal
+  state: todo
+  priority: medium
+  assignee: tester
+  labels:
+  - recurring
+  - review
+  frequency: weekly
+  day_of_week: monday
+  start: 2026-03-17

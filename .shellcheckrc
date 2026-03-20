@@ -1,0 +1,6 @@
+# Dynamic source paths are expected — tsk sources libs relative to BASH_SOURCE
+disable=SC1091
+# Constants are exported via source, not direct use in defining file
+disable=SC2034
+# Bats subshell false positives
+disable=SC2030,SC2031

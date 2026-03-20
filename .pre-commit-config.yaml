@@ -1,0 +1,122 @@
+# tsk – Rust CLI pre-commit configuration
+
+default_install_hook_types: [pre-commit, commit-msg, pre-push]
+
+repos:
+  # --- Housekeeping (auto-fix where possible) ---
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: end-of-file-fixer
+      - id: check-added-large-files
+        args: ['--maxkb=2048']
+      - id: check-case-conflict
+      - id: check-merge-conflict
+        args: ['--assume-in-merge']
+      - id: check-shebang-scripts-are-executable
+        exclude: '\.rs$'  # Exclude Rust files (inner attributes start with #!)
+      - id: check-toml
+      - id: check-yaml
+      - id: detect-private-key
+      - id: pretty-format-json
+        args: ["--autofix", "--no-ensure-ascii", "--no-sort-keys", "--indent=2"]
+        exclude: >-
+          (?x)((^|/)devcontainer\.json$|[-.]lock\.json$)
+      - id: no-commit-to-branch
+        args: [--branch, develop]
+
+  - repo: https://github.com/maresb/check-json5
+    rev: v1.0.1
+    hooks:
+      - id: check-json5
+
+  # --- Rust: format & lint (auto-fix) ---
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt
+        entry: cargo fmt --all
+        language: system           # requires: rustfmt (via rustup)
+        types: [rust]
+        pass_filenames: false
+
+      - id: clippy-fix
+        name: clippy auto-fix
+        entry: cargo clippy --fix --allow-dirty --allow-staged --all-features -- -W clippy::all
+        language: system           # requires: clippy (via rustup)
+        types: [rust]
+        pass_filenames: false
+
+      - id: clippy-strict
+        name: clippy gate
+        entry: cargo clippy --all-targets --all-features -- -D warnings
+        language: system           # requires: clippy (via rustup)
+        types: [rust]
+        pass_filenames: false
+
+      - id: taplo-format
+        name: taplo format
+        entry: taplo format
+        language: system           # requires: taplo
+        types: [toml]
+
+  # --- Spell check ---
+  - repo: https://github.com/crate-ci/typos
+    rev: v1.44.0
+    hooks:
+      - id: typos
+        args: ["--write-changes"]
+
+  # --- Secret scanning (pre-commit, fast) ---
+  - repo: https://github.com/sirwart/ripsecrets
+    rev: v0.1.11
+    hooks:
+      - id: ripsecrets
+
+  # --- Commit-message linting ---
+  - repo: https://github.com/jorisroovers/gitlint
+    rev: v0.19.1
+    hooks:
+      - id: gitlint
+        stages: [commit-msg]
+        types_or: [text]
+
+  - repo: https://github.com/commitizen-tools/commitizen
+    rev: v4.13.9
+    hooks:
+      - id: commitizen
+      - id: commitizen-branch
+        stages: [pre-push]
+
+  # --- Heavy checks (pre-push only) ---
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.0
+    hooks:
+      - id: gitleaks
+        entry: gitleaks git --redact --verbose
+        pass_filenames: false
+        stages: [pre-push]
+
+  - repo: local
+    hooks:
+      - id: cargo-audit
+        name: cargo audit
+        entry: cargo audit
+        language: system           # requires: cargo-audit
+        pass_filenames: false
+        stages: [pre-push]
+
+      # Note: requires deny.toml; add `licenses` to check list after creating one
+      - id: cargo-deny
+        name: cargo deny
+        entry: cargo deny check advisories bans sources
+        language: system           # requires: cargo-deny
+        pass_filenames: false
+        stages: [pre-push]
+
+  - repo: meta
+    hooks:
+      - id: check-hooks-apply
+      - id: check-useless-excludes

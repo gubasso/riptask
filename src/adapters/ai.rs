@@ -1,0 +1,98 @@
+use crate::error::TskError;
+use std::process::Command;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TriageSuggestion {
+    pub state: Option<String>,
+    pub priority: Option<String>,
+    pub labels: Vec<String>,
+}
+
+pub trait AiBackend {
+    fn generate_body(&self, context: &str) -> Result<String, TskError>;
+    fn triage(&self, issue_context: &str) -> Result<TriageSuggestion, TskError>;
+    fn summarize(&self, issues: &str) -> Result<String, TskError>;
+    fn ask(&self, question: &str, context: &str) -> Result<String, TskError>;
+}
+
+#[derive(Debug, Clone)]
+pub struct CommandAiBackend {
+    pub binary: String,
+    pub model: String,
+}
+
+impl AiBackend for CommandAiBackend {
+    fn generate_body(&self, context: &str) -> Result<String, TskError> {
+        run_ai(
+            &self.binary,
+            &self.model,
+            "Generate a concise issue body with a description and checklist.",
+            context,
+        )
+    }
+
+    fn triage(&self, issue_context: &str) -> Result<TriageSuggestion, TskError> {
+        let output = run_ai(
+            &self.binary,
+            &self.model,
+            "Return JSON with keys state, priority, labels.",
+            issue_context,
+        )?;
+        let parsed: serde_json::Value = serde_json::from_str(&output)
+            .map_err(|error| TskError::General(format!("invalid AI triage response: {error}")))?;
+        Ok(TriageSuggestion {
+            state: parsed
+                .get("state")
+                .and_then(|value| value.as_str())
+                .map(ToOwned::to_owned),
+            priority: parsed
+                .get("priority")
+                .and_then(|value| value.as_str())
+                .map(ToOwned::to_owned),
+            labels: parsed
+                .get("labels")
+                .and_then(|value| value.as_array())
+                .map(|labels| {
+                    labels
+                        .iter()
+                        .filter_map(|label| label.as_str().map(ToOwned::to_owned))
+                        .collect()
+                })
+                .unwrap_or_default(),
+        })
+    }
+
+    fn summarize(&self, issues: &str) -> Result<String, TskError> {
+        run_ai(
+            &self.binary,
+            &self.model,
+            "Summarize issue status concisely.",
+            issues,
+        )
+    }
+
+    fn ask(&self, question: &str, context: &str) -> Result<String, TskError> {
+        run_ai(
+            &self.binary,
+            &self.model,
+            "Answer the user's question from the provided issue corpus.",
+            &format!("Question: {question}\n\nIssues:\n{context}"),
+        )
+    }
+}
+
+fn run_ai(binary: &str, model: &str, system: &str, input: &str) -> Result<String, TskError> {
+    let output = Command::new(binary)
+        .arg("--system")
+        .arg(system)
+        .arg("--model")
+        .arg(model)
+        .arg(input)
+        .output()
+        .map_err(|error| TskError::General(format!("failed to invoke {binary}: {error}")))?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+    } else {
+        Err(TskError::General(format!("{binary} exited unsuccessfully")))
+    }
+}
