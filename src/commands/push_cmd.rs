@@ -13,7 +13,19 @@ use crate::storage::{cache, frontmatter, issue_store};
 pub fn run(paths: &AppPaths, args: PushArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
     let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
-    let remote = resolve_remote(&config, &args)?;
+    let remotes = resolve_remotes(&config, &args)?;
+    for remote in remotes {
+        push_remote(paths, &config, remote, &args)?;
+    }
+    Ok(())
+}
+
+fn push_remote(
+    paths: &AppPaths,
+    config: &Config,
+    remote: &RemoteConfig,
+    args: &PushArgs,
+) -> Result<(), RiptskError> {
     if !matches!(remote.remote_type, RemoteType::Github | RemoteType::Gitlab) {
         return Err(RiptskError::Config(format!(
             "push target must be github or gitlab: {}",
@@ -29,7 +41,7 @@ pub fn run(paths: &AppPaths, args: PushArgs) -> Result<(), RiptskError> {
     let mut remote_state = cache::load_remote_state(paths).map_err(RiptskError::Other)?;
     let mut changed_paths = Vec::new();
 
-    for path in collect_push_paths(paths, remote, &args)? {
+    for path in collect_push_paths(paths, remote, args)? {
         let issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
         let issue_id = match remote.remote_type {
             RemoteType::Github => issue
@@ -102,7 +114,7 @@ pub fn run(paths: &AppPaths, args: PushArgs) -> Result<(), RiptskError> {
     let config_path = paths.config_path();
     file_refs.push(config_path.as_std_path());
     maybe_auto_commit(
-        &config,
+        config,
         &crate::adapters::git::CliGit,
         paths.riptsk_repo.as_std_path(),
         &format!("riptsk: push local issues to {}", remote.name),
@@ -111,16 +123,26 @@ pub fn run(paths: &AppPaths, args: PushArgs) -> Result<(), RiptskError> {
     Ok(())
 }
 
-fn resolve_remote<'a>(
+fn resolve_remotes<'a>(
     config: &'a Config,
     args: &PushArgs,
-) -> Result<&'a RemoteConfig, RiptskError> {
-    if let Some(project) = args.project.as_deref() {
-        return config
-            .remotes
+) -> Result<Vec<&'a RemoteConfig>, RiptskError> {
+    if args.scope.all_projects {
+        return Ok(hosted_remotes(config));
+    }
+    if !args.scope.projects.is_empty() {
+        return args
+            .scope
+            .projects
             .iter()
-            .find(|remote| remote.name == project)
-            .ok_or_else(|| RiptskError::Unregistered(project.to_owned()));
+            .map(|project| {
+                config
+                    .remotes
+                    .iter()
+                    .find(|remote| remote.name == *project)
+                    .ok_or_else(|| RiptskError::Unregistered(project.clone()))
+            })
+            .collect();
     }
     let cwd = camino::Utf8PathBuf::from(
         std::env::current_dir()
@@ -133,13 +155,10 @@ fn resolve_remote<'a>(
             .remotes
             .iter()
             .find(|candidate| candidate.name == remote.name)
+            .map(|candidate| vec![candidate])
             .ok_or_else(|| RiptskError::Unregistered(remote.name));
     }
-    config
-        .remotes
-        .iter()
-        .find(|remote| matches!(remote.remote_type, RemoteType::Github | RemoteType::Gitlab))
-        .ok_or_else(|| RiptskError::Config("could not determine push target".into()))
+    Ok(hosted_remotes(config))
 }
 
 fn collect_push_paths(
@@ -148,11 +167,19 @@ fn collect_push_paths(
     args: &PushArgs,
 ) -> Result<Vec<camino::Utf8PathBuf>, RiptskError> {
     if !args.ids.is_empty() {
-        return args
+        let mut paths_to_push = Vec::new();
+        for path in args
             .ids
             .iter()
             .map(|id| issue_store::find_issue(paths, id))
-            .collect();
+            .collect::<Result<Vec<_>, _>>()?
+        {
+            let issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
+            if issue.frontmatter.project == remote.name {
+                paths_to_push.push(path);
+            }
+        }
+        return Ok(paths_to_push);
     }
 
     let mut paths_to_push = Vec::new();
@@ -164,4 +191,12 @@ fn collect_push_paths(
         paths_to_push.push(path);
     }
     Ok(paths_to_push)
+}
+
+fn hosted_remotes(config: &Config) -> Vec<&RemoteConfig> {
+    config
+        .remotes
+        .iter()
+        .filter(|remote| matches!(remote.remote_type, RemoteType::Github | RemoteType::Gitlab))
+        .collect()
 }

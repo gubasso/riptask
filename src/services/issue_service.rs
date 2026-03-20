@@ -478,9 +478,6 @@ fn matches_issue(issue: &IssueDocument, args: &LsArgs) -> bool {
     {
         return false;
     }
-    if !args.projects.is_empty() && !args.projects.contains(&issue.frontmatter.project) {
-        return false;
-    }
     true
 }
 
