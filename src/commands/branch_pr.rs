@@ -1,21 +1,21 @@
 use crate::adapters::git::{CliGit, GitBackend};
 use crate::cli::IdArgs;
 use crate::config::{RemoteType, load_config};
-use crate::error::TskError;
+use crate::error::RiptskError;
 use crate::paths::AppPaths;
 use crate::services::auto_commit::maybe_auto_commit;
 use crate::services::issue_service::generate_slug;
 use crate::services::remote_mapping::build_provider_for_remote;
 use crate::storage::{frontmatter, issue_store};
 
-pub fn branch(paths: &AppPaths, args: IdArgs) -> Result<(), TskError> {
+pub fn branch(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path()).map_err(TskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
     let id = args
         .id
-        .ok_or_else(|| TskError::General("<ID> required".into()))?;
+        .ok_or_else(|| RiptskError::General("<ID> required".into()))?;
     let path = issue_store::find_issue(paths, &id)?;
-    let mut issue = frontmatter::load_issue(path.as_std_path()).map_err(TskError::Other)?;
+    let mut issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
     let slug = issue
         .frontmatter
         .id_slug
@@ -24,19 +24,21 @@ pub fn branch(paths: &AppPaths, args: IdArgs) -> Result<(), TskError> {
     let repo = current_repo()?;
     let git = CliGit;
     if git.branch_exists(repo.as_path(), &slug)? {
-        return Err(TskError::General(format!("branch already exists: {slug}")));
+        return Err(RiptskError::General(format!(
+            "branch already exists: {slug}"
+        )));
     }
     git.create_branch(repo.as_path(), &slug)?;
     git.push_with_upstream(repo.as_path(), &slug)?;
     issue.frontmatter.id_slug = Some(slug.clone());
     issue.frontmatter.branch = Some(slug.clone());
-    frontmatter::save_issue(path.as_std_path(), &issue).map_err(TskError::Other)?;
+    frontmatter::save_issue(path.as_std_path(), &issue).map_err(RiptskError::Other)?;
     maybe_auto_commit(
         &config,
         &git,
-        paths.tsk_repo.as_std_path(),
+        paths.riptsk_repo.as_std_path(),
         &format!(
-            "tsk: branch {} - {}",
+            "riptsk: branch {} - {}",
             issue.frontmatter.id, issue.frontmatter.title
         ),
         &[path.as_std_path()],
@@ -45,9 +47,9 @@ pub fn branch(paths: &AppPaths, args: IdArgs) -> Result<(), TskError> {
     Ok(())
 }
 
-pub async fn pr(paths: &AppPaths, args: IdArgs) -> Result<(), TskError> {
+pub async fn pr(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path()).map_err(TskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
     let repo = current_repo()?;
     let git = CliGit;
     let current_branch = git.current_branch(repo.as_path())?;
@@ -55,7 +57,7 @@ pub async fn pr(paths: &AppPaths, args: IdArgs) -> Result<(), TskError> {
         current_branch.as_str(),
         "main" | "master" | "develop" | "dev" | "trunk"
     ) {
-        return Err(TskError::General(format!(
+        return Err(RiptskError::General(format!(
             "protected branch: {current_branch}"
         )));
     }
@@ -65,16 +67,16 @@ pub async fn pr(paths: &AppPaths, args: IdArgs) -> Result<(), TskError> {
     } else {
         find_issue_for_branch(paths, &current_branch)?
     };
-    let mut issue = frontmatter::load_issue(path.as_std_path()).map_err(TskError::Other)?;
+    let mut issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
     if issue.frontmatter.pr_url.is_some() {
-        return Err(TskError::General(format!(
+        return Err(RiptskError::General(format!(
             "PR already exists for {}",
             issue.frontmatter.id
         )));
     }
     if let Some(branch) = issue.frontmatter.branch.as_ref() {
         if branch != &current_branch {
-            return Err(TskError::General(
+            return Err(RiptskError::General(
                 "current branch does not match issue branch".into(),
             ));
         }
@@ -86,9 +88,9 @@ pub async fn pr(paths: &AppPaths, args: IdArgs) -> Result<(), TskError> {
         .remotes
         .iter()
         .find(|remote| remote.name == issue.frontmatter.project)
-        .ok_or_else(|| TskError::Unregistered(issue.frontmatter.project.clone()))?;
+        .ok_or_else(|| RiptskError::Unregistered(issue.frontmatter.project.clone()))?;
     if !matches!(remote.remote_type, RemoteType::Github | RemoteType::Gitlab) {
-        return Err(TskError::Config(format!(
+        return Err(RiptskError::Config(format!(
             "project {} does not have a hosted remote",
             remote.name
         )));
@@ -110,7 +112,7 @@ pub async fn pr(paths: &AppPaths, args: IdArgs) -> Result<(), TskError> {
         RemoteType::Local => None,
     }
     .ok_or_else(|| {
-        TskError::Config(format!(
+        RiptskError::Config(format!(
             "issue {} is missing remote metadata",
             issue.frontmatter.id
         ))
@@ -125,13 +127,13 @@ pub async fn pr(paths: &AppPaths, args: IdArgs) -> Result<(), TskError> {
         issue.frontmatter.state = crate::domain::issue::IssueState::InProgress;
         issue.frontmatter.local_updated_at = crate::services::issue_service::now_utc();
     }
-    frontmatter::save_issue(path.as_std_path(), &issue).map_err(TskError::Other)?;
+    frontmatter::save_issue(path.as_std_path(), &issue).map_err(RiptskError::Other)?;
     maybe_auto_commit(
         &config,
         &git,
-        paths.tsk_repo.as_std_path(),
+        paths.riptsk_repo.as_std_path(),
         &format!(
-            "tsk: pr {} - {}",
+            "riptsk: pr {} - {}",
             issue.frontmatter.id, issue.frontmatter.title
         ),
         &[path.as_std_path()],
@@ -140,20 +142,23 @@ pub async fn pr(paths: &AppPaths, args: IdArgs) -> Result<(), TskError> {
     Ok(())
 }
 
-fn current_repo() -> Result<std::path::PathBuf, TskError> {
-    std::env::current_dir().map_err(TskError::from)
+fn current_repo() -> Result<std::path::PathBuf, RiptskError> {
+    std::env::current_dir().map_err(RiptskError::from)
 }
 
-fn find_issue_for_branch(paths: &AppPaths, branch: &str) -> Result<camino::Utf8PathBuf, TskError> {
+fn find_issue_for_branch(
+    paths: &AppPaths,
+    branch: &str,
+) -> Result<camino::Utf8PathBuf, RiptskError> {
     for path in issue_store::list_issues(paths)? {
-        let issue = frontmatter::load_issue(path.as_std_path()).map_err(TskError::Other)?;
+        let issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
         if issue.frontmatter.branch.as_deref() == Some(branch)
             || issue.frontmatter.id_slug.as_deref() == Some(branch)
         {
             return Ok(path);
         }
     }
-    Err(TskError::NotFound(format!(
+    Err(RiptskError::NotFound(format!(
         "no issue found for branch {branch}"
     )))
 }

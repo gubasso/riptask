@@ -1,22 +1,24 @@
 use crate::adapters::prompts::{DialoguerPrompts, PromptBackend};
 use crate::cli::{TemplateArgs, TemplateSubcommand};
 use crate::config::load_config;
-use crate::error::TskError;
+use crate::error::RiptskError;
 use crate::paths::AppPaths;
 use crate::services::templates::{TemplateService, seed_template};
 use anyhow::Context;
 use std::process::Command;
 
-fn validate_template_name(name: &str) -> Result<(), TskError> {
+fn validate_template_name(name: &str) -> Result<(), RiptskError> {
     if name.contains('/') || name.contains('\\') || name.contains("..") || name.is_empty() {
-        return Err(TskError::General(format!("invalid template name: {name}")));
+        return Err(RiptskError::General(format!(
+            "invalid template name: {name}"
+        )));
     }
     Ok(())
 }
 
-pub fn run(paths: &AppPaths, args: TemplateArgs) -> Result<(), TskError> {
+pub fn run(paths: &AppPaths, args: TemplateArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path()).map_err(TskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
     let service = TemplateService::new(paths, &config);
     match args.subcommand.unwrap_or(TemplateSubcommand::List) {
         TemplateSubcommand::List => {
@@ -26,18 +28,20 @@ pub fn run(paths: &AppPaths, args: TemplateArgs) -> Result<(), TskError> {
             Ok(())
         }
         TemplateSubcommand::Show { name } => {
-            let name = name.ok_or_else(|| TskError::General("template name required".into()))?;
+            let name = name.ok_or_else(|| RiptskError::General("template name required".into()))?;
             validate_template_name(&name)?;
-            let document = service.load(&name).map_err(TskError::Other)?;
+            let document = service.load(&name).map_err(RiptskError::Other)?;
             println!("{}", document.body);
             Ok(())
         }
         TemplateSubcommand::New { name } => {
-            let name = name.ok_or_else(|| TskError::General("template name required".into()))?;
+            let name = name.ok_or_else(|| RiptskError::General("template name required".into()))?;
             validate_template_name(&name)?;
             let path = paths.templates_dir().join(format!("{name}.md"));
             if path.exists() {
-                return Err(TskError::Config(format!("template already exists: {name}")));
+                return Err(RiptskError::Config(format!(
+                    "template already exists: {name}"
+                )));
             }
             std::fs::write(&path, seed_template(&name))?;
             service.validate_file(path.as_std_path())?;
@@ -45,22 +49,22 @@ pub fn run(paths: &AppPaths, args: TemplateArgs) -> Result<(), TskError> {
             Ok(())
         }
         TemplateSubcommand::Edit { name } => {
-            let name = name.ok_or_else(|| TskError::General("template name required".into()))?;
+            let name = name.ok_or_else(|| RiptskError::General("template name required".into()))?;
             validate_template_name(&name)?;
             let path = paths.templates_dir().join(format!("{name}.md"));
             if !path.exists() {
-                return Err(TskError::NotFound(format!("template {name}")));
+                return Err(RiptskError::NotFound(format!("template {name}")));
             }
             open_in_editor(path.as_std_path())?;
             service.validate_file(path.as_std_path())?;
             Ok(())
         }
         TemplateSubcommand::Rm { name } => {
-            let name = name.ok_or_else(|| TskError::General("template name required".into()))?;
+            let name = name.ok_or_else(|| RiptskError::General("template name required".into()))?;
             validate_template_name(&name)?;
             let path = paths.templates_dir().join(format!("{name}.md"));
             if !path.exists() {
-                return Err(TskError::NotFound(format!("template {name}")));
+                return Err(RiptskError::NotFound(format!("template {name}")));
             }
             let prompts = DialoguerPrompts;
             if prompts.confirm(&format!("Remove template \"{name}\"?"), false)? {
@@ -73,7 +77,7 @@ pub fn run(paths: &AppPaths, args: TemplateArgs) -> Result<(), TskError> {
                 validate_template_name(&name)?;
                 let path = paths.templates_dir().join(format!("{name}.md"));
                 if !path.exists() {
-                    return Err(TskError::NotFound(format!("template {name}")));
+                    return Err(RiptskError::NotFound(format!("template {name}")));
                 }
                 service.validate_file(path.as_std_path())?;
                 println!("OK");
@@ -89,22 +93,22 @@ pub fn run(paths: &AppPaths, args: TemplateArgs) -> Result<(), TskError> {
     }
 }
 
-fn open_in_editor(path: &std::path::Path) -> Result<(), TskError> {
+fn open_in_editor(path: &std::path::Path) -> Result<(), RiptskError> {
     let editor = std::env::var("EDITOR")
-        .map_err(|_| TskError::General("set $EDITOR to edit templates".into()))?;
+        .map_err(|_| RiptskError::General("set $EDITOR to edit templates".into()))?;
     let parts: Vec<&str> = editor.split_whitespace().collect();
     let (program, args) = parts
         .split_first()
-        .ok_or_else(|| TskError::General("empty $EDITOR".into()))?;
+        .ok_or_else(|| RiptskError::General("empty $EDITOR".into()))?;
     let status = Command::new(program)
         .args(args)
         .arg(path)
         .status()
         .context("failed to launch editor")
-        .map_err(TskError::Other)?;
+        .map_err(RiptskError::Other)?;
     if status.success() {
         Ok(())
     } else {
-        Err(TskError::General("editor exited unsuccessfully".into()))
+        Err(RiptskError::General("editor exited unsuccessfully".into()))
     }
 }

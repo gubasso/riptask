@@ -25,7 +25,7 @@ External CLI tools (`git`, `fzf`, `claude`/`llm`) remain as wrapped dependencies
 The `views/` directory uses file copies so that standard tools (`ls`, `tree`, `nvim`, `yazi`, `lf`) work natively without any custom renderer. The filename encodes order within a lane (`01-WHL-041.md`), enabling natural alphabetical sorting.
 
 Views are:
-- Always outside the repo — stored in `$XDG_CACHE_HOME/tsk/views/`, never committed
+- Always outside the repo — stored in `$XDG_CACHE_HOME/riptsk/views/`, never committed
 - Always regeneratable — `tsk view` rebuilds from scratch
 - Never written directly — only `tsk` commands modify them as a side effect
 - Disposable — edits to view files are lost on next regeneration
@@ -60,30 +60,30 @@ See [10 — Sync Architecture](archive/10-sync-architecture.md) for the full pul
 
 ### 3.6 Local IDs are provisional (GitHub/GitLab projects only)
 
-For GitHub/GitLab projects, issues created locally before sync get a provisional ID: `LOCAL-<short-hash>`. After `tsk sync push`, the remote assigns a real numeric ID. `tsk` renames the file, updates the frontmatter, and records the mapping in `~/.cache/tsk/id_map.json`. All cross-references using the old local ID are updated at rename time.
+For GitHub/GitLab projects, issues created locally before sync get a provisional ID: `LOCAL-<short-hash>`. After `tsk sync push`, the remote assigns a real numeric ID. `tsk` renames the file, updates the frontmatter, and records the mapping in `~/.cache/riptsk/id_map.json`. All cross-references using the old local ID are updated at rename time.
 
 For local projects (non-GitHub/GitLab remotes or no remote), IDs are assigned immediately using the project prefix and a local sequence number (e.g. `ICE-001`). These IDs are permanent — there is no remote to defer to.
 
-### 3.7 $TSK_REPO is passive — commands run from project repos
+### 3.7 $RIPTSK_REPO is passive — commands run from project repos
 
-The tasks data repo (`$TSK_REPO`, defaulting to `~/.local/share/tsk/`) is never the working directory for `tsk` commands. It is a passive store that `tsk` reads and writes to. Commands are run from inside project repos, mirroring `glab`/`gh` behavior. The `TSK_REPO` environment variable (or XDG default path) points to the data repo.
+The tasks data repo (`$RIPTSK_REPO`, defaulting to `~/.local/share/riptsk/`) is never the working directory for `tsk` commands. It is a passive store that `tsk` reads and writes to. Commands are run from inside project repos, mirroring `glab`/`gh` behavior. The `RIPTSK_REPO` environment variable (or XDG default path) points to the data repo.
 
 ### 3.8 Two distinct sync layers, never conflated
 
-Issues that exist on GitHub/GitLab use those platforms as the shared state across hosts. `$TSK_REPO` git is for local projects (non-GitHub/GitLab remotes or no remote), local-only issues, and config versioning. Never use `$TSK_REPO` git push to share GitHub/GitLab-synced issue state across hosts — that's what `tsk sync` is for.
+Issues that exist on GitHub/GitLab use those platforms as the shared state across hosts. `$RIPTSK_REPO` git is for local projects (non-GitHub/GitLab remotes or no remote), local-only issues, and config versioning. Never use `$RIPTSK_REPO` git push to share GitHub/GitLab-synced issue state across hosts — that's what `tsk sync` is for.
 
-Projects with non-GitHub/GitLab remotes (codeberg, gitolite, etc.) are fully managed through `$TSK_REPO` git — the same layer as local-only issues. Their remote exists for code, not for issue tracking.
+Projects with non-GitHub/GitLab remotes (codeberg, gitolite, etc.) are fully managed through `$RIPTSK_REPO` git — the same layer as local-only issues. Their remote exists for code, not for issue tracking.
 
 ### 3.9 Auto-commit on lifecycle events for local issues
 
-Lifecycle commands (`new`, `close`, `move`, `reopen`, `rm`) auto-commit `$TSK_REPO` when all affected issues are local (belonging to a project without a GitHub/GitLab remote, or not tied to any project).
+Lifecycle commands (`new`, `close`, `move`, `reopen`, `rm`) auto-commit `$RIPTSK_REPO` when all affected issues are local (belonging to a project without a GitHub/GitLab remote, or not tied to any project).
 
-**Why auto-commit local lifecycle events:** For local issues, `$TSK_REPO` git is the sole source of truth and the only sync mechanism across hosts. A lifecycle event is a meaningful state change — a `tsk: new ICE-043` commit is signal, not noise. Deferring these commits risks data loss (forgotten `session end`, crash) with no offsetting benefit.
+**Why auto-commit local lifecycle events:** For local issues, `$RIPTSK_REPO` git is the sole source of truth and the only sync mechanism across hosts. A lifecycle event is a meaningful state change — a `riptsk: new ICE-043` commit is signal, not noise. Deferring these commits risks data loss (forgotten `session end`, crash) with no offsetting benefit.
 
-**Why not for synced issues:** Their source of truth is GitHub/GitLab. The `$TSK_REPO` copy is a backup. Auto-committing every backup-copy mutation adds noise to `$TSK_REPO` git history without improving data safety — the remote already has the canonical state.
+**Why not for synced issues:** Their source of truth is GitHub/GitLab. The `$RIPTSK_REPO` copy is a backup. Auto-committing every backup-copy mutation adds noise to `$RIPTSK_REPO` git history without improving data safety — the remote already has the canonical state.
 
 **Why not for trivial mutations:** Field edits (`tsk edit`), comments, and tag changes are low-signal individually. Batching them via `tsk commit` or `tsk session end` produces a cleaner history. The data loss risk is lower — these are incremental refinements, not state transitions.
 
-**Commit message format:** `tsk: <verb> <ID> — <title>` (see [15 — Version Control & Backup](archive/15-version-control-backup.md) for full conventions).
+**Commit message format:** `riptsk: <verb> <ID> — <title>` (see [15 — Version Control & Backup](archive/15-version-control-backup.md) for full conventions).
 
-Auto-commit does not auto-push. It goes through normal `git commit`, so the pre-commit hook ([25 — TSK_REPO Hooks](archive/25-tsk-repo-hooks.md)) runs and validates the commit automatically.
+Auto-commit does not auto-push. It goes through normal `git commit`, so the pre-commit hook ([25 — RIPTSK_REPO Hooks](archive/25-tsk-repo-hooks.md)) runs and validates the commit automatically.

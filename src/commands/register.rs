@@ -1,12 +1,12 @@
 use crate::adapters::prompts::DialoguerPrompts;
 use crate::cli::RegisterArgs;
 use crate::config::{load_config, save_config};
-use crate::error::TskError;
+use crate::error::RiptskError;
 use crate::paths::AppPaths;
 
-pub fn run(paths: &AppPaths, args: RegisterArgs) -> Result<(), TskError> {
+pub fn run(paths: &AppPaths, args: RegisterArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path()).map_err(TskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
     if args.list {
         for remote in config.remotes {
             println!("{}\t{:?}", remote.name, remote.remote_type);
@@ -25,7 +25,7 @@ pub fn run(paths: &AppPaths, args: RegisterArgs) -> Result<(), TskError> {
         &DialoguerPrompts,
         &cwd,
     )?;
-    save_config(paths.config_path().as_std_path(), &config).map_err(TskError::Other)?;
+    save_config(paths.config_path().as_std_path(), &config).map_err(RiptskError::Other)?;
     println!("{}\t{:?}", remote.name, remote.remote_type);
     Ok(())
 }

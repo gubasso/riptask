@@ -7,8 +7,8 @@ help:
 	@echo "  build       Build the release binary"
 	@echo "  test        Run cargo nextest"
 	@echo "  lint        Run cargo fmt and cargo clippy"
-	@echo "  install     Install tsk from the current path"
-	@echo "  uninstall   Uninstall tsk"
+	@echo "  install     Install riptsk from the current path"
+	@echo "  uninstall   Uninstall riptsk"
 	@echo "  check       Run lint and test"
 
 build:
@@ -25,7 +25,7 @@ install:
 	cargo install --path .
 
 uninstall:
-	cargo uninstall tsk
+	cargo uninstall riptsk
 
 check:
 	$(MAKE) lint

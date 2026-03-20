@@ -1,10 +1,10 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
+use riptsk::assets::hook::{HOOK_VERSION, PRE_COMMIT_HOOK};
 use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use tempfile::tempdir;
-use tsk::assets::hook::{HOOK_VERSION, PRE_COMMIT_HOOK};
 
 fn init_repo() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
     let temp = tempdir().expect("temp dir");
@@ -13,7 +13,7 @@ fn init_repo() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
 
     Command::cargo_bin("tsk")
         .expect("binary")
-        .env("TSK_REPO", &repo)
+        .env("RIPTSK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .arg("init")
         .assert()
@@ -28,7 +28,7 @@ fn hooks_status_reports_not_installed() {
 
     Command::cargo_bin("tsk")
         .expect("binary")
-        .env("TSK_REPO", &repo)
+        .env("RIPTSK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .args(["hooks", "status"])
         .assert()
@@ -43,7 +43,7 @@ fn hooks_install_creates_hook_file() {
 
     Command::cargo_bin("tsk")
         .expect("binary")
-        .env("TSK_REPO", &repo)
+        .env("RIPTSK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .args(["hooks", "install"])
         .assert()
@@ -70,7 +70,7 @@ fn hooks_status_reports_installed_after_install() {
 
     Command::cargo_bin("tsk")
         .expect("binary")
-        .env("TSK_REPO", &repo)
+        .env("RIPTSK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .args(["hooks", "install"])
         .assert()
@@ -78,7 +78,7 @@ fn hooks_status_reports_installed_after_install() {
 
     Command::cargo_bin("tsk")
         .expect("binary")
-        .env("TSK_REPO", &repo)
+        .env("RIPTSK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .args(["hooks", "status"])
         .assert()
@@ -96,7 +96,7 @@ fn hooks_update_restores_modified_hook() {
 
     Command::cargo_bin("tsk")
         .expect("binary")
-        .env("TSK_REPO", &repo)
+        .env("RIPTSK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .args(["hooks", "install"])
         .assert()
@@ -106,7 +106,7 @@ fn hooks_update_restores_modified_hook() {
 
     Command::cargo_bin("tsk")
         .expect("binary")
-        .env("TSK_REPO", &repo)
+        .env("RIPTSK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .args(["hooks", "update"])
         .assert()
@@ -124,7 +124,7 @@ fn hooks_update_errors_when_not_installed() {
 
     Command::cargo_bin("tsk")
         .expect("binary")
-        .env("TSK_REPO", &repo)
+        .env("RIPTSK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .args(["hooks", "update"])
         .assert()
@@ -139,7 +139,7 @@ fn hooks_uninstall_removes_hook() {
 
     Command::cargo_bin("tsk")
         .expect("binary")
-        .env("TSK_REPO", &repo)
+        .env("RIPTSK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .args(["hooks", "install"])
         .assert()
@@ -152,7 +152,7 @@ fn hooks_uninstall_removes_hook() {
 
     Command::cargo_bin("tsk")
         .expect("binary")
-        .env("TSK_REPO", &repo)
+        .env("RIPTSK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .args(["hooks", "uninstall"])
         .assert()
@@ -170,7 +170,7 @@ fn hooks_uninstall_is_idempotent() {
 
     Command::cargo_bin("tsk")
         .expect("binary")
-        .env("TSK_REPO", &repo)
+        .env("RIPTSK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .args(["hooks", "uninstall"])
         .assert()

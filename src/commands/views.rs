@@ -1,24 +1,24 @@
 use crate::adapters::picker::{FzfPicker, Picker};
 use crate::cli::{BoardArgs, IdArgs, ReorderArgs};
 use crate::config::{load_config, parse_state};
-use crate::error::TskError;
+use crate::error::RiptskError;
 use crate::paths::AppPaths;
 use crate::services::issue_service::{IssueService, ShiftDirection};
 use crate::services::view_builder::ViewBuilder;
 use anyhow::Context;
 use std::fs;
 
-pub fn view(paths: &AppPaths) -> Result<(), TskError> {
+pub fn view(paths: &AppPaths) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path()).map_err(TskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
     ViewBuilder::new(paths, &config)
         .regenerate_all(None)
-        .map_err(TskError::Other)
+        .map_err(RiptskError::Other)
 }
 
-pub fn board(paths: &AppPaths, args: BoardArgs) -> Result<(), TskError> {
+pub fn board(paths: &AppPaths, args: BoardArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path()).map_err(TskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
     let cwd = camino::Utf8PathBuf::from(
         std::env::current_dir()
             .unwrap_or_default()
@@ -30,7 +30,7 @@ pub fn board(paths: &AppPaths, args: BoardArgs) -> Result<(), TskError> {
     let builder = ViewBuilder::new(paths, &config);
     builder
         .regenerate_all(Some(&scope))
-        .map_err(TskError::Other)?;
+        .map_err(RiptskError::Other)?;
     let path = builder.board_path(args.board.as_deref(), args.all);
 
     if args.path {
@@ -40,13 +40,13 @@ pub fn board(paths: &AppPaths, args: BoardArgs) -> Result<(), TskError> {
         let parts: Vec<&str> = opener.split_whitespace().collect();
         let (program, cmd_args) = parts
             .split_first()
-            .ok_or_else(|| TskError::General("empty opener command".into()))?;
+            .ok_or_else(|| RiptskError::General("empty opener command".into()))?;
         std::process::Command::new(program)
             .args(cmd_args)
             .arg(path.as_str())
             .status()
             .context("failed to open board")
-            .map_err(TskError::Other)?;
+            .map_err(RiptskError::Other)?;
     } else {
         let max_depth = config.ui.tree_depth.unwrap_or(3) as usize;
         render_tree(path.as_str(), 0, max_depth)?;
@@ -54,7 +54,7 @@ pub fn board(paths: &AppPaths, args: BoardArgs) -> Result<(), TskError> {
     Ok(())
 }
 
-fn render_tree(path: &str, depth: usize, max_depth: usize) -> Result<(), TskError> {
+fn render_tree(path: &str, depth: usize, max_depth: usize) -> Result<(), RiptskError> {
     let indent = "  ".repeat(depth);
     let name = std::path::Path::new(path)
         .file_name()
@@ -75,15 +75,15 @@ fn render_tree(path: &str, depth: usize, max_depth: usize) -> Result<(), TskErro
     Ok(())
 }
 
-pub fn reorder(paths: &AppPaths, args: ReorderArgs) -> Result<(), TskError> {
+pub fn reorder(paths: &AppPaths, args: ReorderArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path()).map_err(TskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
     let service = IssueService::new(paths, &config);
     let board = args
         .board
         .or_else(|| config.boards.first().map(|board| board.name.clone()))
         .unwrap_or_else(|| "personal".into());
-    let state = parse_state(&args.state).map_err(TskError::Other)?;
+    let state = parse_state(&args.state).map_err(RiptskError::Other)?;
 
     let ids = if args.ids.is_empty() {
         let cwd = camino::Utf8PathBuf::from(
@@ -121,18 +121,18 @@ pub fn reorder(paths: &AppPaths, args: ReorderArgs) -> Result<(), TskError> {
     service.reorder_lane(&board, &state, &ids)
 }
 
-pub fn reorder_up(paths: &AppPaths, args: IdArgs) -> Result<(), TskError> {
+pub fn reorder_up(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
     shift(paths, args, ShiftDirection::Up)
 }
 
-pub fn reorder_down(paths: &AppPaths, args: IdArgs) -> Result<(), TskError> {
+pub fn reorder_down(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
     shift(paths, args, ShiftDirection::Down)
 }
 
-fn shift(paths: &AppPaths, args: IdArgs, direction: ShiftDirection) -> Result<(), TskError> {
-    let config = load_config(paths.config_path().as_std_path()).map_err(TskError::Other)?;
+fn shift(paths: &AppPaths, args: IdArgs, direction: ShiftDirection) -> Result<(), RiptskError> {
+    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
     let service = IssueService::new(paths, &config);
     let id = if let Some(id) = args.id {
         id

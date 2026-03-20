@@ -21,7 +21,7 @@
 - `tsk` does not manage authentication — delegated entirely to `glab`/`gh`
 - The default sync scope when inside a project repo is **that project only**
 - `--all` flag overrides scope to all configured remotes
-- **Local projects** (`type: local` — non-GitHub/GitLab remotes or no remote) are **skipped by `tsk sync`**. They have no remote issue tracker to sync against. Cross-host sharing for local projects is handled entirely via `$TSK_REPO` git push/pull
+- **Local projects** (`type: local` — non-GitHub/GitLab remotes or no remote) are **skipped by `tsk sync`**. They have no remote issue tracker to sync against. Cross-host sharing for local projects is handled entirely via `$RIPTSK_REPO` git push/pull
 
 ### Pull algorithm
 
@@ -85,13 +85,13 @@ for each remote in scope:
             set remote_deleted: true in frontmatter
             # do NOT delete local file — data is preserved
 
-update $XDG_CACHE_HOME/tsk/remote_state.json
+update $XDG_CACHE_HOME/riptsk/remote_state.json
 regenerate views/
 ```
 
 When `--force` is passed, the conflict detection branch is skipped entirely and the pull uses last-write-wins (remote overwrites local if remote is newer). Existing unresolved conflicts are still skipped.
 
-After writing `.REMOTE.md` and adding `conflict:` metadata, `tsk sync pull` commits these files to `$TSK_REPO` with `TSK_HOOK_ALLOW_REMOTE=1` (see [25 — Hooks](25-tsk-repo-hooks.md)).
+After writing `.REMOTE.md` and adding `conflict:` metadata, `tsk sync pull` commits these files to `$RIPTSK_REPO` with `RIPTSK_HOOK_ALLOW_REMOTE=1` (see [25 — Hooks](25-tsk-repo-hooks.md)).
 
 ### Push algorithm
 
@@ -115,7 +115,7 @@ for each issue in dirty_issues:
         new_filename = "<PREFIX>-<remote_id>.md"
         rename: issues/LOCAL-xxxx.md → issues/<new_filename>
         update frontmatter: id, local_id=null, gitlab.issue_id OR github.issue_id, remote URL, remote updated_at
-        update $XDG_CACHE_HOME/tsk/id_map.json: LOCAL-xxxx → <PREFIX>-<remote_id>
+        update $XDG_CACHE_HOME/riptsk/id_map.json: LOCAL-xxxx → <PREFIX>-<remote_id>
         update cross-references in other issue files
 
     else:
@@ -132,13 +132,13 @@ for each issue in dirty_issues:
             glab issue reopen <issue_id> --repo <repo>
         update frontmatter: gitlab.updated_at from response
 
-update $XDG_CACHE_HOME/tsk/remote_state.json
+update $XDG_CACHE_HOME/riptsk/remote_state.json
 regenerate views/
 ```
 
 ### Remote state cache
 
-`~/.cache/tsk/remote_state.json` — the sync baseline for conflict detection and the diff baseline for `tsk sync status`.
+`~/.cache/riptsk/remote_state.json` — the sync baseline for conflict detection and the diff baseline for `tsk sync status`.
 
 ```json
 {
@@ -161,7 +161,7 @@ regenerate views/
 
 ### ID map cache
 
-`~/.cache/tsk/id_map.json` — tracks local-to-remote ID assignments for the file rename flow.
+`~/.cache/riptsk/id_map.json` — tracks local-to-remote ID assignments for the file rename flow.
 
 ```json
 {

@@ -1,5 +1,5 @@
 use crate::config::{Config, RemoteConfig};
-use crate::error::TskError;
+use crate::error::RiptskError;
 use crate::services::project_detection;
 use camino::Utf8Path;
 
@@ -25,7 +25,7 @@ pub fn resolve_scope(
     all_projects: bool,
     cwd: &Utf8Path,
     config: &Config,
-) -> Result<ProjectScope, TskError> {
+) -> Result<ProjectScope, RiptskError> {
     if all_projects {
         return Ok(ProjectScope::AllProjects);
     }

@@ -10,7 +10,7 @@ fn view_builds_kanban_tree() {
     let cache = temp.path().join("cache");
     Command::cargo_bin("tsk")
         .expect("binary")
-        .env("TSK_REPO", &repo)
+        .env("RIPTSK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .arg("init")
         .assert()
@@ -18,19 +18,19 @@ fn view_builds_kanban_tree() {
     Command::cargo_bin("tsk")
         .expect("binary")
         .current_dir(temp.path())
-        .env("TSK_REPO", &repo)
+        .env("RIPTSK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .args(["new", "--title", "Build views"])
         .assert()
         .success();
     Command::cargo_bin("tsk")
         .expect("binary")
-        .env("TSK_REPO", &repo)
+        .env("RIPTSK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .arg("view")
         .assert()
         .success();
-    assert!(cache.join("tsk/views/kanban/personal/todo").exists());
+    assert!(cache.join("riptsk/views/kanban/personal/todo").exists());
 }
 
 #[test]
@@ -41,15 +41,16 @@ fn board_respects_explicit_multi_project_scope() {
 
     Command::cargo_bin("tsk")
         .expect("binary")
-        .env("TSK_REPO", &repo)
+        .env("RIPTSK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .arg("init")
         .assert()
         .success();
 
     // Override tree_depth so board output includes issue filenames
-    let config = include_str!("fixtures/tsk_multi.yaml").replace("tree_depth: 2", "tree_depth: 4");
-    fs::write(repo.join("tsk.yaml"), config).expect("write config");
+    let config =
+        include_str!("fixtures/riptsk_multi.yaml").replace("tree_depth: 2", "tree_depth: 4");
+    fs::write(repo.join("riptsk.yaml"), config).expect("write config");
     fs::copy(
         format!(
             "{}/tests/fixtures/issues/GL-CHR-WOR--42.md",
@@ -69,7 +70,7 @@ fn board_respects_explicit_multi_project_scope() {
 
     Command::cargo_bin("tsk")
         .expect("binary")
-        .env("TSK_REPO", &repo)
+        .env("RIPTSK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .args([
             "new",
@@ -91,7 +92,7 @@ fn board_respects_explicit_multi_project_scope() {
 
     Command::cargo_bin("tsk")
         .expect("binary")
-        .env("TSK_REPO", &repo)
+        .env("RIPTSK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .args([
             "board",

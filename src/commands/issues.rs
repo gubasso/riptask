@@ -3,7 +3,7 @@ use crate::adapters::remote::RemoteIssueUpsert;
 use crate::cli::{IdArgs, LsArgs, MoveArgs, NewArgs};
 use crate::config::{load_config, save_config};
 use crate::domain::issue::{GithubIssueMeta, GitlabIssueMeta, IssueDocument, IssueFrontmatter};
-use crate::error::TskError;
+use crate::error::RiptskError;
 use crate::paths::AppPaths;
 use crate::services::auto_commit::maybe_auto_commit;
 use crate::services::issue_ids;
@@ -12,28 +12,28 @@ use crate::services::remote_mapping::{build_provider_for_remote, build_state_lab
 use crate::storage::{cache, frontmatter, issue_store};
 use std::io::IsTerminal;
 
-pub fn show(paths: &AppPaths, args: IdArgs) -> Result<(), TskError> {
+pub fn show(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
     let id = args
         .id
-        .ok_or_else(|| TskError::General("<ID> required".into()))?;
+        .ok_or_else(|| RiptskError::General("<ID> required".into()))?;
     let path = issue_store::find_issue(paths, &id)?;
     print!("{}", std::fs::read_to_string(path)?);
     Ok(())
 }
 
-pub fn path(paths: &AppPaths, args: IdArgs) -> Result<(), TskError> {
+pub fn path(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
     let id = args
         .id
-        .ok_or_else(|| TskError::General("<ID> required".into()))?;
+        .ok_or_else(|| RiptskError::General("<ID> required".into()))?;
     println!("{}", issue_store::find_issue(paths, &id)?);
     Ok(())
 }
 
-pub fn list(paths: &AppPaths, args: LsArgs) -> Result<(), TskError> {
+pub fn list(paths: &AppPaths, args: LsArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path()).map_err(TskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
     let cwd = camino::Utf8PathBuf::from(
         std::env::current_dir()
             .unwrap_or_default()
@@ -66,9 +66,9 @@ pub fn list(paths: &AppPaths, args: LsArgs) -> Result<(), TskError> {
     Ok(())
 }
 
-pub async fn new(paths: &AppPaths, args: NewArgs) -> Result<(), TskError> {
+pub async fn new(paths: &AppPaths, args: NewArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    let mut config = load_config(paths.config_path().as_std_path()).map_err(TskError::Other)?;
+    let mut config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
     let mut args = args;
     let mut config_changed = false;
     if args.project.is_none() {
@@ -91,7 +91,7 @@ pub async fn new(paths: &AppPaths, args: NewArgs) -> Result<(), TskError> {
         let title = dialoguer::Input::<String>::new()
             .with_prompt("Title")
             .interact_text()
-            .map_err(|error| TskError::General(error.to_string()))?;
+            .map_err(|error| RiptskError::General(error.to_string()))?;
         args.title = Some(title);
     }
     let service = IssueService::new(paths, &config);
@@ -114,13 +114,13 @@ pub async fn new(paths: &AppPaths, args: NewArgs) -> Result<(), TskError> {
             .remotes
             .iter()
             .find(|remote| remote.name == draft.project)
-            .ok_or_else(|| TskError::Unregistered(draft.project.clone()))?;
+            .ok_or_else(|| RiptskError::Unregistered(draft.project.clone()))?;
         create_remote_issue(paths, &service, &draft, remote).await?
     } else {
         create_local_issue(&service, &draft)?
     };
     if config_changed {
-        save_config(paths.config_path().as_std_path(), &config).map_err(TskError::Other)?;
+        save_config(paths.config_path().as_std_path(), &config).map_err(RiptskError::Other)?;
     }
     let issue_path = paths
         .issues_dir()
@@ -133,9 +133,9 @@ pub async fn new(paths: &AppPaths, args: NewArgs) -> Result<(), TskError> {
     maybe_auto_commit(
         &config,
         &CliGit,
-        paths.tsk_repo.as_std_path(),
+        paths.riptsk_repo.as_std_path(),
         &format!(
-            "tsk: new {} - {}",
+            "riptsk: new {} - {}",
             issue.frontmatter.id, issue.frontmatter.title
         ),
         &files,
@@ -144,48 +144,48 @@ pub async fn new(paths: &AppPaths, args: NewArgs) -> Result<(), TskError> {
     Ok(())
 }
 
-pub fn edit(paths: &AppPaths, args: IdArgs) -> Result<(), TskError> {
+pub fn edit(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path()).map_err(TskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
     let id = args
         .id
-        .ok_or_else(|| TskError::General("<ID> required".into()))?;
+        .ok_or_else(|| RiptskError::General("<ID> required".into()))?;
     let path = issue_store::find_issue(paths, &id)?;
-    let issue = frontmatter::load_issue(path.as_std_path()).map_err(TskError::Other)?;
+    let issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
     IssueService::new(paths, &config).edit_issue(Some(id.clone()))?;
     maybe_auto_commit(
         &config,
         &CliGit,
-        paths.tsk_repo.as_std_path(),
-        &format!("tsk: edit {} - {}", id, issue.frontmatter.title),
+        paths.riptsk_repo.as_std_path(),
+        &format!("riptsk: edit {} - {}", id, issue.frontmatter.title),
         &[path.as_std_path()],
     )?;
     Ok(())
 }
 
-pub fn move_issue(paths: &AppPaths, args: MoveArgs) -> Result<(), TskError> {
+pub fn move_issue(paths: &AppPaths, args: MoveArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path()).map_err(TskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
     let id = args
         .id
-        .ok_or_else(|| TskError::General("<ID> required".into()))?;
+        .ok_or_else(|| RiptskError::General("<ID> required".into()))?;
     let state = args
         .state
-        .ok_or_else(|| TskError::General("<state> required".into()))?;
+        .ok_or_else(|| RiptskError::General("<state> required".into()))?;
     let path = issue_store::find_issue(paths, &id)?;
-    let issue = frontmatter::load_issue(path.as_std_path()).map_err(TskError::Other)?;
+    let issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
     IssueService::new(paths, &config).move_issue(&id, &state)?;
     maybe_auto_commit(
         &config,
         &CliGit,
-        paths.tsk_repo.as_std_path(),
-        &format!("tsk: move {} - {}", id, issue.frontmatter.title),
+        paths.riptsk_repo.as_std_path(),
+        &format!("riptsk: move {} - {}", id, issue.frontmatter.title),
         &[path.as_std_path()],
     )?;
     Ok(())
 }
 
-pub fn close(paths: &AppPaths, args: IdArgs) -> Result<(), TskError> {
+pub fn close(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
     move_issue(
         paths,
@@ -197,7 +197,7 @@ pub fn close(paths: &AppPaths, args: IdArgs) -> Result<(), TskError> {
     )
 }
 
-pub fn reopen(paths: &AppPaths, args: IdArgs) -> Result<(), TskError> {
+pub fn reopen(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
     move_issue(
         paths,
@@ -209,20 +209,20 @@ pub fn reopen(paths: &AppPaths, args: IdArgs) -> Result<(), TskError> {
     )
 }
 
-pub fn remove(paths: &AppPaths, args: IdArgs) -> Result<(), TskError> {
+pub fn remove(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path()).map_err(TskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
     let id = args
         .id
-        .ok_or_else(|| TskError::General("<ID> required".into()))?;
+        .ok_or_else(|| RiptskError::General("<ID> required".into()))?;
     let path = issue_store::find_issue(paths, &id)?;
-    let issue = frontmatter::load_issue(path.as_std_path()).map_err(TskError::Other)?;
+    let issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
     IssueService::new(paths, &config).remove_issue(&id)?;
     maybe_auto_commit(
         &config,
         &CliGit,
-        paths.tsk_repo.as_std_path(),
-        &format!("tsk: rm {} - {}", id, issue.frontmatter.title),
+        paths.riptsk_repo.as_std_path(),
+        &format!("riptsk: rm {} - {}", id, issue.frontmatter.title),
         &[path.as_std_path()],
     )?;
     Ok(())
@@ -233,12 +233,12 @@ async fn create_remote_issue(
     service: &IssueService<'_>,
     draft: &IssueDraft,
     remote: &crate::config::RemoteConfig,
-) -> Result<IssueDocument, TskError> {
+) -> Result<IssueDocument, RiptskError> {
     let provider = build_provider_for_remote(remote)?;
     let repo = remote
         .repo
         .as_deref()
-        .ok_or_else(|| TskError::Config(format!("remote {} is missing repo", remote.name)))?;
+        .ok_or_else(|| RiptskError::Config(format!("remote {} is missing repo", remote.name)))?;
     let upsert = RemoteIssueUpsert {
         title: draft.title.clone(),
         body: draft.body.clone(),
@@ -300,14 +300,14 @@ async fn create_remote_issue(
     };
     service.persist_issue(&document)?;
     cache::seed_remote_state_entry(paths, provider_name(remote), repo, &record)
-        .map_err(TskError::Other)?;
+        .map_err(RiptskError::Other)?;
     Ok(document)
 }
 
 fn create_local_issue(
     service: &IssueService<'_>,
     draft: &IssueDraft,
-) -> Result<IssueDocument, TskError> {
+) -> Result<IssueDocument, RiptskError> {
     let document = service.build_local_issue_document(draft)?;
     service.persist_issue(&document)?;
     Ok(document)

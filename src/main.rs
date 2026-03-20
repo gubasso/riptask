@@ -1,11 +1,11 @@
 use anyhow::Context;
 use clap::CommandFactory;
 use clap::Parser;
+use riptsk::cli::{Cli, Commands, CompletionShell};
+use riptsk::commands;
+use riptsk::error::RiptskError;
+use riptsk::paths::AppPaths;
 use std::process::ExitCode;
-use tsk::cli::{Cli, Commands, CompletionShell};
-use tsk::commands;
-use tsk::error::TskError;
-use tsk::paths::AppPaths;
 
 fn main() -> ExitCode {
     match run() {
@@ -17,7 +17,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn run() -> Result<(), TskError> {
+fn run() -> Result<(), RiptskError> {
     let cli = Cli::parse();
     let paths = AppPaths::from_env().context("failed to resolve application paths")?;
 
@@ -49,7 +49,7 @@ fn run() -> Result<(), TskError> {
                     println!();
                     Ok(())
                 } else {
-                    Err(TskError::General(format!("unknown command: {command}")))
+                    Err(RiptskError::General(format!("unknown command: {command}")))
                 }
             } else {
                 let mut root = Cli::command();

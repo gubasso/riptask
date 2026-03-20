@@ -60,7 +60,7 @@ pub fn validate_no_scope_collisions(remotes: &[RemoteConfig]) -> Result<()> {
         let scope = derive_scope_from_remote(remote);
         if let Some(existing) = scopes.insert(scope.clone(), remote.name.clone()) {
             return Err(anyhow!(
-                "duplicate derived issue scope in tsk.yaml: {scope} ({existing}, {})",
+                "duplicate derived issue scope in riptsk.yaml: {scope} ({existing}, {})",
                 remote.name
             ));
         }

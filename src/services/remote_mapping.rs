@@ -5,13 +5,13 @@ use crate::config::{RemoteConfig, RemoteType};
 use crate::domain::issue::{
     GithubIssueMeta, GitlabIssueMeta, IssueDocument, IssueFrontmatter, IssueState, Priority,
 };
-use crate::error::TskError;
+use crate::error::RiptskError;
 use crate::services::issue_ids;
 use crate::services::issue_service::{generate_slug, now_utc};
 
 pub fn build_provider_for_remote(
     remote: &RemoteConfig,
-) -> Result<Box<dyn RemoteProvider>, TskError> {
+) -> Result<Box<dyn RemoteProvider>, RiptskError> {
     match remote.remote_type {
         RemoteType::Github => {
             let token = std::env::var("GITHUB_TOKEN")
@@ -21,7 +21,7 @@ pub fn build_provider_for_remote(
         }
         RemoteType::Gitlab => {
             let token = std::env::var("GITLAB_TOKEN")
-                .map_err(|_| TskError::Unreachable("missing GITLAB_TOKEN".into()))?;
+                .map_err(|_| RiptskError::Unreachable("missing GITLAB_TOKEN".into()))?;
             let host = remote
                 .host
                 .as_deref()
@@ -31,7 +31,7 @@ pub fn build_provider_for_remote(
                 .to_owned();
             Ok(Box::new(GitlabProvider::new(&host, &token)?))
         }
-        RemoteType::Local => Err(TskError::Config(format!(
+        RemoteType::Local => Err(RiptskError::Config(format!(
             "remote {} is local-only",
             remote.name
         ))),

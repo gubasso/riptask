@@ -222,11 +222,11 @@ pub fn validate_config(config: &Config) -> Result<()> {
     issue_ids::validate_no_scope_collisions(&config.remotes)?;
     require_unique(
         config.remotes.iter().map(|remote| remote.name.as_str()),
-        "duplicate remote name in tsk.yaml",
+        "duplicate remote name in riptsk.yaml",
     )?;
     require_unique(
         config.boards.iter().map(|board| board.name.as_str()),
-        "duplicate board name in tsk.yaml",
+        "duplicate board name in riptsk.yaml",
     )?;
     Ok(())
 }
@@ -310,7 +310,7 @@ mod tests {
 
     #[test]
     fn parses_fixture_config() {
-        let config = load_config(std::path::Path::new("tests/fixtures/tsk.yaml"))
+        let config = load_config(std::path::Path::new("tests/fixtures/riptsk.yaml"))
             .expect("load fixture config");
         assert_eq!(config.version, 1);
         assert_eq!(config.remotes.len(), 1);
@@ -319,7 +319,7 @@ mod tests {
     #[test]
     fn config_set_whitelist_updates_expected_field() {
         let mut config =
-            load_config(std::path::Path::new("tests/fixtures/tsk.yaml")).expect("load config");
+            load_config(std::path::Path::new("tests/fixtures/riptsk.yaml")).expect("load config");
         config_set(&mut config, "ui.opener", "less").expect("set opener");
         assert_eq!(config.ui.opener.as_deref(), Some("less"));
         config_set(&mut config, "auto_commit", "true").expect("set auto_commit");
@@ -329,7 +329,7 @@ mod tests {
     #[test]
     fn config_save_round_trip_is_valid_yaml() {
         let config =
-            load_config(std::path::Path::new("tests/fixtures/tsk.yaml")).expect("load config");
+            load_config(std::path::Path::new("tests/fixtures/riptsk.yaml")).expect("load config");
         let file = NamedTempFile::new().expect("temp file");
         super::save_config(file.path(), &config).expect("save config");
         let reparsed = load_config(file.path()).expect("reload config");
