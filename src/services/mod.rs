@@ -1,5 +1,6 @@
 pub mod auto_commit;
 pub mod backend_mapping;
+pub mod id_resolution;
 pub mod issue_ids;
 pub mod issue_service;
 pub mod project_detection;

@@ -9,11 +9,24 @@ use crate::services::backend_mapping::{
     backend_state_entry, build_provider_for_backend, current_timestamp, issue_to_upsert,
     update_issue_from_backend,
 };
+use crate::services::id_resolution;
 use crate::storage::{cache, frontmatter, issue_store};
 
 pub fn run(paths: &AppPaths, args: PushArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
+    let mut args = args;
     let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let cwd = camino::Utf8PathBuf::from(
+        std::env::current_dir()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string(),
+    );
+    args.ids = args
+        .ids
+        .iter()
+        .map(|id| id_resolution::resolve_id(paths, &config, &cwd, id))
+        .collect::<Result<Vec<_>, _>>()?;
     let backends = resolve_backends(&config, &args)?;
     for backend in backends {
         push_backend(paths, &config, backend, &args)?;

@@ -6,15 +6,23 @@ use crate::models::Backend;
 use crate::paths::AppPaths;
 use crate::services::auto_commit::maybe_auto_commit;
 use crate::services::backend_mapping::build_provider_for_backend;
+use crate::services::id_resolution;
 use crate::services::issue_service::generate_branch_slug;
 use crate::storage::{frontmatter, issue_store};
 
 pub async fn branch(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
+    let IdArgs { scope, id } = args;
     let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
-    let id = args
-        .id
-        .ok_or_else(|| RiptskError::General("<ID> required".into()))?;
+    let cwd = camino::Utf8PathBuf::from(
+        std::env::current_dir()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string(),
+    );
+    let Some(id) = id_resolution::require_id(paths, &config, &cwd, id, &scope)? else {
+        return Ok(());
+    };
     let path = issue_store::find_issue(paths, &id)?;
     let mut issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
 
@@ -89,7 +97,14 @@ pub async fn branch(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
 
 pub async fn pr(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
+    let IdArgs { id, .. } = args;
     let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let cwd = camino::Utf8PathBuf::from(
+        std::env::current_dir()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string(),
+    );
     let repo = current_repo()?;
     let git = CliGit;
     let current_branch = git.current_branch(repo.as_path())?;
@@ -102,7 +117,8 @@ pub async fn pr(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
         )));
     }
 
-    let path = if let Some(id) = args.id {
+    let path = if let Some(id) = id {
+        let id = id_resolution::resolve_id(paths, &config, &cwd, &id)?;
         issue_store::find_issue(paths, &id)?
     } else {
         find_issue_for_branch(paths, &current_branch)?

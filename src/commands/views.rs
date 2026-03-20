@@ -3,6 +3,7 @@ use crate::cli::{BoardArgs, IdArgs, ReorderArgs};
 use crate::config::{load_config, parse_state};
 use crate::error::RiptskError;
 use crate::paths::AppPaths;
+use crate::services::id_resolution;
 use crate::services::issue_service::{IssueService, ShiftDirection};
 use crate::services::view_builder::ViewBuilder;
 use anyhow::Context;
@@ -78,6 +79,12 @@ fn render_tree(path: &str, depth: usize, max_depth: usize) -> Result<(), RiptskE
 pub fn reorder(paths: &AppPaths, args: ReorderArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
     let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let cwd = camino::Utf8PathBuf::from(
+        std::env::current_dir()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string(),
+    );
     let service = IssueService::new(paths, &config);
     let board = args
         .board
@@ -86,12 +93,6 @@ pub fn reorder(paths: &AppPaths, args: ReorderArgs) -> Result<(), RiptskError> {
     let state = parse_state(&args.state).map_err(RiptskError::Other)?;
 
     let ids = if args.ids.is_empty() {
-        let cwd = camino::Utf8PathBuf::from(
-            std::env::current_dir()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string(),
-        );
         let scope = crate::scope::resolve_scope(
             &args.scope.projects,
             args.scope.all_projects,
@@ -116,6 +117,9 @@ pub fn reorder(paths: &AppPaths, args: ReorderArgs) -> Result<(), RiptskError> {
         picker.pick_many(&issues, "reorder> ")?
     } else {
         args.ids
+            .into_iter()
+            .map(|id| id_resolution::resolve_id(paths, &config, &cwd, &id))
+            .collect::<Result<Vec<_>, _>>()?
     };
 
     service.reorder_lane(&board, &state, &ids)
@@ -133,30 +137,15 @@ pub fn reorder_down(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
 
 fn shift(paths: &AppPaths, args: IdArgs, direction: ShiftDirection) -> Result<(), RiptskError> {
     let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let cwd = camino::Utf8PathBuf::from(
+        std::env::current_dir()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string(),
+    );
     let service = IssueService::new(paths, &config);
-    let id = if let Some(id) = args.id {
-        id
-    } else {
-        let cwd = camino::Utf8PathBuf::from(
-            std::env::current_dir()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string(),
-        );
-        let scope = crate::scope::resolve_scope(
-            &args.scope.projects,
-            args.scope.all_projects,
-            &cwd,
-            &config,
-        )?;
-        let picker = FzfPicker {
-            fzf_opts: config.ui.fzf_opts.clone(),
-        };
-        let issues = service.list_matching(&crate::cli::LsArgs::default(), &scope)?;
-        let Some(id) = picker.pick_issue(&issues, "reorder> ")? else {
-            return Ok(());
-        };
-        id.split('\t').next().unwrap_or_default().to_owned()
+    let Some(id) = id_resolution::require_id(paths, &config, &cwd, args.id, &args.scope)? else {
+        return Ok(());
     };
     service.shift_issue_order(&id, direction)
 }
