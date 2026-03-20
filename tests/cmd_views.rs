@@ -105,7 +105,7 @@ fn board_respects_explicit_multi_project_scope() {
         .assert()
         .success()
         .stdout(
-            predicate::str::contains("LO-PEN-PEN--1")
+            predicate::str::contains("LO-PEN--1")
                 .and(predicate::str::contains("GL-CHR-WOR--42"))
                 .and(predicate::str::contains("GH-PEN-FIS--17").not()),
         );
