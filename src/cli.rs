@@ -190,9 +190,16 @@ pub struct SessionArgs {
     pub subcommand: SessionSubcommand,
 }
 
+#[derive(Debug, Clone, Args, Default)]
+pub struct SessionStartArgs {
+    #[command(flatten)]
+    pub scope: ScopeArgs,
+    pub id: Option<String>,
+}
+
 #[derive(Debug, Clone, Subcommand)]
 pub enum SessionSubcommand {
-    Start { id: Option<String> },
+    Start(SessionStartArgs),
     End,
 }
 
@@ -330,7 +337,7 @@ pub enum HooksSubcommand {
 
 #[cfg(test)]
 mod tests {
-    use super::{Cli, Commands};
+    use super::{Cli, Commands, SessionSubcommand};
     use clap::Parser;
 
     #[test]
@@ -364,5 +371,44 @@ mod tests {
     fn uppercase_all_projects_no_longer_parses() {
         let result = Cli::try_parse_from(["tsk", "ls", "-A"]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn session_start_id_parses() {
+        let cli = Cli::try_parse_from(["tsk", "session", "start", "61"]).expect("parse");
+        let Commands::Session(args) = cli.command.expect("command") else {
+            panic!("expected session command");
+        };
+        let SessionSubcommand::Start(args) = args.subcommand else {
+            panic!("expected session start subcommand");
+        };
+        assert_eq!(args.id.as_deref(), Some("61"));
+    }
+
+    #[test]
+    fn session_start_scope_parses() {
+        let cli = Cli::try_parse_from(["tsk", "session", "start", "-p", "foo"]).expect("parse");
+        let Commands::Session(args) = cli.command.expect("command") else {
+            panic!("expected session command");
+        };
+        let SessionSubcommand::Start(args) = args.subcommand else {
+            panic!("expected session start subcommand");
+        };
+        assert_eq!(args.scope.projects, vec!["foo"]);
+        assert_eq!(args.id, None);
+    }
+
+    #[test]
+    fn session_start_empty_parses() {
+        let cli = Cli::try_parse_from(["tsk", "session", "start"]).expect("parse");
+        let Commands::Session(args) = cli.command.expect("command") else {
+            panic!("expected session command");
+        };
+        let SessionSubcommand::Start(args) = args.subcommand else {
+            panic!("expected session start subcommand");
+        };
+        assert_eq!(args.id, None);
+        assert!(args.scope.projects.is_empty());
+        assert!(!args.scope.all_projects);
     }
 }

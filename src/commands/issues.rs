@@ -8,6 +8,7 @@ use crate::models::{Backend, BackendConfig};
 use crate::paths::AppPaths;
 use crate::services::auto_commit::maybe_auto_commit;
 use crate::services::backend_mapping::{build_provider_for_backend, build_state_labels};
+use crate::services::id_resolution;
 use crate::services::issue_ids;
 use crate::services::issue_service::{IssueDraft, IssueService, generate_slug};
 use crate::storage::{cache, frontmatter, issue_store};
@@ -15,9 +16,17 @@ use std::io::IsTerminal;
 
 pub fn show(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    let id = args
-        .id
-        .ok_or_else(|| RiptskError::General("<ID> required".into()))?;
+    let IdArgs { scope, id } = args;
+    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let cwd = camino::Utf8PathBuf::from(
+        std::env::current_dir()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string(),
+    );
+    let Some(id) = id_resolution::require_id(paths, &config, &cwd, id, &scope)? else {
+        return Ok(());
+    };
     let path = issue_store::find_issue(paths, &id)?;
     print!("{}", std::fs::read_to_string(path)?);
     Ok(())
@@ -25,9 +34,17 @@ pub fn show(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
 
 pub fn path(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    let id = args
-        .id
-        .ok_or_else(|| RiptskError::General("<ID> required".into()))?;
+    let IdArgs { scope, id } = args;
+    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let cwd = camino::Utf8PathBuf::from(
+        std::env::current_dir()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string(),
+    );
+    let Some(id) = id_resolution::require_id(paths, &config, &cwd, id, &scope)? else {
+        return Ok(());
+    };
     println!("{}", issue_store::find_issue(paths, &id)?);
     Ok(())
 }
@@ -149,10 +166,17 @@ pub async fn new(paths: &AppPaths, args: NewArgs) -> Result<(), RiptskError> {
 
 pub fn edit(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
+    let IdArgs { scope, id } = args;
     let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
-    let id = args
-        .id
-        .ok_or_else(|| RiptskError::General("<ID> required".into()))?;
+    let cwd = camino::Utf8PathBuf::from(
+        std::env::current_dir()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string(),
+    );
+    let Some(id) = id_resolution::require_id(paths, &config, &cwd, id, &scope)? else {
+        return Ok(());
+    };
     let path = issue_store::find_issue(paths, &id)?;
     let issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
     IssueService::new(paths, &config).edit_issue(Some(id.clone()))?;
@@ -168,13 +192,18 @@ pub fn edit(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
 
 pub fn move_issue(paths: &AppPaths, args: MoveArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
+    let MoveArgs { scope, id, state } = args;
     let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
-    let id = args
-        .id
-        .ok_or_else(|| RiptskError::General("<ID> required".into()))?;
-    let state = args
-        .state
-        .ok_or_else(|| RiptskError::General("<state> required".into()))?;
+    let cwd = camino::Utf8PathBuf::from(
+        std::env::current_dir()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string(),
+    );
+    let Some(id) = id_resolution::require_id(paths, &config, &cwd, id, &scope)? else {
+        return Ok(());
+    };
+    let state = state.ok_or_else(|| RiptskError::General("<state> required".into()))?;
     let path = issue_store::find_issue(paths, &id)?;
     let issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
     IssueService::new(paths, &config).move_issue(&id, &state)?;
@@ -214,10 +243,17 @@ pub fn reopen(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
 
 pub fn remove(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
+    let IdArgs { scope, id } = args;
     let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
-    let id = args
-        .id
-        .ok_or_else(|| RiptskError::General("<ID> required".into()))?;
+    let cwd = camino::Utf8PathBuf::from(
+        std::env::current_dir()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string(),
+    );
+    let Some(id) = id_resolution::require_id(paths, &config, &cwd, id, &scope)? else {
+        return Ok(());
+    };
     let path = issue_store::find_issue(paths, &id)?;
     let issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
     IssueService::new(paths, &config).remove_issue(&id)?;

@@ -1,5 +1,6 @@
 use crate::cli::{
-    CommitArgs, ResolveArgs, SessionArgs, SessionSubcommand, SyncArgs, SyncSubcommand,
+    CommitArgs, ResolveArgs, SessionArgs, SessionStartArgs, SessionSubcommand, SyncArgs,
+    SyncSubcommand,
 };
 use crate::config::{Config, load_config};
 use crate::domain::session::SessionState;
@@ -7,6 +8,7 @@ use crate::error::RiptskError;
 use crate::models::{Backend, BackendConfig};
 use crate::paths::AppPaths;
 use crate::services::backend_mapping::build_provider_for_backend;
+use crate::services::id_resolution;
 use crate::services::sync_engine::SyncEngine;
 use crate::storage::session as session_store;
 use crate::{adapters::git::CliGit, adapters::git::GitBackend};
@@ -155,7 +157,15 @@ pub fn resolve(paths: &AppPaths, args: ResolveArgs) -> Result<(), RiptskError> {
             "cannot specify both --take-remote and --take-local".into(),
         ));
     }
-    let path = crate::storage::issue_store::find_issue(paths, &args.id)?;
+    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let cwd = camino::Utf8PathBuf::from(
+        std::env::current_dir()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string(),
+    );
+    let id = id_resolution::resolve_id(paths, &config, &cwd, &args.id)?;
+    let path = crate::storage::issue_store::find_issue(paths, &id)?;
     let mut issue =
         crate::storage::frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
     let remote_file = issue
@@ -163,7 +173,7 @@ pub fn resolve(paths: &AppPaths, args: ResolveArgs) -> Result<(), RiptskError> {
         .conflict
         .as_ref()
         .map(|conflict| paths.issues_dir().join(&conflict.remote_file))
-        .ok_or_else(|| RiptskError::Conflict(format!("no conflict for {}", args.id)))?;
+        .ok_or_else(|| RiptskError::Conflict(format!("no conflict for {id}")))?;
 
     if args.take_remote {
         let mut remote = crate::storage::frontmatter::load_issue(remote_file.as_std_path())
@@ -192,7 +202,7 @@ pub fn resolve(paths: &AppPaths, args: ResolveArgs) -> Result<(), RiptskError> {
 pub fn session(paths: &AppPaths, args: SessionArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
     match args.subcommand {
-        SessionSubcommand::Start { id } => session_start(paths, id),
+        SessionSubcommand::Start(args) => session_start(paths, args),
         SessionSubcommand::End => session_end(paths),
     }
 }
@@ -234,15 +244,26 @@ pub fn commit(paths: &AppPaths, args: CommitArgs) -> Result<(), RiptskError> {
     git.commit(repo.as_path(), &message)
 }
 
-fn session_start(paths: &AppPaths, id: Option<String>) -> Result<(), RiptskError> {
+fn session_start(paths: &AppPaths, args: SessionStartArgs) -> Result<(), RiptskError> {
     if session_store::load_session(paths.session_state_path().as_std_path())?.is_some() {
         return Err(RiptskError::Conflict("session already active".into()));
     }
+    let SessionStartArgs { scope, id } = args;
+    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let cwd = camino::Utf8PathBuf::from(
+        std::env::current_dir()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string(),
+    );
+    let Some(id) = id_resolution::require_id(paths, &config, &cwd, id, &scope)? else {
+        return Ok(());
+    };
     let git = CliGit;
     let repo = current_repo()?;
     let previous_branch = git.current_branch(repo.as_path())?;
-    let session_branch = if let Some(ref id) = id {
-        let path = crate::storage::issue_store::find_issue(paths, id)?;
+    let session_branch = {
+        let path = crate::storage::issue_store::find_issue(paths, &id)?;
         let mut issue = crate::storage::frontmatter::load_issue(path.as_std_path())
             .map_err(RiptskError::Other)?;
         let branch = issue.frontmatter.id_slug.clone().unwrap_or_else(|| {
@@ -260,20 +281,13 @@ fn session_start(paths: &AppPaths, id: Option<String>) -> Result<(), RiptskError
         crate::storage::frontmatter::save_issue(path.as_std_path(), &issue)
             .map_err(RiptskError::Other)?;
         branch
-    } else {
-        let branch = format!(
-            "riptsk-session-{}",
-            crate::services::issue_service::now_utc().replace(':', "-")
-        );
-        git.create_branch(repo.as_path(), &branch)?;
-        branch
     };
     session_store::save_session(
         paths.session_state_path().as_std_path(),
         &SessionState {
             previous_branch,
             session_branch: session_branch.clone(),
-            issue_id: id,
+            issue_id: Some(id),
             started_at: crate::services::issue_service::now_utc(),
         },
     )?;
