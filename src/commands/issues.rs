@@ -1,9 +1,13 @@
 use crate::adapters::backend::BackendIssueUpsert;
 use crate::adapters::git::CliGit;
-use crate::adapters::picker::{IssueDisplayMode, format_issue_line, format_issue_plain};
+use crate::adapters::picker::{
+    IssueDisplayMode, format_issue_plain, sanitize_control, truncate_title,
+};
 use crate::cli::{IdArgs, LsArgs, MoveArgs, NewArgs};
 use crate::config::load_config;
-use crate::domain::issue::{GithubIssueMeta, GitlabIssueMeta, IssueDocument, IssueFrontmatter};
+use crate::domain::issue::{
+    GithubIssueMeta, GitlabIssueMeta, IssueDocument, IssueFrontmatter, IssueState, Priority,
+};
 use crate::error::RiptskError;
 use crate::models::{Backend, BackendConfig};
 use crate::paths::AppPaths;
@@ -13,6 +17,9 @@ use crate::services::id_resolution;
 use crate::services::issue_ids;
 use crate::services::issue_service::{IssueDraft, IssueService, generate_slug};
 use crate::storage::{cache, frontmatter, issue_store};
+use comfy_table::{
+    Attribute, Cell, CellAlignment, Color, ContentArrangement, Table, presets::NOTHING,
+};
 use std::io::IsTerminal;
 
 pub fn show(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
@@ -68,19 +75,109 @@ pub fn list(paths: &AppPaths, args: LsArgs) -> Result<(), RiptskError> {
     };
     let is_tty = std::io::stdout().is_terminal();
     let service = IssueService::new(paths, &config);
-    for issue in service.list_matching(&args, &scope)? {
-        let marker = if issue.frontmatter.conflict.is_some() {
-            " [CONFLICT]"
-        } else {
-            ""
-        };
-        if is_tty {
-            println!("{}{}", format_issue_line(&issue, &mode, false), marker);
-        } else {
-            println!("{}{}", format_issue_plain(&issue), marker);
+    let issues = service.list_matching(&args, &scope)?;
+
+    if is_tty {
+        if !issues.is_empty() {
+            println!("{}", render_issue_table(&issues, &mode));
+        }
+    } else {
+        for issue in &issues {
+            let marker = if issue.frontmatter.conflict.is_some() {
+                " [CONFLICT]"
+            } else {
+                ""
+            };
+            println!("{}{}", format_issue_plain(issue), marker);
         }
     }
     Ok(())
+}
+
+fn render_issue_table(issues: &[IssueDocument], mode: &IssueDisplayMode) -> String {
+    let mut table = Table::new();
+    table
+        .load_preset(NOTHING)
+        .set_content_arrangement(ContentArrangement::Dynamic);
+
+    let mut headers: Vec<Cell> = Vec::new();
+    if *mode == IssueDisplayMode::AllProjects {
+        headers.push(
+            Cell::new("Project")
+                .add_attribute(Attribute::Bold)
+                .add_attribute(Attribute::Dim),
+        );
+    }
+    headers.extend([
+        Cell::new("ID")
+            .add_attribute(Attribute::Bold)
+            .add_attribute(Attribute::Dim),
+        Cell::new("Title")
+            .add_attribute(Attribute::Bold)
+            .add_attribute(Attribute::Dim),
+        Cell::new("State")
+            .add_attribute(Attribute::Bold)
+            .add_attribute(Attribute::Dim),
+        Cell::new("Priority")
+            .add_attribute(Attribute::Bold)
+            .add_attribute(Attribute::Dim),
+        Cell::new("Board")
+            .add_attribute(Attribute::Bold)
+            .add_attribute(Attribute::Dim),
+    ]);
+    table.set_header(headers);
+
+    for issue in issues {
+        let fm = &issue.frontmatter;
+        let numeric_id = issue_ids::parse_id(&fm.id)
+            .map(|(_, n)| format!("#{}", n))
+            .unwrap_or_else(|| fm.id.clone());
+
+        let title = if fm.conflict.is_some() {
+            format!("{} [CONFLICT]", truncate_title(&fm.title, 50))
+        } else {
+            truncate_title(&fm.title, 50)
+        };
+
+        let priority_str = fm.priority.as_ref().map(Priority::as_str).unwrap_or("-");
+
+        let mut row: Vec<Cell> = Vec::new();
+        if *mode == IssueDisplayMode::AllProjects {
+            row.push(Cell::new(sanitize_control(&fm.project)).fg(Color::Magenta));
+        }
+        row.extend([
+            Cell::new(&numeric_id)
+                .fg(Color::Cyan)
+                .set_alignment(CellAlignment::Right),
+            Cell::new(&title),
+            Cell::new(fm.state.as_str()).fg(state_color(&fm.state)),
+            Cell::new(priority_str).fg(priority_color(fm.priority.as_ref())),
+            Cell::new(sanitize_control(&fm.board)).fg(Color::Grey),
+        ]);
+        table.add_row(row);
+    }
+
+    table.to_string()
+}
+
+fn state_color(state: &IssueState) -> Color {
+    match state {
+        IssueState::Backlog => Color::Grey,
+        IssueState::Todo => Color::Reset,
+        IssueState::InProgress => Color::Yellow,
+        IssueState::Review => Color::Cyan,
+        IssueState::Done => Color::Green,
+    }
+}
+
+fn priority_color(priority: Option<&Priority>) -> Color {
+    match priority {
+        Some(Priority::Urgent) => Color::Red,
+        Some(Priority::High) => Color::Yellow,
+        Some(Priority::Medium) => Color::Reset,
+        Some(Priority::Low) => Color::Grey,
+        None => Color::Grey,
+    }
 }
 
 pub async fn new(paths: &AppPaths, args: NewArgs) -> Result<(), RiptskError> {
