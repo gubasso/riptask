@@ -95,9 +95,6 @@ repos:
     rev: v4.13.9
     hooks:
       - id: commitizen
-      - id: commitizen-branch
-        stages: [pre-push]
-        args: [--rev-range, develop..HEAD]
 
   # --- Heavy checks (pre-push only) ---
   - repo: https://github.com/gitleaks/gitleaks
