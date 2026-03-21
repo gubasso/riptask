@@ -7,7 +7,9 @@ use crate::services::id_resolution;
 use crate::services::issue_service::{IssueService, ShiftDirection};
 use crate::services::view_builder::ViewBuilder;
 use anyhow::Context;
+use console::style;
 use std::fs;
+use std::io::IsTerminal;
 
 pub fn view(paths: &AppPaths) -> Result<(), RiptskError> {
     paths.require_initialized()?;
@@ -56,24 +58,111 @@ pub fn board(paths: &AppPaths, args: BoardArgs) -> Result<(), RiptskError> {
 }
 
 fn render_tree(path: &str, depth: usize, max_depth: usize) -> Result<(), RiptskError> {
-    let indent = "  ".repeat(depth);
-    let name = std::path::Path::new(path)
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy();
-    if std::path::Path::new(path).is_dir() {
-        println!("{indent}{name}/");
+    let p = std::path::Path::new(path);
+    let name = p.file_name().unwrap_or_default().to_string_lossy();
+    let tty = std::io::stdout().is_terminal();
+
+    if depth == 0 {
+        if tty {
+            println!("{}", style(format!("{name}/")).bold());
+        } else {
+            println!("{name}/");
+        }
         if depth < max_depth {
             let mut entries: Vec<_> = fs::read_dir(path)?.filter_map(|e| e.ok()).collect();
             entries.sort_by_key(|e| e.file_name());
-            for entry in entries {
-                render_tree(&entry.path().to_string_lossy(), depth + 1, max_depth)?;
+            let count = entries.len();
+            for (i, entry) in entries.iter().enumerate() {
+                let is_last = i == count - 1;
+                render_tree_inner(
+                    &entry.path().to_string_lossy(),
+                    depth + 1,
+                    max_depth,
+                    "",
+                    is_last,
+                    tty,
+                )?;
             }
         }
+    } else if p.is_dir() {
+        if tty {
+            println!("{}", style(format!("{name}/")).bold());
+        } else {
+            println!("{name}/");
+        }
+        if depth < max_depth {
+            let mut entries: Vec<_> = fs::read_dir(path)?.filter_map(|e| e.ok()).collect();
+            entries.sort_by_key(|e| e.file_name());
+            let count = entries.len();
+            for (i, entry) in entries.iter().enumerate() {
+                let is_last = i == count - 1;
+                render_tree_inner(
+                    &entry.path().to_string_lossy(),
+                    depth + 1,
+                    max_depth,
+                    "",
+                    is_last,
+                    tty,
+                )?;
+            }
+        }
+    } else if tty {
+        println!("{}", style(&*name).dim());
     } else {
-        println!("{indent}{name}");
+        println!("{name}");
     }
     Ok(())
+}
+
+fn render_tree_inner(
+    path: &str,
+    depth: usize,
+    max_depth: usize,
+    prefix: &str,
+    is_last: bool,
+    tty: bool,
+) -> Result<(), RiptskError> {
+    let p = std::path::Path::new(path);
+    let name = p.file_name().unwrap_or_default().to_string_lossy();
+    let connector = if is_last { "└── " } else { "├── " };
+
+    if p.is_dir() {
+        if tty {
+            println!("{prefix}{connector}{}", style(format!("{name}/")).bold());
+        } else {
+            println!("{prefix}{connector}{name}/");
+        }
+        if depth < max_depth {
+            let continuation = if is_last { "    " } else { "│   " };
+            let child_prefix = format!("{prefix}{continuation}");
+            let mut entries: Vec<_> = fs::read_dir(path)?.filter_map(|e| e.ok()).collect();
+            entries.sort_by_key(|e| e.file_name());
+            let count = entries.len();
+            for (i, entry) in entries.iter().enumerate() {
+                let child_is_last = i == count - 1;
+                render_tree_inner(
+                    &entry.path().to_string_lossy(),
+                    depth + 1,
+                    max_depth,
+                    &child_prefix,
+                    child_is_last,
+                    tty,
+                )?;
+            }
+        }
+    } else if tty {
+        let colored_name = color_issue_file(&name);
+        println!("{prefix}{connector}{colored_name}");
+    } else {
+        println!("{prefix}{connector}{name}");
+    }
+    Ok(())
+}
+
+fn color_issue_file(name: &str) -> String {
+    // Issue files in board tree are under state directories (todo/, in-progress/, etc.)
+    // The filename itself doesn't encode state, but we keep it dim for non-directory entries
+    format!("{}", style(name).dim())
 }
 
 pub fn reorder(paths: &AppPaths, args: ReorderArgs) -> Result<(), RiptskError> {

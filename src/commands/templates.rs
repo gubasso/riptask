@@ -80,12 +80,12 @@ pub fn run(paths: &AppPaths, args: TemplateArgs) -> Result<(), RiptskError> {
                     return Err(RiptskError::NotFound(format!("template {name}")));
                 }
                 service.validate_file(path.as_std_path())?;
-                println!("OK");
+                crate::ui::success(&format!("{name}: valid"));
             } else {
                 for name in service.list_names()? {
                     let path = paths.templates_dir().join(format!("{name}.md"));
                     service.validate_file(path.as_std_path())?;
-                    println!("{name}: OK");
+                    crate::ui::success(&format!("{name}: valid"));
                 }
             }
             Ok(())

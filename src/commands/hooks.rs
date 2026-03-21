@@ -2,7 +2,9 @@ use crate::assets::hook::{HOOK_VERSION, PRE_COMMIT_HOOK};
 use crate::cli::{HooksArgs, HooksSubcommand};
 use crate::error::RiptskError;
 use crate::paths::AppPaths;
+use console::style;
 use std::fs;
+use std::io::IsTerminal;
 
 pub fn run(paths: &AppPaths, args: HooksArgs) -> Result<(), RiptskError> {
     let hook_path = paths.riptsk_repo.join(".git/hooks/pre-commit");
@@ -23,10 +25,21 @@ pub fn run(paths: &AppPaths, args: HooksArgs) -> Result<(), RiptskError> {
         }
         HooksSubcommand::Status => {
             if hook_path.exists() {
-                println!("up to date (version: {HOOK_VERSION})");
+                if std::io::stdout().is_terminal() {
+                    println!(
+                        "{} up to date (version: {HOOK_VERSION})",
+                        style("✓").green()
+                    );
+                } else {
+                    println!("up to date (version: {HOOK_VERSION})");
+                }
                 Ok(())
             } else {
-                println!("not installed");
+                if std::io::stdout().is_terminal() {
+                    println!("{} not installed", style("✗").red());
+                } else {
+                    println!("not installed");
+                }
                 Err(RiptskError::General("hook not installed".into()))
             }
         }

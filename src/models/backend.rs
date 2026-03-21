@@ -8,6 +8,16 @@ pub enum Backend {
     Local,
 }
 
+impl Backend {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Github => "github",
+            Self::Gitlab => "gitlab",
+            Self::Local => "local",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BackendConfig {
     pub name: String,

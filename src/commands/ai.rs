@@ -15,7 +15,7 @@ pub fn summarize(paths: &AppPaths, args: SummarizeArgs) -> Result<(), RiptskErro
         return Ok(());
     }
     let Some(backend) = optional_backend(&config)? else {
-        eprintln!("warning: AI unavailable: {AI_BACKEND_MISSING}");
+        crate::ui::warn(&format!("AI unavailable: {AI_BACKEND_MISSING}"));
         return Ok(());
     };
     let mut context = String::new();
@@ -53,7 +53,7 @@ pub fn ask(paths: &AppPaths, args: AskArgs) -> Result<(), RiptskError> {
         return Ok(());
     }
     let Some(backend) = optional_backend(&config)? else {
-        eprintln!("warning: AI unavailable: {AI_BACKEND_MISSING}");
+        crate::ui::warn(&format!("AI unavailable: {AI_BACKEND_MISSING}"));
         return Ok(());
     };
     let mut context = String::new();

@@ -8,7 +8,9 @@ use crate::services::auto_commit::maybe_auto_commit;
 use crate::services::issue_service::IssueService;
 use crate::services::recurrence::{expand_tokens, instance_exists, is_due, update_last_run};
 use crate::storage::issue_store;
+use comfy_table::{Attribute, Cell, Color, ContentArrangement, Table, presets::NOTHING};
 use jiff::civil::Date;
+use std::io::IsTerminal;
 
 pub fn run(paths: &AppPaths, args: RecurArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
@@ -22,11 +24,43 @@ pub fn run(paths: &AppPaths, args: RecurArgs) -> Result<(), RiptskError> {
 
 fn list(paths: &AppPaths) -> Result<(), RiptskError> {
     let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
-    for definition in config.recurring {
-        println!(
-            "{}\t{:?}\t{}",
-            definition.id, definition.frequency, definition.title_pattern
-        );
+    if std::io::stdout().is_terminal() {
+        let mut table = Table::new();
+        table
+            .load_preset(NOTHING)
+            .set_content_arrangement(ContentArrangement::Dynamic);
+        table.set_header(vec![
+            Cell::new("ID")
+                .add_attribute(Attribute::Bold)
+                .add_attribute(Attribute::Dim),
+            Cell::new("Frequency")
+                .add_attribute(Attribute::Bold)
+                .add_attribute(Attribute::Dim),
+            Cell::new("Title Pattern")
+                .add_attribute(Attribute::Bold)
+                .add_attribute(Attribute::Dim),
+            Cell::new("Last Run")
+                .add_attribute(Attribute::Bold)
+                .add_attribute(Attribute::Dim),
+        ]);
+        for def in &config.recurring {
+            table.add_row(vec![
+                Cell::new(&def.id).fg(Color::Cyan),
+                Cell::new(def.frequency.as_str()),
+                Cell::new(&def.title_pattern),
+                Cell::new(def.last_run.as_deref().unwrap_or("-")).fg(Color::Grey),
+            ]);
+        }
+        println!("{table}");
+    } else {
+        for def in &config.recurring {
+            println!(
+                "{}\t{}\t{}",
+                def.id,
+                def.frequency.as_str(),
+                def.title_pattern
+            );
+        }
     }
     Ok(())
 }
@@ -244,6 +278,6 @@ fn new_recur(paths: &AppPaths, args: RecurNewArgs) -> Result<(), RiptskError> {
     };
     config.recurring.push(definition);
     save_config(paths.config_path().as_std_path(), &config).map_err(RiptskError::Other)?;
-    println!("added recurrence {}", args.id);
+    crate::ui::success(&format!("added recurrence {}", args.id));
     Ok(())
 }

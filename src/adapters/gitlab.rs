@@ -191,10 +191,9 @@ impl BackendProvider for GitlabProvider {
         {
             Ok(issue) => issue,
             Err(error) if issue.weight.is_some() && is_weight_error(&error) => {
-                eprintln!(
-                    "warn: GitLab create_issue weight failed ({}), retrying without weight",
-                    error
-                );
+                crate::ui::warn(&format!(
+                    "GitLab create_issue weight failed ({error}), retrying without weight"
+                ));
                 self.create_issue_request(&client, repo, issue, &assignee_ids, false)
                     .await?
             }
@@ -217,10 +216,9 @@ impl BackendProvider for GitlabProvider {
         {
             Ok(issue) => issue,
             Err(error) if issue.weight.is_some() && is_weight_error(&error) => {
-                eprintln!(
-                    "warn: GitLab update_issue weight failed ({}), retrying without weight",
-                    error
-                );
+                crate::ui::warn(&format!(
+                    "GitLab update_issue weight failed ({error}), retrying without weight"
+                ));
                 self.edit_issue_request(&client, repo, issue_id, issue, &assignee_ids, false)
                     .await?
             }

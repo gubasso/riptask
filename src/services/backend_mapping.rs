@@ -29,7 +29,10 @@ pub fn build_provider_for_backend(
     match backend.backend {
         Backend::Github => {
             let (token, source) = resolve_github_token(&backend.name)?;
-            eprintln!("auth: github backend '{}' using {}", backend.name, source);
+            crate::ui::info(&format!(
+                "auth: github backend '{}' using {}",
+                backend.name, source
+            ));
             Ok(Box::new(GithubProvider::new(&token)?))
         }
         Backend::Gitlab => {
@@ -41,7 +44,10 @@ pub fn build_provider_for_backend(
                 .trim_start_matches("http://")
                 .to_owned();
             let (token, source) = resolve_gitlab_token(&backend.name, &host)?;
-            eprintln!("auth: gitlab backend '{}' using {}", backend.name, source);
+            crate::ui::info(&format!(
+                "auth: gitlab backend '{}' using {}",
+                backend.name, source
+            ));
             Ok(Box::new(GitlabProvider::new(&host, &token)?))
         }
         Backend::Local => Err(RiptskError::Config(format!(

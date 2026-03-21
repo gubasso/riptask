@@ -209,7 +209,7 @@ pub async fn new(paths: &AppPaths, args: NewArgs) -> Result<(), RiptskError> {
         draft.body = match crate::commands::ai::generate_body(paths, &draft.title, &draft.project) {
             Ok(body) => body,
             Err(_) => {
-                eprintln!("warning: AI body generation failed, using template body");
+                crate::ui::warn("AI body generation failed, using template body");
                 draft.body.clone()
             }
         };

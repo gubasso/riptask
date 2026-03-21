@@ -169,10 +169,9 @@ impl BackendProvider for GithubProvider {
                 Ok(DeleteOutcome::HardDeleted)
             }
             Err(e) => {
-                eprintln!(
-                    "warn: GraphQL deleteIssue failed ({}), falling back to close",
-                    e
-                );
+                crate::ui::warn(&format!(
+                    "GraphQL deleteIssue failed ({e}), falling back to close"
+                ));
                 self.close_issue(repo, issue_id).await?;
                 Ok(DeleteOutcome::SoftClosed)
             }

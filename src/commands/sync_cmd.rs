@@ -13,7 +13,9 @@ use crate::services::sync_engine::SyncEngine;
 use crate::storage::session as session_store;
 use crate::{adapters::git::CliGit, adapters::git::GitBackend};
 use anyhow::Context;
+use console::style;
 use std::collections::HashSet;
+use std::io::IsTerminal;
 
 pub async fn run(paths: &AppPaths, args: SyncArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
@@ -35,13 +37,23 @@ async fn pull(paths: &AppPaths, args: &SyncArgs) -> Result<(), RiptskError> {
     for backend in resolve_sync_backends(args, &config)? {
         let provider = build_provider_for_backend(backend)?;
         let summary = engine.pull(provider.as_ref(), backend, args.force).await?;
-        println!(
-            "pull: {} created, {} updated, {} deleted, {} conflicts",
-            summary.created.len(),
-            summary.updated.len(),
-            summary.deleted.len(),
-            summary.conflicts.len()
-        );
+        if std::io::stderr().is_terminal() {
+            eprintln!(
+                "pull  {} created  {} updated  {} deleted  {} conflicts",
+                style(summary.created.len()).green(),
+                style(summary.updated.len()).cyan(),
+                style(summary.deleted.len()).yellow(),
+                style(summary.conflicts.len()).red(),
+            );
+        } else {
+            eprintln!(
+                "pull: {} created, {} updated, {} deleted, {} conflicts",
+                summary.created.len(),
+                summary.updated.len(),
+                summary.deleted.len(),
+                summary.conflicts.len()
+            );
+        }
     }
     Ok(())
 }
@@ -52,13 +64,23 @@ async fn push(paths: &AppPaths, args: &SyncArgs) -> Result<(), RiptskError> {
     for backend in resolve_sync_backends(args, &config)? {
         let provider = build_provider_for_backend(backend)?;
         let summary = engine.push(provider.as_ref(), backend).await?;
-        println!(
-            "push: {} created, {} updated, {} deleted, {} skipped",
-            summary.created.len(),
-            summary.updated.len(),
-            summary.deleted.len(),
-            summary.skipped.len()
-        );
+        if std::io::stderr().is_terminal() {
+            eprintln!(
+                "push  {} created  {} updated  {} deleted  {} skipped",
+                style(summary.created.len()).green(),
+                style(summary.updated.len()).cyan(),
+                style(summary.deleted.len()).yellow(),
+                style(summary.skipped.len()).dim(),
+            );
+        } else {
+            eprintln!(
+                "push: {} created, {} updated, {} deleted, {} skipped",
+                summary.created.len(),
+                summary.updated.len(),
+                summary.deleted.len(),
+                summary.skipped.len()
+            );
+        }
     }
     Ok(())
 }
@@ -71,24 +93,41 @@ fn status(paths: &AppPaths, args: &SyncArgs) -> Result<(), RiptskError> {
         .map(|backend| backend.name.as_str())
         .collect::<HashSet<_>>();
     let summary = SyncEngine::new(paths, &config).status()?;
+    let tty = std::io::stdout().is_terminal();
     for id in summary.conflicts {
         if issue_matches_backend_scope(paths, &id, &backend_names)? {
-            println!("CONFLICT {id}");
+            if tty {
+                println!("{} {id}", style("CONFLICT").red().bold());
+            } else {
+                println!("CONFLICT {id}");
+            }
         }
     }
     for id in summary.creates {
         if issue_matches_backend_scope(paths, &id, &backend_names)? {
-            println!("CREATE {id}");
+            if tty {
+                println!("{}   {id}", style("CREATE").green());
+            } else {
+                println!("CREATE {id}");
+            }
         }
     }
     for id in summary.pushes {
         if issue_matches_backend_scope(paths, &id, &backend_names)? {
-            println!("PUSH {id}");
+            if tty {
+                println!("{}     {id}", style("PUSH").cyan());
+            } else {
+                println!("PUSH {id}");
+            }
         }
     }
     for key in summary.deletes {
         if deleted_key_matches_backend_scope(&key, &backends) {
-            println!("DELETE {key}");
+            if tty {
+                println!("{}   {key}", style("DELETE").yellow());
+            } else {
+                println!("DELETE {key}");
+            }
         }
     }
     Ok(())
