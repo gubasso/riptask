@@ -630,6 +630,10 @@ mod tests {
         async fn default_branch(&self, _repo: &str) -> Result<String, RiptskError> {
             Err(RiptskError::General("unused in test".into()))
         }
+
+        async fn delete_branch(&self, _repo: &str, _branch_name: &str) -> Result<(), RiptskError> {
+            Err(RiptskError::General("unused in test".into()))
+        }
     }
 
     #[test]

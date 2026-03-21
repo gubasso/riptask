@@ -40,7 +40,7 @@ pub enum Commands {
     Rm(IdArgs),
     Ls(LsArgs),
     Path(IdArgs),
-    Branch(IdArgs),
+    Branch(BranchArgs),
     Pr(IdArgs),
     Board(BoardArgs),
     View,
@@ -69,6 +69,27 @@ pub enum Commands {
     Help {
         command: Option<String>,
     },
+}
+
+#[derive(Debug, Clone, Args, Default)]
+pub struct BranchArgs {
+    #[command(flatten)]
+    pub scope: ScopeArgs,
+
+    /// Target branch name or issue ID
+    pub id: Option<String>,
+
+    /// Delete branch (safe — must be fully merged)
+    #[arg(short = 'd', long = "delete")]
+    pub delete: bool,
+
+    /// Force-delete branch (even if not merged)
+    #[arg(short = 'D', long = "force-delete", conflicts_with = "delete")]
+    pub force_delete: bool,
+
+    /// Skip confirmation prompt (for -d/-D)
+    #[arg(short = 'y', long = "yes")]
+    pub yes: bool,
 }
 
 #[derive(Debug, Clone, Args, Default)]

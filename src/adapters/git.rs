@@ -18,6 +18,14 @@ pub trait GitBackend {
     fn diff_names(&self, repo: &Path) -> Result<Vec<String>, RiptskError>;
     fn current_branch(&self, repo: &Path) -> Result<String, RiptskError>;
     fn remote_url(&self, repo: &Path, remote: &str) -> Result<String, RiptskError>;
+    fn delete_local_branch(
+        &self,
+        repo: &Path,
+        branch: &str,
+        force: bool,
+    ) -> Result<(), RiptskError>;
+    fn is_branch_merged(&self, repo: &Path, branch: &str, base: &str) -> Result<bool, RiptskError>;
+    fn fetch(&self, repo: &Path) -> Result<(), RiptskError>;
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -140,6 +148,29 @@ impl GitBackend for CliGit {
                 "failed to read git remote {remote}"
             )))
         }
+    }
+
+    fn delete_local_branch(
+        &self,
+        repo: &Path,
+        branch: &str,
+        force: bool,
+    ) -> Result<(), RiptskError> {
+        let flag = if force { "-D" } else { "-d" };
+        run_git_dynamic(repo, &["branch", flag, branch])
+    }
+
+    fn is_branch_merged(&self, repo: &Path, branch: &str, base: &str) -> Result<bool, RiptskError> {
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["merge-base", "--is-ancestor", branch, base])
+            .status()?;
+        Ok(status.success())
+    }
+
+    fn fetch(&self, repo: &Path) -> Result<(), RiptskError> {
+        run_git(repo, ["fetch", "origin"])
     }
 }
 
