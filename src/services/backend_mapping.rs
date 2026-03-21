@@ -151,6 +151,7 @@ pub fn backend_to_local(record: &BackendIssueRecord, backend: &BackendConfig) ->
             id_slug: Some(generate_slug(&issue_id, &record.title)),
             branch: None,
             pr_url: None,
+            pr_number: None,
         },
         body: record.body.clone().unwrap_or_default(),
         remote_section: None,

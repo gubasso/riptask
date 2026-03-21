@@ -5,7 +5,7 @@ use crate::error::RiptskError;
 use crate::paths::AppPaths;
 use crate::storage::{frontmatter, issue_store};
 
-const AI_BACKEND_MISSING: &str = "No AI CLI found. Install claude or llm.";
+pub(crate) const AI_BACKEND_MISSING: &str = "No AI CLI found. Install claude or llm.";
 
 pub fn summarize(paths: &AppPaths, args: SummarizeArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
@@ -82,7 +82,7 @@ fn backend(config: &crate::config::Config) -> Result<CommandAiBackend, RiptskErr
     optional_backend(config)?.ok_or_else(|| RiptskError::General(AI_BACKEND_MISSING.into()))
 }
 
-fn optional_backend(
+pub(crate) fn optional_backend(
     config: &crate::config::Config,
 ) -> Result<Option<CommandAiBackend>, RiptskError> {
     let model = config

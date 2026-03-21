@@ -144,6 +144,8 @@ pub struct IssueFrontmatter {
     pub branch: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pr_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pr_number: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

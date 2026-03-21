@@ -437,7 +437,7 @@ fn parse_backend_state_key(key: &str) -> Option<(&str, &str, u64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adapters::backend::{BackendIssueUpsert, DeleteOutcome};
+    use crate::adapters::backend::{BackendIssueUpsert, BackendPrRecord, DeleteOutcome};
     use crate::config::default_config;
     use crate::domain::issue::{
         ConflictMeta, GithubIssueMeta, IssueFrontmatter, IssueState, Priority,
@@ -613,7 +613,30 @@ mod tests {
             _base: &str,
             _title: &str,
             _body: &str,
-        ) -> Result<String, RiptskError> {
+        ) -> Result<BackendPrRecord, RiptskError> {
+            Err(RiptskError::General("unused in test".into()))
+        }
+
+        async fn get_pr(&self, _repo: &str, _number: u64) -> Result<BackendPrRecord, RiptskError> {
+            Err(RiptskError::General("unused in test".into()))
+        }
+
+        async fn update_pr(
+            &self,
+            _repo: &str,
+            _number: u64,
+            _title: &str,
+            _body: &str,
+        ) -> Result<BackendPrRecord, RiptskError> {
+            Err(RiptskError::General("unused in test".into()))
+        }
+
+        async fn find_pr_by_branch(
+            &self,
+            _repo: &str,
+            _head: &str,
+            _base: &str,
+        ) -> Result<Option<BackendPrRecord>, RiptskError> {
             Err(RiptskError::General("unused in test".into()))
         }
 
@@ -1083,6 +1106,7 @@ mod tests {
                 id_slug: Some("slug".into()),
                 branch: None,
                 pr_url: None,
+                pr_number: None,
             },
             body: format!("{title} body"),
             remote_section: None,
@@ -1142,6 +1166,7 @@ mod tests {
                 id_slug: Some("slug".into()),
                 branch: None,
                 pr_url: None,
+                pr_number: None,
             },
             body: "remote".into(),
             remote_section: None,

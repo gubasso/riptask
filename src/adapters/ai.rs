@@ -10,9 +10,11 @@ pub struct TriageSuggestion {
 
 pub trait AiBackend {
     fn generate_body(&self, context: &str) -> Result<String, RiptskError>;
+    fn generate_pr_description(&self, context: &str) -> Result<String, RiptskError>;
     fn triage(&self, issue_context: &str) -> Result<TriageSuggestion, RiptskError>;
     fn summarize(&self, issues: &str) -> Result<String, RiptskError>;
     fn ask(&self, question: &str, context: &str) -> Result<String, RiptskError>;
+    fn update_pr_description(&self, context: &str) -> Result<String, RiptskError>;
 }
 
 #[derive(Debug, Clone)]
@@ -27,6 +29,15 @@ impl AiBackend for CommandAiBackend {
             &self.binary,
             &self.model,
             "Generate a concise issue body with a description and checklist.",
+            context,
+        )
+    }
+
+    fn generate_pr_description(&self, context: &str) -> Result<String, RiptskError> {
+        run_ai(
+            &self.binary,
+            &self.model,
+            "Generate a concise PR description summarizing the changes. Include a summary section and key changes. Do not include the title.",
             context,
         )
     }
@@ -78,6 +89,15 @@ impl AiBackend for CommandAiBackend {
             &self.model,
             "Answer the user's question from the provided issue corpus.",
             &format!("Question: {question}\n\nIssues:\n{context}"),
+        )
+    }
+
+    fn update_pr_description(&self, context: &str) -> Result<String, RiptskError> {
+        run_ai(
+            &self.binary,
+            &self.model,
+            "Update this PR description based on the current changes. Keep it concise and focused on implementation details.",
+            context,
         )
     }
 }

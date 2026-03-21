@@ -24,8 +24,18 @@ pub trait GitBackend {
         branch: &str,
         force: bool,
     ) -> Result<(), RiptskError>;
+    fn has_staged_changes(&self, repo: &Path) -> Result<bool, RiptskError>;
     fn is_branch_merged(&self, repo: &Path, branch: &str, base: &str) -> Result<bool, RiptskError>;
     fn fetch(&self, repo: &Path) -> Result<(), RiptskError>;
+    fn commits_ahead_of_base(
+        &self,
+        repo: &Path,
+        branch: &str,
+        base: &str,
+    ) -> Result<u64, RiptskError>;
+    fn create_empty_commit(&self, repo: &Path, message: &str) -> Result<(), RiptskError>;
+    fn log_between(&self, repo: &Path, base: &str, head: &str) -> Result<String, RiptskError>;
+    fn diff_between(&self, repo: &Path, base: &str, head: &str) -> Result<String, RiptskError>;
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -160,6 +170,16 @@ impl GitBackend for CliGit {
         run_git_dynamic(repo, &["branch", flag, branch])
     }
 
+    fn has_staged_changes(&self, repo: &Path) -> Result<bool, RiptskError> {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["diff", "--cached", "--quiet"])
+            .status()?;
+        // exit 0 = no staged changes, exit 1 = staged changes exist
+        Ok(!output.success())
+    }
+
     fn is_branch_merged(&self, repo: &Path, branch: &str, base: &str) -> Result<bool, RiptskError> {
         let status = Command::new("git")
             .arg("-C")
@@ -171,6 +191,66 @@ impl GitBackend for CliGit {
 
     fn fetch(&self, repo: &Path) -> Result<(), RiptskError> {
         run_git(repo, ["fetch", "origin"])
+    }
+
+    fn commits_ahead_of_base(
+        &self,
+        repo: &Path,
+        branch: &str,
+        base: &str,
+    ) -> Result<u64, RiptskError> {
+        let range = format!("origin/{base}..{branch}");
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["rev-list", "--count", &range])
+            .output()?;
+        if !output.status.success() {
+            return Err(RiptskError::General(
+                "failed to inspect commits ahead of base".into(),
+            ));
+        }
+        String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .parse()
+            .map_err(|error| {
+                RiptskError::General(format!("failed to parse commit count for {range}: {error}"))
+            })
+    }
+
+    fn create_empty_commit(&self, repo: &Path, message: &str) -> Result<(), RiptskError> {
+        run_git_dynamic(repo, &["commit", "--allow-empty", "-m", message])
+    }
+
+    fn log_between(&self, repo: &Path, base: &str, head: &str) -> Result<String, RiptskError> {
+        let range = format!("origin/{base}..{head}");
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["log", "--oneline", &range])
+            .output()?;
+        if !output.status.success() {
+            return Err(RiptskError::General("failed to read git log".into()));
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+    }
+
+    fn diff_between(&self, repo: &Path, base: &str, head: &str) -> Result<String, RiptskError> {
+        let range = format!("origin/{base}..{head}");
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["diff", &range])
+            .output()?;
+        if !output.status.success() {
+            return Err(RiptskError::General("failed to read git diff".into()));
+        }
+        let mut diff = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        const MAX_DIFF_CHARS: usize = 8000;
+        if diff.len() > MAX_DIFF_CHARS {
+            diff.truncate(MAX_DIFF_CHARS);
+        }
+        Ok(diff)
     }
 }
 

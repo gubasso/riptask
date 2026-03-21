@@ -55,8 +55,8 @@ pub enum Commands {
     Path(IdArgs),
     /// Create, switch to, or delete an issue branch
     Branch(BranchArgs),
-    /// Create a pull request for an issue
-    Pr(IdArgs),
+    /// Create, edit, or show a pull/merge request
+    Pr(PrArgs),
     /// Display or manage board views
     Board(BoardArgs),
     /// Regenerate all board view files
@@ -127,6 +127,65 @@ pub struct BranchArgs {
     /// Skip confirmation prompt (for -d/-D)
     #[arg(short = 'y', long = "yes")]
     pub yes: bool,
+}
+
+#[derive(Debug, Clone, Args, Default)]
+pub struct PrArgs {
+    #[command(subcommand)]
+    pub subcommand: Option<PrSubcommand>,
+    #[command(flatten)]
+    pub scope: ScopeArgs,
+    /// Issue ID (shorthand for `tsk pr create [ID]`)
+    pub id: Option<String>,
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum PrSubcommand {
+    /// Create a pull/merge request for an issue
+    Create(PrCreateArgs),
+    /// Edit an existing pull/merge request
+    Edit(PrEditArgs),
+    /// Show pull/merge request details
+    Show(PrShowArgs),
+}
+
+#[derive(Debug, Clone, Args, Default)]
+pub struct PrCreateArgs {
+    #[command(flatten)]
+    pub scope: ScopeArgs,
+    pub id: Option<String>,
+    /// Skip AI-assisted description generation
+    #[arg(long)]
+    pub no_ai: bool,
+}
+
+#[derive(Debug, Clone, Args, Default)]
+pub struct PrEditArgs {
+    #[command(flatten)]
+    pub scope: ScopeArgs,
+    pub id: Option<String>,
+    /// Set PR title directly
+    #[arg(long)]
+    pub title: Option<String>,
+    /// Set PR description directly
+    #[arg(long)]
+    pub description: Option<String>,
+    /// Accept AI-generated update without editor review
+    #[arg(short = 'y', long)]
+    pub yes: bool,
+    /// Edit manually without AI assistance
+    #[arg(long)]
+    pub no_ai: bool,
+}
+
+#[derive(Debug, Clone, Args, Default)]
+pub struct PrShowArgs {
+    #[command(flatten)]
+    pub scope: ScopeArgs,
+    pub id: Option<String>,
+    /// Output in JSON format
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Debug, Clone, Args, Default)]
@@ -499,7 +558,7 @@ pub enum HooksSubcommand {
 
 #[cfg(test)]
 mod tests {
-    use super::{Cli, Commands, SessionSubcommand};
+    use super::{Cli, Commands, PrSubcommand, SessionSubcommand};
     use clap::Parser;
 
     #[test]
@@ -572,5 +631,140 @@ mod tests {
         assert_eq!(args.id, None);
         assert!(args.scope.projects.is_empty());
         assert!(!args.scope.all_projects);
+    }
+
+    #[test]
+    fn pr_empty_parses() {
+        let cli = Cli::try_parse_from(["tsk", "pr"]).expect("parse");
+        let Commands::Pr(args) = cli.command.expect("command") else {
+            panic!("expected pr command");
+        };
+        assert!(args.subcommand.is_none());
+        assert!(args.id.is_none());
+    }
+
+    #[test]
+    fn pr_shorthand_id_parses() {
+        let cli = Cli::try_parse_from(["tsk", "pr", "42"]).expect("parse");
+        let Commands::Pr(args) = cli.command.expect("command") else {
+            panic!("expected pr command");
+        };
+        assert!(args.subcommand.is_none());
+        assert_eq!(args.id.as_deref(), Some("42"));
+    }
+
+    #[test]
+    fn pr_create_no_ai_parses() {
+        let cli = Cli::try_parse_from(["tsk", "pr", "create", "42", "--no-ai"]).expect("parse");
+        let Commands::Pr(args) = cli.command.expect("command") else {
+            panic!("expected pr command");
+        };
+        let Some(PrSubcommand::Create(create)) = args.subcommand else {
+            panic!("expected pr create subcommand");
+        };
+        assert_eq!(create.id.as_deref(), Some("42"));
+        assert!(create.no_ai);
+    }
+
+    #[test]
+    fn pr_create_no_ai_without_id_parses() {
+        let cli = Cli::try_parse_from(["tsk", "pr", "create", "--no-ai"]).expect("parse");
+        let Commands::Pr(args) = cli.command.expect("command") else {
+            panic!("expected pr command");
+        };
+        let Some(PrSubcommand::Create(create)) = args.subcommand else {
+            panic!("expected pr create subcommand");
+        };
+        assert!(create.id.is_none());
+        assert!(create.no_ai);
+    }
+
+    #[test]
+    fn pr_edit_title_and_description_parse() {
+        let cli = Cli::try_parse_from([
+            "tsk",
+            "pr",
+            "edit",
+            "42",
+            "--title",
+            "x",
+            "--description",
+            "y",
+        ])
+        .expect("parse");
+        let Commands::Pr(args) = cli.command.expect("command") else {
+            panic!("expected pr command");
+        };
+        let Some(PrSubcommand::Edit(edit)) = args.subcommand else {
+            panic!("expected pr edit subcommand");
+        };
+        assert_eq!(edit.id.as_deref(), Some("42"));
+        assert_eq!(edit.title.as_deref(), Some("x"));
+        assert_eq!(edit.description.as_deref(), Some("y"));
+    }
+
+    #[test]
+    fn pr_edit_no_ai_parses() {
+        let cli = Cli::try_parse_from(["tsk", "pr", "edit", "42", "--no-ai"]).expect("parse");
+        let Commands::Pr(args) = cli.command.expect("command") else {
+            panic!("expected pr command");
+        };
+        let Some(PrSubcommand::Edit(edit)) = args.subcommand else {
+            panic!("expected pr edit subcommand");
+        };
+        assert_eq!(edit.id.as_deref(), Some("42"));
+        assert!(edit.no_ai);
+    }
+
+    #[test]
+    fn pr_edit_yes_parses() {
+        let cli = Cli::try_parse_from(["tsk", "pr", "edit", "42", "-y"]).expect("parse");
+        let Commands::Pr(args) = cli.command.expect("command") else {
+            panic!("expected pr command");
+        };
+        let Some(PrSubcommand::Edit(edit)) = args.subcommand else {
+            panic!("expected pr edit subcommand");
+        };
+        assert_eq!(edit.id.as_deref(), Some("42"));
+        assert!(edit.yes);
+    }
+
+    #[test]
+    fn pr_edit_yes_and_no_ai_both_parse() {
+        let cli = Cli::try_parse_from(["tsk", "pr", "edit", "42", "-y", "--no-ai"]).expect("parse");
+        let Commands::Pr(args) = cli.command.expect("command") else {
+            panic!("expected pr command");
+        };
+        let Some(PrSubcommand::Edit(edit)) = args.subcommand else {
+            panic!("expected pr edit subcommand");
+        };
+        assert!(edit.yes);
+        assert!(edit.no_ai);
+    }
+
+    #[test]
+    fn pr_show_parses() {
+        let cli = Cli::try_parse_from(["tsk", "pr", "show", "42"]).expect("parse");
+        let Commands::Pr(args) = cli.command.expect("command") else {
+            panic!("expected pr command");
+        };
+        let Some(PrSubcommand::Show(show)) = args.subcommand else {
+            panic!("expected pr show subcommand");
+        };
+        assert_eq!(show.id.as_deref(), Some("42"));
+        assert!(!show.json);
+    }
+
+    #[test]
+    fn pr_show_json_parses() {
+        let cli = Cli::try_parse_from(["tsk", "pr", "show", "42", "--json"]).expect("parse");
+        let Commands::Pr(args) = cli.command.expect("command") else {
+            panic!("expected pr command");
+        };
+        let Some(PrSubcommand::Show(show)) = args.subcommand else {
+            panic!("expected pr show subcommand");
+        };
+        assert_eq!(show.id.as_deref(), Some("42"));
+        assert!(show.json);
     }
 }
