@@ -35,7 +35,9 @@ pub fn resolve_scope(
     }
     match project_detection::detect_from_cwd(cwd, config)? {
         Some(backend) => Ok(ProjectScope::CurrentProject(backend.name)),
-        None => Ok(ProjectScope::AllProjects),
+        None => Err(RiptskError::Config(
+            "could not detect project from current directory; use -p <project> or -a to target all projects".into(),
+        )),
     }
 }
 
@@ -73,13 +75,16 @@ mod tests {
     }
 
     #[test]
-    fn resolve_scope_falls_back_to_all_projects_when_detection_fails() {
+    fn resolve_scope_errors_when_detection_fails() {
         let temp = tempdir().expect("temp dir");
         let cwd = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).expect("utf8 path");
         let config = default_config();
 
-        let scope = resolve_scope(&[], false, &cwd, &config).expect("scope");
+        let err = resolve_scope(&[], false, &cwd, &config).unwrap_err();
 
-        assert_eq!(scope, ProjectScope::AllProjects);
+        assert!(
+            err.to_string().contains("could not detect project"),
+            "unexpected error: {err}"
+        );
     }
 }

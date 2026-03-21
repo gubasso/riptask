@@ -1,7 +1,7 @@
 use crate::adapters::backend::BackendIssueUpsert;
 use crate::adapters::git::CliGit;
 use crate::cli::{IdArgs, LsArgs, MoveArgs, NewArgs};
-use crate::config::{load_config, save_config};
+use crate::config::load_config;
 use crate::domain::issue::{GithubIssueMeta, GitlabIssueMeta, IssueDocument, IssueFrontmatter};
 use crate::error::RiptskError;
 use crate::models::{Backend, BackendConfig};
@@ -87,9 +87,8 @@ pub fn list(paths: &AppPaths, args: LsArgs) -> Result<(), RiptskError> {
 
 pub async fn new(paths: &AppPaths, args: NewArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    let mut config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
     let mut args = args;
-    let mut config_changed = false;
     if args.project.is_none() {
         let cwd = camino::Utf8PathBuf::from(
             std::env::current_dir()
@@ -99,11 +98,6 @@ pub async fn new(paths: &AppPaths, args: NewArgs) -> Result<(), RiptskError> {
         );
         if let Some(backend) = crate::services::project_detection::detect_from_cwd(&cwd, &config)? {
             args.project = Some(backend.name);
-        } else if let Some(backend) =
-            crate::services::project_detection::register_project_auto(&cwd, &mut config)?
-        {
-            args.project = Some(backend.name);
-            config_changed = true;
         }
     }
     if args.title.is_none() && std::io::stdin().is_terminal() {
@@ -139,17 +133,9 @@ pub async fn new(paths: &AppPaths, args: NewArgs) -> Result<(), RiptskError> {
     } else {
         create_local_issue(&service, &draft)?
     };
-    if config_changed {
-        save_config(paths.config_path().as_std_path(), &config).map_err(RiptskError::Other)?;
-    }
     let issue_path = paths
         .issues_dir()
         .join(format!("{}.md", issue.frontmatter.id));
-    let mut files = vec![issue_path.as_std_path()];
-    let config_path = paths.config_path();
-    if config_changed {
-        files.push(config_path.as_std_path());
-    }
     maybe_auto_commit(
         &config,
         &CliGit,
@@ -158,7 +144,7 @@ pub async fn new(paths: &AppPaths, args: NewArgs) -> Result<(), RiptskError> {
             "riptsk: new {} - {}",
             issue.frontmatter.id, issue.frontmatter.title
         ),
-        &files,
+        &[issue_path.as_std_path()],
     )?;
     println!("{}", issue.frontmatter.id);
     Ok(())
