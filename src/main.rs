@@ -11,7 +11,11 @@ fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("tsk: {error}");
+            if std::io::IsTerminal::is_terminal(&std::io::stderr()) {
+                eprintln!("{} {error}", console::style("tsk:").red().bold());
+            } else {
+                eprintln!("tsk: {error}");
+            }
             ExitCode::from(error.exit_code() as u8)
         }
     }

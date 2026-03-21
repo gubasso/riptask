@@ -70,7 +70,7 @@ async fn create_branch(paths: &AppPaths, args: BranchArgs) -> Result<(), RiptskE
     {
         Ok(()) => {}
         Err(ref e) if e.to_string().to_lowercase().contains("already exists") => {
-            eprintln!("remote branch already exists, continuing with local checkout");
+            crate::ui::info("remote branch already exists, continuing with local checkout");
         }
         Err(e) => return Err(e),
     }
@@ -112,7 +112,7 @@ async fn delete_branch(paths: &AppPaths, args: BranchArgs) -> Result<(), RiptskE
         resolve_delete_target(paths, &config, &cwd, input)?
     } else {
         if is_protected_branch(&current) {
-            eprintln!("refusing to delete protected branch: {current}");
+            crate::ui::warn(&format!("refusing to delete protected branch: {current}"));
             return Ok(());
         }
         current.clone()
@@ -164,19 +164,19 @@ async fn delete_branch(paths: &AppPaths, args: BranchArgs) -> Result<(), RiptskE
         let prompt =
             format!("Delete current branch '{target_branch}' and switch to '{default_branch}'?");
         if !DialoguerPrompts.confirm(&prompt, false)? {
-            eprintln!("aborted");
+            crate::ui::warn("aborted");
             return Ok(());
         }
     }
 
     // 7. Delete remote first (SoT)
     match provider.delete_branch(repo_name, &target_branch).await {
-        Ok(()) => eprintln!("deleted remote branch: {target_branch}"),
+        Ok(()) => crate::ui::success(&format!("deleted remote branch: {target_branch}")),
         Err(ref e)
             if e.to_string().contains("404")
                 || e.to_string().to_lowercase().contains("not found") =>
         {
-            eprintln!("remote branch not found, continuing with local cleanup");
+            crate::ui::info("remote branch not found, continuing with local cleanup");
         }
         Err(e) => return Err(e),
     }
@@ -192,7 +192,7 @@ async fn delete_branch(paths: &AppPaths, args: BranchArgs) -> Result<(), RiptskE
     // 9. Delete local branch
     if git.branch_exists(repo.as_path(), &target_branch)? {
         git.delete_local_branch(repo.as_path(), &target_branch, force)?;
-        eprintln!("deleted local branch: {target_branch}");
+        crate::ui::success(&format!("deleted local branch: {target_branch}"));
     }
 
     // 10. Clear issue metadata if linked

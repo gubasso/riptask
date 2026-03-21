@@ -17,7 +17,7 @@ pub fn maybe_auto_commit(
     match git.commit(repo, message) {
         Ok(()) => Ok(()),
         Err(err) => {
-            eprintln!("warning: auto-commit skipped: {err}");
+            crate::ui::warn(&format!("auto-commit skipped: {err}"));
             Ok(())
         }
     }

@@ -47,6 +47,9 @@ pub fn run(paths: &AppPaths) -> Result<(), RiptskError> {
         return Err(RiptskError::General(message));
     }
 
-    println!("Initialized riptsk repository at {}", paths.riptsk_repo);
+    crate::ui::success(&format!(
+        "Initialized riptsk repository at {}",
+        paths.riptsk_repo
+    ));
     Ok(())
 }

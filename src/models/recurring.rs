@@ -10,6 +10,17 @@ pub enum RecurrenceFrequency {
     Yearly,
 }
 
+impl RecurrenceFrequency {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Daily => "daily",
+            Self::Weekly => "weekly",
+            Self::Monthly => "monthly",
+            Self::Yearly => "yearly",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RecurringDef {
     pub id: String,

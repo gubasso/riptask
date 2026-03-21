@@ -12,3 +12,4 @@ pub mod paths;
 pub mod scope;
 pub mod services;
 pub mod storage;
+pub mod ui;
