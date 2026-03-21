@@ -109,7 +109,7 @@ pub fn format_issue_line(
     let board = sanitize_control(&issue.frontmatter.board);
     let tag = format!("[{}/{}]", priority, board);
 
-    let id_plain = format!("#{:<7}", numeric_id);
+    let id_plain = format!("#{}", numeric_id);
     let id_str = format!("{}", style(&id_plain).cyan());
     let title_str = format!("{}", style(&title).bold());
     let tag_str = format!("{}", style(&tag).dim());
@@ -149,13 +149,13 @@ pub fn format_issue_plain(issue: &IssueDocument) -> String {
     )
 }
 
-fn sanitize_control(s: &str) -> String {
+pub(crate) fn sanitize_control(s: &str) -> String {
     s.chars()
         .map(|c| if c.is_control() { ' ' } else { c })
         .collect()
 }
 
-fn truncate_title(title: &str, max: usize) -> String {
+pub(crate) fn truncate_title(title: &str, max: usize) -> String {
     let clean: String = title
         .chars()
         .map(|c| if c.is_control() { ' ' } else { c })
