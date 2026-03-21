@@ -11,7 +11,6 @@ use crate::storage::{frontmatter, issue_store};
 use anyhow::{Context, Result};
 use jiff::Timestamp;
 use std::fs;
-use std::process::Command;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShiftDirection {
@@ -161,6 +160,7 @@ impl<'a> IssueService<'a> {
                 id_slug: Some(generate_slug(&id, &draft.title)),
                 branch: None,
                 pr_url: None,
+                pr_number: None,
             },
             body: draft.body.clone(),
             remote_section: None,
@@ -171,18 +171,7 @@ impl<'a> IssueService<'a> {
         let id = id.ok_or_else(|| RiptskError::General("<ID> required".into()))?;
         let path = issue_store::find_issue(self.paths, &id)?;
         let before = fs::metadata(&path)?.modified()?;
-        let editor = std::env::var("EDITOR")
-            .map_err(|_| RiptskError::General("set $EDITOR to edit issues".into()))?;
-        let parts: Vec<&str> = editor.split_whitespace().collect();
-        let (program, editor_args) = parts
-            .split_first()
-            .ok_or_else(|| RiptskError::General("empty $EDITOR".into()))?;
-        let status = Command::new(program)
-            .args(editor_args)
-            .arg(&path)
-            .status()
-            .context("failed to launch editor")
-            .map_err(RiptskError::Other)?;
+        let status = super::editor::open_in_editor(path.as_std_path())?;
         if !status.success() {
             return Ok(());
         }

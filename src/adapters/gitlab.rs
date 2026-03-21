@@ -1,5 +1,5 @@
 use crate::adapters::backend::{
-    BackendIssueRecord, BackendIssueUpsert, BackendProvider, DeleteOutcome,
+    BackendIssueRecord, BackendIssueUpsert, BackendPrRecord, BackendProvider, DeleteOutcome,
 };
 use crate::error::RiptskError;
 use async_trait::async_trait;
@@ -309,7 +309,7 @@ impl BackendProvider for GitlabProvider {
         base: &str,
         title: &str,
         body: &str,
-    ) -> Result<String, RiptskError> {
+    ) -> Result<BackendPrRecord, RiptskError> {
         let client = self.client().await?;
         let endpoint = gitlab::api::projects::merge_requests::CreateMergeRequest::builder()
             .project(repo)
@@ -323,7 +323,65 @@ impl BackendProvider for GitlabProvider {
             .query_async(&client)
             .await
             .map_err(|error| RiptskError::Unreachable(error.to_string()))?;
-        Ok(merge_request.web_url)
+        Ok(map_merge_request(merge_request))
+    }
+
+    async fn get_pr(&self, repo: &str, number: u64) -> Result<BackendPrRecord, RiptskError> {
+        let client = self.client().await?;
+        let endpoint = gitlab::api::projects::merge_requests::MergeRequest::builder()
+            .project(repo)
+            .merge_request(number)
+            .build()
+            .map_err(|error| RiptskError::Config(error.to_string()))?;
+        let merge_request: GitlabMergeRequest = endpoint
+            .query_async(&client)
+            .await
+            .map_err(|error| RiptskError::Unreachable(error.to_string()))?;
+        Ok(map_merge_request(merge_request))
+    }
+
+    async fn update_pr(
+        &self,
+        repo: &str,
+        number: u64,
+        title: &str,
+        body: &str,
+    ) -> Result<BackendPrRecord, RiptskError> {
+        let client = self.client().await?;
+        let endpoint = gitlab::api::projects::merge_requests::EditMergeRequest::builder()
+            .project(repo)
+            .merge_request(number)
+            .title(title)
+            .description(body)
+            .build()
+            .map_err(|error| RiptskError::Config(error.to_string()))?;
+        let merge_request: GitlabMergeRequest = endpoint
+            .query_async(&client)
+            .await
+            .map_err(|error| RiptskError::Unreachable(error.to_string()))?;
+        Ok(map_merge_request(merge_request))
+    }
+
+    async fn find_pr_by_branch(
+        &self,
+        repo: &str,
+        head: &str,
+        base: &str,
+    ) -> Result<Option<BackendPrRecord>, RiptskError> {
+        let client = self.client().await?;
+        let endpoint = gitlab::api::projects::merge_requests::MergeRequests::builder()
+            .project(repo)
+            .source_branch(head)
+            .target_branch(base)
+            .state(gitlab::api::merge_requests::MergeRequestState::Opened)
+            .build()
+            .map_err(|error| RiptskError::Config(error.to_string()))?;
+        let merge_requests: Vec<GitlabMergeRequest> =
+            gitlab::api::paged(endpoint, gitlab::api::Pagination::All)
+                .query_async(&client)
+                .await
+                .map_err(|error| RiptskError::Unreachable(error.to_string()))?;
+        Ok(merge_requests.into_iter().next().map(map_merge_request))
     }
 
     async fn create_branch(
@@ -439,6 +497,14 @@ struct GitlabResolvedUser {
 
 #[derive(Debug, Clone, Deserialize)]
 struct GitlabMergeRequest {
+    iid: u64,
+    title: String,
+    #[serde(default)]
+    description: Option<String>,
+    state: String,
+    source_branch: String,
+    target_branch: String,
+    updated_at: String,
     web_url: String,
 }
 
@@ -479,6 +545,19 @@ fn map_issue(issue: GitlabIssue) -> BackendIssueRecord {
         lock_reason: None,
         comments: Vec::new(),
         linked_mrs: Vec::new(),
+    }
+}
+
+fn map_merge_request(merge_request: GitlabMergeRequest) -> BackendPrRecord {
+    BackendPrRecord {
+        number: merge_request.iid,
+        title: merge_request.title,
+        body: merge_request.description.unwrap_or_default(),
+        url: merge_request.web_url,
+        state: merge_request.state,
+        head: merge_request.source_branch,
+        base: merge_request.target_branch,
+        updated_at: merge_request.updated_at,
     }
 }
 

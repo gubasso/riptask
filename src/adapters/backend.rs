@@ -1,5 +1,6 @@
 use crate::error::RiptskError;
 use async_trait::async_trait;
+use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DeleteOutcome {
@@ -48,6 +49,18 @@ pub struct BackendIssueUpsert {
     pub discussion_locked: Option<bool>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
+pub struct BackendPrRecord {
+    pub number: u64,
+    pub title: String,
+    pub body: String,
+    pub url: String,
+    pub state: String,
+    pub head: String,
+    pub base: String,
+    pub updated_at: String,
+}
+
 #[async_trait]
 pub trait BackendProvider: Send + Sync {
     async fn list_issues(&self, repo: &str) -> Result<Vec<BackendIssueRecord>, RiptskError>;
@@ -85,7 +98,21 @@ pub trait BackendProvider: Send + Sync {
         base: &str,
         title: &str,
         body: &str,
-    ) -> Result<String, RiptskError>;
+    ) -> Result<BackendPrRecord, RiptskError>;
+    async fn get_pr(&self, repo: &str, number: u64) -> Result<BackendPrRecord, RiptskError>;
+    async fn update_pr(
+        &self,
+        repo: &str,
+        number: u64,
+        title: &str,
+        body: &str,
+    ) -> Result<BackendPrRecord, RiptskError>;
+    async fn find_pr_by_branch(
+        &self,
+        repo: &str,
+        head: &str,
+        base: &str,
+    ) -> Result<Option<BackendPrRecord>, RiptskError>;
     async fn create_branch(
         &self,
         repo: &str,

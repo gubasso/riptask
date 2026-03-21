@@ -1,5 +1,5 @@
 use crate::adapters::backend::{
-    BackendIssueRecord, BackendIssueUpsert, BackendProvider, DeleteOutcome,
+    BackendIssueRecord, BackendIssueUpsert, BackendPrRecord, BackendProvider, DeleteOutcome,
 };
 use crate::error::RiptskError;
 use async_trait::async_trait;
@@ -226,7 +226,7 @@ impl BackendProvider for GithubProvider {
         base: &str,
         title: &str,
         body: &str,
-    ) -> Result<String, RiptskError> {
+    ) -> Result<BackendPrRecord, RiptskError> {
         let (owner, repo_name) = self.split_owner_repo(repo)?;
         let pull = self
             .client
@@ -236,9 +236,60 @@ impl BackendProvider for GithubProvider {
             .send()
             .await
             .map_err(|error| RiptskError::Unreachable(error.to_string()))?;
-        pull.html_url
-            .map(|url| url.to_string())
-            .ok_or_else(|| RiptskError::Unreachable(format!("missing PR url for {repo}")))
+        map_pull_request(pull, repo)
+    }
+
+    async fn get_pr(&self, repo: &str, number: u64) -> Result<BackendPrRecord, RiptskError> {
+        let (owner, repo_name) = self.split_owner_repo(repo)?;
+        let pull = self
+            .client
+            .pulls(owner, repo_name)
+            .get(number)
+            .await
+            .map_err(|error| RiptskError::Unreachable(error.to_string()))?;
+        map_pull_request(pull, repo)
+    }
+
+    async fn update_pr(
+        &self,
+        repo: &str,
+        number: u64,
+        title: &str,
+        body: &str,
+    ) -> Result<BackendPrRecord, RiptskError> {
+        let (owner, repo_name) = self.split_owner_repo(repo)?;
+        let pull = self
+            .client
+            .pulls(owner, repo_name)
+            .update(number)
+            .title(title)
+            .body(body)
+            .send()
+            .await
+            .map_err(|error| RiptskError::Unreachable(error.to_string()))?;
+        map_pull_request(pull, repo)
+    }
+
+    async fn find_pr_by_branch(
+        &self,
+        repo: &str,
+        head: &str,
+        base: &str,
+    ) -> Result<Option<BackendPrRecord>, RiptskError> {
+        let (owner, repo_name) = self.split_owner_repo(repo)?;
+        let page = self
+            .client
+            .pulls(owner, repo_name)
+            .list()
+            .head(format!("{owner}:{head}"))
+            .base(base)
+            .send()
+            .await
+            .map_err(|error| RiptskError::Unreachable(error.to_string()))?;
+        let Some(pull) = page.items.into_iter().next() else {
+            return Ok(None);
+        };
+        Ok(Some(map_pull_request(pull, repo)?))
     }
 
     async fn create_branch(
@@ -373,6 +424,38 @@ fn map_issue(issue: models::issues::Issue) -> BackendIssueRecord {
         comments: Vec::new(),
         linked_mrs: Vec::new(),
     }
+}
+
+fn map_pull_request(
+    pull: models::pulls::PullRequest,
+    repo: &str,
+) -> Result<BackendPrRecord, RiptskError> {
+    let url = pull
+        .html_url
+        .map(|url| url.to_string())
+        .ok_or_else(|| RiptskError::Unreachable(format!("missing PR url for {repo}")))?;
+    let state = if pull.merged_at.is_some() {
+        "merged".into()
+    } else {
+        match pull.state {
+            Some(models::IssueState::Open) => "open".into(),
+            Some(models::IssueState::Closed) => "closed".into(),
+            _ => "open".into(),
+        }
+    };
+    Ok(BackendPrRecord {
+        number: pull.number,
+        title: pull.title.unwrap_or_default(),
+        body: pull.body.unwrap_or_default(),
+        url,
+        state,
+        head: pull.head.ref_field,
+        base: pull.base.ref_field,
+        updated_at: pull
+            .updated_at
+            .map(|updated_at| updated_at.to_string())
+            .unwrap_or_default(),
+    })
 }
 
 fn github_state_reason_to_string(reason: models::issues::IssueStateReason) -> String {

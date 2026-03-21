@@ -4,8 +4,6 @@ use crate::config::load_config;
 use crate::error::RiptskError;
 use crate::paths::AppPaths;
 use crate::services::templates::{TemplateService, seed_template};
-use anyhow::Context;
-use std::process::Command;
 
 fn validate_template_name(name: &str) -> Result<(), RiptskError> {
     if name.contains('/') || name.contains('\\') || name.contains("..") || name.is_empty() {
@@ -94,18 +92,7 @@ pub fn run(paths: &AppPaths, args: TemplateArgs) -> Result<(), RiptskError> {
 }
 
 fn open_in_editor(path: &std::path::Path) -> Result<(), RiptskError> {
-    let editor = std::env::var("EDITOR")
-        .map_err(|_| RiptskError::General("set $EDITOR to edit templates".into()))?;
-    let parts: Vec<&str> = editor.split_whitespace().collect();
-    let (program, args) = parts
-        .split_first()
-        .ok_or_else(|| RiptskError::General("empty $EDITOR".into()))?;
-    let status = Command::new(program)
-        .args(args)
-        .arg(path)
-        .status()
-        .context("failed to launch editor")
-        .map_err(RiptskError::Other)?;
+    let status = crate::services::editor::open_in_editor(path)?;
     if status.success() {
         Ok(())
     } else {

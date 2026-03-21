@@ -438,6 +438,7 @@ async fn create_backend_issue(
             id_slug: Some(generate_slug(&id, &draft.title)),
             branch: None,
             pr_url: None,
+            pr_number: None,
         },
         body: draft.body.clone(),
         remote_section: None,
