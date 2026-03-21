@@ -320,6 +320,18 @@ impl BackendProvider for GithubProvider {
             .default_branch
             .ok_or_else(|| RiptskError::Unreachable(format!("missing default branch for {repo}")))
     }
+
+    async fn delete_branch(&self, repo: &str, branch_name: &str) -> Result<(), RiptskError> {
+        let (owner, repo_name) = self.split_owner_repo(repo)?;
+        self.client
+            .repos(owner, repo_name)
+            .delete_ref(&octocrab::params::repos::Reference::Branch(
+                branch_name.to_owned(),
+            ))
+            .await
+            .map_err(|error| RiptskError::Unreachable(error.to_string()))?;
+        Ok(())
+    }
 }
 
 fn map_issue(issue: models::issues::Issue) -> BackendIssueRecord {

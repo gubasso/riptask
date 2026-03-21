@@ -94,4 +94,5 @@ pub trait BackendProvider: Send + Sync {
         issue_id: u64,
     ) -> Result<(), RiptskError>;
     async fn default_branch(&self, repo: &str) -> Result<String, RiptskError>;
+    async fn delete_branch(&self, repo: &str, branch_name: &str) -> Result<(), RiptskError>;
 }

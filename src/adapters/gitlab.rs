@@ -361,6 +361,20 @@ impl BackendProvider for GitlabProvider {
             .map_err(|error| RiptskError::Unreachable(error.to_string()))?;
         Ok(project.default_branch)
     }
+
+    async fn delete_branch(&self, repo: &str, branch_name: &str) -> Result<(), RiptskError> {
+        let client = self.client().await?;
+        let endpoint = gitlab::api::projects::repository::branches::DeleteBranch::builder()
+            .project(repo)
+            .branch(branch_name)
+            .build()
+            .map_err(|e| RiptskError::Config(e.to_string()))?;
+        gitlab::api::ignore(endpoint)
+            .query_async(&client)
+            .await
+            .map_err(|e| RiptskError::Unreachable(e.to_string()))?;
+        Ok(())
+    }
 }
 
 async fn edit_issue_state(
