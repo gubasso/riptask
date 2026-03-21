@@ -1,5 +1,6 @@
 use crate::adapters::backend::BackendIssueUpsert;
 use crate::adapters::git::CliGit;
+use crate::adapters::picker::{IssueDisplayMode, format_issue_line, format_issue_plain};
 use crate::cli::{IdArgs, LsArgs, MoveArgs, NewArgs};
 use crate::config::load_config;
 use crate::domain::issue::{GithubIssueMeta, GitlabIssueMeta, IssueDocument, IssueFrontmatter};
@@ -60,6 +61,12 @@ pub fn list(paths: &AppPaths, args: LsArgs) -> Result<(), RiptskError> {
     );
     let scope =
         crate::scope::resolve_scope(&args.scope.projects, args.scope.all_projects, &cwd, &config)?;
+    let mode = if args.scope.all_projects {
+        IssueDisplayMode::AllProjects
+    } else {
+        IssueDisplayMode::PerProject
+    };
+    let is_tty = std::io::stdout().is_terminal();
     let service = IssueService::new(paths, &config);
     for issue in service.list_matching(&args, &scope)? {
         let marker = if issue.frontmatter.conflict.is_some() {
@@ -67,20 +74,11 @@ pub fn list(paths: &AppPaths, args: LsArgs) -> Result<(), RiptskError> {
         } else {
             ""
         };
-        println!(
-            "{}\t{}\t{}\t{}\t{}{}",
-            issue.frontmatter.id,
-            issue
-                .frontmatter
-                .priority
-                .as_ref()
-                .map(|value| value.as_str())
-                .unwrap_or(""),
-            issue.frontmatter.state.as_str(),
-            issue.frontmatter.project,
-            issue.frontmatter.title,
-            marker
-        );
+        if is_tty {
+            println!("{}{}", format_issue_line(&issue, &mode, false), marker);
+        } else {
+            println!("{}{}", format_issue_plain(&issue), marker);
+        }
     }
     Ok(())
 }

@@ -1,4 +1,4 @@
-use crate::adapters::picker::{FzfPicker, Picker};
+use crate::adapters::picker::{FzfPicker, IssueDisplayMode, Picker};
 use crate::cli::{BoardArgs, IdArgs, ReorderArgs};
 use crate::config::{load_config, parse_state};
 use crate::error::RiptskError;
@@ -102,6 +102,12 @@ pub fn reorder(paths: &AppPaths, args: ReorderArgs) -> Result<(), RiptskError> {
         let picker = FzfPicker {
             fzf_opts: config.ui.fzf_opts.clone(),
         };
+        let mode = if args.scope.all_projects {
+            IssueDisplayMode::AllProjects
+        } else {
+            IssueDisplayMode::PerProject
+        };
+        let issues_dir = paths.issues_dir();
         let issues = service
             .list_matching(
                 &crate::cli::LsArgs {
@@ -114,7 +120,7 @@ pub fn reorder(paths: &AppPaths, args: ReorderArgs) -> Result<(), RiptskError> {
             .into_iter()
             .filter(|issue| issue.frontmatter.board == board)
             .collect::<Vec<_>>();
-        picker.pick_many(&issues, "reorder> ")?
+        picker.pick_many(&issues, "reorder> ", Some(issues_dir.as_str()), &mode)?
     } else {
         args.ids
             .into_iter()
