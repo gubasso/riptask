@@ -21,6 +21,8 @@ fn run() -> Result<(), RiptskError> {
     let cli = Cli::parse();
     let paths = AppPaths::from_env().context("failed to resolve application paths")?;
 
+    riptsk::services::project_detection::ensure_registered(&paths, &riptsk::adapters::git::CliGit)?;
+
     match cli.command.unwrap_or(Commands::Help { command: None }) {
         Commands::Init => commands::init::run(&paths),
         Commands::Config(args) => commands::config_cmd::run(&paths, args),

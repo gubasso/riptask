@@ -1,10 +1,51 @@
+use crate::adapters::git::GitBackend;
 use crate::adapters::prompts::PromptBackend;
-use crate::config::Config;
+use crate::config::{Config, load_config, save_config};
 use crate::error::RiptskError;
 use crate::models::{Backend, BackendConfig};
+use crate::paths::AppPaths;
+use crate::services::auto_commit::maybe_auto_commit;
 use anyhow::Context;
 use camino::Utf8Path;
 use std::process::Command;
+
+pub fn ensure_registered(paths: &AppPaths, git: &dyn GitBackend) -> Result<(), RiptskError> {
+    let config_path = paths.config_path();
+    if !config_path.exists() {
+        return Ok(());
+    }
+    let mut config = load_config(config_path.as_std_path()).map_err(RiptskError::Other)?;
+    let cwd = camino::Utf8PathBuf::from(
+        std::env::current_dir()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string(),
+    );
+    // Best-effort: if git is unavailable or detection fails, skip silently
+    // and let commands handle errors with their own messages.
+    let detected = match detect_from_cwd(&cwd, &config) {
+        Ok(result) => result,
+        Err(_) => return Ok(()),
+    };
+    if detected.is_some() {
+        return Ok(());
+    }
+    let registered = match register_project_auto(&cwd, &mut config) {
+        Ok(result) => result,
+        Err(_) => return Ok(()),
+    };
+    if registered.is_some() {
+        save_config(config_path.as_std_path(), &config).map_err(RiptskError::Other)?;
+        maybe_auto_commit(
+            &config,
+            git,
+            paths.riptsk_repo.as_std_path(),
+            "riptsk: auto-register project",
+            &[config_path.as_std_path()],
+        )?;
+    }
+    Ok(())
+}
 
 pub fn detect_from_cwd(
     cwd: &Utf8Path,

@@ -149,7 +149,9 @@ fn resolve_sync_backends<'a>(
         return Ok(vec![candidate]);
     }
 
-    Ok(hosted_backends(config))
+    Err(RiptskError::Config(
+        "could not detect project from current directory; use -p <project>, --backend <name>, or -a to target all projects".into(),
+    ))
 }
 
 fn issue_matches_backend_scope(

@@ -108,7 +108,9 @@ fn resolve_backends<'a>(
             .map(|candidate| vec![candidate])
             .ok_or_else(|| RiptskError::Unregistered(backend.name));
     }
-    Ok(hosted_backends(config))
+    Err(RiptskError::Config(
+        "could not detect project from current directory; use -p <project> or -a to target all projects".into(),
+    ))
 }
 
 fn collect_push_paths(
