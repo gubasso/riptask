@@ -17,12 +17,14 @@ fn new_creates_issue_file() {
         .assert()
         .success();
 
+    // Use --project personal to target the default project explicitly,
+    // since cwd (a non-git dir) would be auto-registered as its own project.
     Command::cargo_bin("tsk")
         .expect("binary")
         .current_dir(temp.path())
         .env("RIPTSK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
-        .args(["new", "--title", "Test issue"])
+        .args(["new", "--title", "Test issue", "--project", "personal"])
         .assert()
         .success()
         .stdout(predicate::str::contains("LO-PER--1"));
@@ -185,4 +187,120 @@ fn new_without_title_non_tty_errors() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("missing title"));
+}
+
+#[test]
+fn new_auto_registers_non_git_directory() {
+    let temp = tempdir().expect("temp dir");
+    let repo = temp.path().join("repo");
+    let cache = temp.path().join("cache");
+    let plain_dir = temp.path().join("my-proj");
+    fs::create_dir_all(&plain_dir).expect("plain dir");
+
+    Command::cargo_bin("tsk")
+        .expect("binary")
+        .env("RIPTSK_REPO", &repo)
+        .env("XDG_CACHE_HOME", &cache)
+        .arg("init")
+        .assert()
+        .success();
+
+    let assert = Command::cargo_bin("tsk")
+        .expect("binary")
+        .current_dir(&plain_dir)
+        .env("RIPTSK_REPO", &repo)
+        .env("XDG_CACHE_HOME", &cache)
+        .args(["new", "--title", "Non-git issue"])
+        .assert()
+        .success();
+
+    // Issue ID should be a Local-scoped ID
+    assert.stdout(predicate::str::starts_with("LO-"));
+
+    // Config should contain the auto-registered backend
+    let config = fs::read_to_string(repo.join("riptsk.yaml")).expect("read config");
+    assert!(
+        config.contains("name: my-proj"),
+        "backend name missing from config"
+    );
+    assert!(
+        config.contains("type: local"),
+        "backend type missing from config"
+    );
+}
+
+#[test]
+fn new_non_git_no_stderr_leak() {
+    let temp = tempdir().expect("temp dir");
+    let repo = temp.path().join("repo");
+    let cache = temp.path().join("cache");
+    let plain_dir = temp.path().join("noisy-dir");
+    fs::create_dir_all(&plain_dir).expect("plain dir");
+
+    Command::cargo_bin("tsk")
+        .expect("binary")
+        .env("RIPTSK_REPO", &repo)
+        .env("XDG_CACHE_HOME", &cache)
+        .arg("init")
+        .assert()
+        .success();
+
+    Command::cargo_bin("tsk")
+        .expect("binary")
+        .current_dir(&plain_dir)
+        .env("RIPTSK_REPO", &repo)
+        .env("XDG_CACHE_HOME", &cache)
+        .args(["new", "--title", "Quiet issue"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("fatal:").not());
+}
+
+#[test]
+fn new_does_not_register_home_as_project() {
+    let temp = tempdir().expect("temp dir");
+    let repo = temp.path().join("repo");
+    let cache = temp.path().join("cache");
+    let fake_home = temp.path().join("fakehome");
+    let subdir = fake_home.join("subdir");
+    fs::create_dir_all(&subdir).expect("subdir");
+
+    // Put a git repo at fake $HOME
+    let status = StdCommand::new("git")
+        .arg("init")
+        .arg("--quiet")
+        .arg(&fake_home)
+        .status()
+        .expect("git init");
+    assert!(status.success());
+
+    Command::cargo_bin("tsk")
+        .expect("binary")
+        .env("RIPTSK_REPO", &repo)
+        .env("XDG_CACHE_HOME", &cache)
+        .arg("init")
+        .assert()
+        .success();
+
+    // Run from subdir with HOME set to fake_home
+    Command::cargo_bin("tsk")
+        .expect("binary")
+        .current_dir(&subdir)
+        .env("RIPTSK_REPO", &repo)
+        .env("XDG_CACHE_HOME", &cache)
+        .env("HOME", &fake_home)
+        .args(["new", "--title", "Home boundary test"])
+        .assert()
+        .success();
+
+    // The registered project should be "subdir", not "fakehome"
+    let config = fs::read_to_string(repo.join("riptsk.yaml")).expect("read config");
+    assert!(
+        config.contains("name: subdir"),
+        "should register subdir, not $HOME. Config:\n{config}"
+    );
+    assert!(
+        !config.contains("name: fakehome"),
+        "should not register $HOME as project"
+    );
 }
