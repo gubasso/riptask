@@ -1,16 +1,34 @@
 use crate::error::RiptskError;
 use async_trait::async_trait;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DeleteOutcome {
+    #[default]
+    HardDeleted,
+    SoftClosed,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct BackendIssueRecord {
     pub issue_id: u64,
+    pub node_id: Option<String>,
     pub title: String,
     pub state: String,
+    pub state_reason: Option<String>,
     pub labels: Vec<String>,
-    pub assignee: Option<String>,
+    pub assignees: Vec<String>,
+    pub milestone: Option<String>,
+    pub milestone_id: Option<u64>,
     pub body: Option<String>,
     pub url: String,
     pub updated_at: String,
+    pub due_date: Option<String>,
+    pub weight: Option<u32>,
+    pub confidential: Option<bool>,
+    pub discussion_locked: Option<bool>,
+    pub issue_type: Option<String>,
+    pub locked: Option<bool>,
+    pub lock_reason: Option<String>,
     pub comments: Vec<String>,
     pub linked_mrs: Vec<String>,
 }
@@ -19,8 +37,15 @@ pub struct BackendIssueRecord {
 pub struct BackendIssueUpsert {
     pub title: String,
     pub body: String,
+    pub state: Option<String>,
+    pub state_reason: Option<String>,
     pub labels: Vec<String>,
-    pub assignee: Option<String>,
+    pub assignees: Vec<String>,
+    pub milestone_id: Option<u64>,
+    pub due_date: Option<String>,
+    pub weight: Option<u32>,
+    pub confidential: Option<bool>,
+    pub discussion_locked: Option<bool>,
 }
 
 #[async_trait]
@@ -39,6 +64,14 @@ pub trait BackendProvider: Send + Sync {
     ) -> Result<BackendIssueRecord, RiptskError>;
     async fn close_issue(&self, repo: &str, issue_id: u64) -> Result<(), RiptskError>;
     async fn reopen_issue(&self, repo: &str, issue_id: u64) -> Result<(), RiptskError>;
+    async fn delete_issue(&self, repo: &str, issue_id: u64) -> Result<DeleteOutcome, RiptskError>;
+    async fn lock_issue(
+        &self,
+        repo: &str,
+        issue_id: u64,
+        reason: Option<&str>,
+    ) -> Result<(), RiptskError>;
+    async fn unlock_issue(&self, repo: &str, issue_id: u64) -> Result<(), RiptskError>;
     async fn sync_labels(
         &self,
         repo: &str,

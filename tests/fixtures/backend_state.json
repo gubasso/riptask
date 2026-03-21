@@ -6,7 +6,9 @@
       "status::in-progress",
       "bug"
     ],
-    "assignee": "tester",
+    "assignees": [
+      "tester"
+    ],
     "updated_at": "2026-03-13T10:22:00Z"
   },
   "github:Penguin-Chrono-Labs/fish-from-the-future:17": {
@@ -15,7 +17,9 @@
     "labels": [
       "status::todo"
     ],
-    "assignee": "tester",
+    "assignees": [
+      "tester"
+    ],
     "updated_at": "2026-03-10T08:00:00Z"
   }
 }

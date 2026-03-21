@@ -91,7 +91,7 @@ fn run_due(paths: &AppPaths, date: Option<String>) -> Result<(), RiptskError> {
             issue.frontmatter.labels = definition.labels.clone();
         }
         if let Some(ref assignee) = definition.assignee {
-            issue.frontmatter.assignee = Some(assignee.clone());
+            issue.frontmatter.assignees = vec![assignee.clone()];
         }
         if let Some(ref org) = definition.org {
             issue.frontmatter.org = Some(org.clone());

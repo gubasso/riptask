@@ -5,6 +5,7 @@ use crate::domain::id_map::IdMap;
 use crate::paths::AppPaths;
 use crate::services::backend_mapping::backend_state_entry;
 use anyhow::{Context, Result};
+use std::collections::HashSet;
 use std::fs;
 
 pub fn load_backend_state(paths: &AppPaths) -> Result<BackendState> {
@@ -35,6 +36,26 @@ pub fn load_id_map(paths: &AppPaths) -> Result<IdMap> {
 
 pub fn save_id_map(paths: &AppPaths, map: &IdMap) -> Result<()> {
     save_json(paths.id_map_path().as_str(), map)
+}
+
+pub fn load_deleted_keys(paths: &AppPaths) -> Result<HashSet<String>> {
+    load_json(paths.deleted_keys_path().as_str())
+}
+
+pub fn save_deleted_keys(paths: &AppPaths, keys: &HashSet<String>) -> Result<()> {
+    save_json(paths.deleted_keys_path().as_str(), keys)
+}
+
+pub fn mark_deleted(paths: &AppPaths, key: &str) -> Result<()> {
+    let mut keys = load_deleted_keys(paths)?;
+    keys.insert(key.to_owned());
+    save_deleted_keys(paths, &keys)
+}
+
+pub fn unmark_deleted(paths: &AppPaths, key: &str) -> Result<()> {
+    let mut keys = load_deleted_keys(paths)?;
+    keys.remove(key);
+    save_deleted_keys(paths, &keys)
 }
 
 fn load_json<T>(path: &str) -> Result<T>
@@ -88,6 +109,11 @@ mod tests {
         assert!(
             super::load_backend_state(&paths)
                 .expect("backend state")
+                .is_empty()
+        );
+        assert!(
+            super::load_deleted_keys(&paths)
+                .expect("deleted keys")
                 .is_empty()
         );
     }

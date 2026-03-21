@@ -75,6 +75,18 @@ pub fn rename_issue_file(
     Ok(new_path)
 }
 
+pub fn delete_issue_files(paths: &AppPaths, id: &str) -> Result<(), RiptskError> {
+    let main_path = issue_dir(paths).join(format!("{id}.md"));
+    if main_path.exists() {
+        fs::remove_file(&main_path)?;
+    }
+    let remote_path = issue_dir(paths).join(format!("{id}.REMOTE.md"));
+    if remote_path.exists() {
+        fs::remove_file(&remote_path)?;
+    }
+    Ok(())
+}
+
 pub fn rewrite_cross_references(
     paths: &AppPaths,
     old_id: &str,

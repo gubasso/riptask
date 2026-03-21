@@ -43,6 +43,10 @@ impl AppPaths {
         self.cache_root.join("id_map.json")
     }
 
+    pub fn deleted_keys_path(&self) -> Utf8PathBuf {
+        self.cache_root.join("deleted_keys.json")
+    }
+
     pub fn session_state_path(&self) -> Utf8PathBuf {
         self.cache_root.join("session.json")
     }
@@ -128,5 +132,6 @@ mod tests {
         };
         assert_eq!(paths.config_path(), "/tmp/riptsk/riptsk.yaml");
         assert_eq!(paths.backend_state_path(), "/tmp/cache/backend_state.json");
+        assert_eq!(paths.deleted_keys_path(), "/tmp/cache/deleted_keys.json");
     }
 }

@@ -55,8 +55,28 @@ pub fn issue_to_upsert(doc: &IssueDocument) -> BackendIssueUpsert {
     BackendIssueUpsert {
         title: doc.frontmatter.title.clone(),
         body: doc.body.clone(),
+        state: Some(match doc.frontmatter.state {
+            IssueState::Done => "closed".into(),
+            _ => "open".into(),
+        }),
+        state_reason: doc.frontmatter.state_reason.clone(),
         labels: build_state_labels(&doc.frontmatter.state, &doc.frontmatter.labels),
-        assignee: doc.frontmatter.assignee.clone(),
+        assignees: doc.frontmatter.assignees.clone(),
+        milestone_id: doc
+            .frontmatter
+            .github
+            .as_ref()
+            .and_then(|meta| meta.milestone_id)
+            .or_else(|| {
+                doc.frontmatter
+                    .gitlab
+                    .as_ref()
+                    .and_then(|meta| meta.milestone_id)
+            }),
+        due_date: doc.frontmatter.due.clone(),
+        weight: doc.frontmatter.weight,
+        confidential: doc.frontmatter.confidential,
+        discussion_locked: doc.frontmatter.discussion_locked,
     }
 }
 
@@ -79,14 +99,16 @@ pub fn backend_to_local(record: &BackendIssueRecord, backend: &BackendConfig) ->
             org: backend.default_org.clone(),
             priority: Some(Priority::Medium),
             labels: labels_without_status(&record.labels),
-            assignee: record.assignee.clone(),
-            milestone: None,
+            assignees: record.assignees.clone(),
+            milestone: record.milestone.clone(),
+            state_reason: record.state_reason.clone(),
             cycle: None,
             order: Some(1),
             gitlab: if backend.backend == Backend::Gitlab {
                 Some(GitlabIssueMeta {
                     repo: backend.repo.clone().unwrap_or_default(),
                     issue_id: Some(record.issue_id),
+                    milestone_id: record.milestone_id,
                     url: Some(record.url.clone()),
                     updated_at: record.updated_at.clone(),
                     last_pushed_state: Some(state.clone()),
@@ -98,6 +120,8 @@ pub fn backend_to_local(record: &BackendIssueRecord, backend: &BackendConfig) ->
                 Some(GithubIssueMeta {
                     repo: backend.repo.clone().unwrap_or_default(),
                     issue_id: Some(record.issue_id),
+                    node_id: record.node_id.clone(),
+                    milestone_id: record.milestone_id,
                     url: Some(record.url.clone()),
                     updated_at: record.updated_at.clone(),
                     last_pushed_state: Some(state.clone()),
@@ -106,7 +130,13 @@ pub fn backend_to_local(record: &BackendIssueRecord, backend: &BackendConfig) ->
                 None
             },
             local_updated_at: record.updated_at.clone(),
-            due: None,
+            due: record.due_date.clone(),
+            weight: record.weight,
+            confidential: record.confidential,
+            discussion_locked: record.discussion_locked,
+            issue_type: record.issue_type.clone(),
+            locked: record.locked,
+            lock_reason: record.lock_reason.clone(),
             recurring: None,
             remote_deleted: false,
             conflict: None,
@@ -140,8 +170,17 @@ pub fn update_issue_from_backend(
     issue.frontmatter.title = record.title.clone();
     issue.frontmatter.state = state.clone();
     issue.frontmatter.labels = labels_without_status(&record.labels);
-    issue.frontmatter.assignee = record.assignee.clone();
+    issue.frontmatter.assignees = record.assignees.clone();
+    issue.frontmatter.milestone = record.milestone.clone();
+    issue.frontmatter.state_reason = record.state_reason.clone();
     issue.frontmatter.local_updated_at = record.updated_at.clone();
+    issue.frontmatter.due = record.due_date.clone();
+    issue.frontmatter.weight = record.weight;
+    issue.frontmatter.confidential = record.confidential;
+    issue.frontmatter.discussion_locked = record.discussion_locked;
+    issue.frontmatter.issue_type = record.issue_type.clone();
+    issue.frontmatter.locked = record.locked;
+    issue.frontmatter.lock_reason = record.lock_reason.clone();
     issue.frontmatter.id_slug = Some(generate_slug(&issue.frontmatter.id, &record.title));
     issue.body = record.body.clone().unwrap_or_default();
     match backend.backend {
@@ -149,6 +188,8 @@ pub fn update_issue_from_backend(
             issue.frontmatter.github = Some(GithubIssueMeta {
                 repo: backend.repo.clone().unwrap_or_default(),
                 issue_id: Some(record.issue_id),
+                node_id: record.node_id.clone(),
+                milestone_id: record.milestone_id,
                 url: Some(record.url.clone()),
                 updated_at: record.updated_at.clone(),
                 last_pushed_state: Some(state),
@@ -158,6 +199,7 @@ pub fn update_issue_from_backend(
             issue.frontmatter.gitlab = Some(GitlabIssueMeta {
                 repo: backend.repo.clone().unwrap_or_default(),
                 issue_id: Some(record.issue_id),
+                milestone_id: record.milestone_id,
                 url: Some(record.url.clone()),
                 updated_at: record.updated_at.clone(),
                 last_pushed_state: Some(state),
@@ -173,8 +215,15 @@ pub fn backend_state_entry(
     crate::domain::backend_state::BackendStateEntry {
         title: record.title.clone(),
         state: record.state.clone(),
+        state_reason: record.state_reason.clone(),
         labels: record.labels.clone(),
-        assignee: record.assignee.clone(),
+        assignees: record.assignees.clone(),
+        milestone: record.milestone.clone(),
+        milestone_id: record.milestone_id,
+        due_date: record.due_date.clone(),
+        weight: record.weight,
+        confidential: record.confidential,
+        discussion_locked: record.discussion_locked,
         updated_at: record.updated_at.clone(),
     }
 }

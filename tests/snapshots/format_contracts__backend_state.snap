@@ -4,7 +4,9 @@ expression: canonical_json(&backend_state)
 ---
 {
   "github:Penguin-Chrono-Labs/fish-from-the-future:17": {
-    "assignee": "tester",
+    "assignees": [
+      "tester"
+    ],
     "labels": [
       "status::todo"
     ],
@@ -13,7 +15,9 @@ expression: canonical_json(&backend_state)
     "updated_at": "2026-03-10T08:00:00Z"
   },
   "gitlab:chrono/wormhole-router:42": {
-    "assignee": "tester",
+    "assignees": [
+      "tester"
+    ],
     "labels": [
       "status::in-progress",
       "bug"
