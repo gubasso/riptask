@@ -19,3 +19,11 @@ make check  # runs both lint and test
 ```
 
 - `.pre-commit-config.yaml` still defines commit-time and pre-push hooks for formatting, linting, and security checks.
+
+## Backend Implementation Priority
+
+When implementing backend (GitHub/GitLab) functionality, prefer in this order:
+1. octocrab/gitlab native Rust crate methods
+2. Direct REST API or GraphQL calls
+3. gh/glab CLI commands
+4. Other approaches

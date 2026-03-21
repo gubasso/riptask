@@ -5,10 +5,24 @@ use std::collections::HashMap;
 pub struct BackendStateEntry {
     pub title: String,
     pub state: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state_reason: Option<String>,
     #[serde(default)]
     pub labels: Vec<String>,
+    #[serde(default)]
+    pub assignees: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub assignee: Option<String>,
+    pub milestone: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub milestone_id: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub due_date: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weight: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidential: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discussion_locked: Option<bool>,
     pub updated_at: String,
 }
 

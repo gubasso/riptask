@@ -138,14 +138,21 @@ impl<'a> IssueService<'a> {
                 org: draft.org.clone(),
                 priority: Some(draft.priority.clone()),
                 labels: draft.labels.clone(),
-                assignee: draft.assignee.clone(),
+                assignees: draft.assignee.clone().into_iter().collect(),
                 milestone: None,
+                state_reason: None,
                 cycle: None,
                 order: Some(draft.order),
                 gitlab: None,
                 github: None,
                 local_updated_at: now_utc(),
                 due: None,
+                weight: None,
+                confidential: None,
+                discussion_locked: None,
+                issue_type: None,
+                locked: None,
+                lock_reason: None,
                 recurring: None,
                 remote_deleted: false,
                 conflict: None,
@@ -211,12 +218,7 @@ impl<'a> IssueService<'a> {
     }
 
     pub fn remove_issue(&self, id: &str) -> Result<(), RiptskError> {
-        let path = issue_store::find_issue(self.paths, id)?;
-        fs::remove_file(path)?;
-        let remote = self.paths.issues_dir().join(format!("{id}.REMOTE.md"));
-        if remote.exists() {
-            fs::remove_file(remote)?;
-        }
+        issue_store::delete_issue_files(self.paths, id)?;
         ViewBuilder::new(self.paths, self.config)
             .regenerate_all(None)
             .map_err(RiptskError::Other)
@@ -491,7 +493,11 @@ fn matches_issue(issue: &IssueDocument, args: &LsArgs) -> bool {
         return false;
     }
     if let Some(assignee) = &args.assignee
-        && issue.frontmatter.assignee.as_deref() != Some(assignee.as_str())
+        && !issue
+            .frontmatter
+            .assignees
+            .iter()
+            .any(|candidate| candidate == assignee)
     {
         return false;
     }

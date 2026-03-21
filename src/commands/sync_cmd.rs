@@ -34,7 +34,14 @@ async fn pull(paths: &AppPaths, args: &SyncArgs) -> Result<(), RiptskError> {
     let engine = SyncEngine::new(paths, &config);
     for backend in resolve_sync_backends(args, &config)? {
         let provider = build_provider_for_backend(backend)?;
-        let _ = engine.pull(provider.as_ref(), backend, args.force).await?;
+        let summary = engine.pull(provider.as_ref(), backend, args.force).await?;
+        println!(
+            "pull: {} created, {} updated, {} deleted, {} conflicts",
+            summary.created.len(),
+            summary.updated.len(),
+            summary.deleted.len(),
+            summary.conflicts.len()
+        );
     }
     Ok(())
 }
@@ -44,15 +51,23 @@ async fn push(paths: &AppPaths, args: &SyncArgs) -> Result<(), RiptskError> {
     let engine = SyncEngine::new(paths, &config);
     for backend in resolve_sync_backends(args, &config)? {
         let provider = build_provider_for_backend(backend)?;
-        let _ = engine.push(provider.as_ref(), backend).await?;
+        let summary = engine.push(provider.as_ref(), backend).await?;
+        println!(
+            "push: {} created, {} updated, {} deleted, {} skipped",
+            summary.created.len(),
+            summary.updated.len(),
+            summary.deleted.len(),
+            summary.skipped.len()
+        );
     }
     Ok(())
 }
 
 fn status(paths: &AppPaths, args: &SyncArgs) -> Result<(), RiptskError> {
     let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
-    let backend_names = resolve_sync_backends(args, &config)?
-        .into_iter()
+    let backends = resolve_sync_backends(args, &config)?;
+    let backend_names = backends
+        .iter()
         .map(|backend| backend.name.as_str())
         .collect::<HashSet<_>>();
     let summary = SyncEngine::new(paths, &config).status()?;
@@ -61,9 +76,19 @@ fn status(paths: &AppPaths, args: &SyncArgs) -> Result<(), RiptskError> {
             println!("CONFLICT {id}");
         }
     }
+    for id in summary.creates {
+        if issue_matches_backend_scope(paths, &id, &backend_names)? {
+            println!("CREATE {id}");
+        }
+    }
     for id in summary.pushes {
         if issue_matches_backend_scope(paths, &id, &backend_names)? {
             println!("PUSH {id}");
+        }
+    }
+    for key in summary.deletes {
+        if deleted_key_matches_backend_scope(&key, &backends) {
+            println!("DELETE {key}");
         }
     }
     Ok(())
@@ -144,6 +169,29 @@ fn hosted_backends(config: &Config) -> Vec<&BackendConfig> {
         .iter()
         .filter(|backend| matches!(backend.backend, Backend::Github | Backend::Gitlab))
         .collect()
+}
+
+fn deleted_key_matches_backend_scope(key: &str, backends: &[&BackendConfig]) -> bool {
+    let Some((provider, repo, _issue_id)) = parse_backend_state_key(key) else {
+        return false;
+    };
+    backends
+        .iter()
+        .any(|backend| provider_name(backend) == provider && backend.repo.as_deref() == Some(repo))
+}
+
+fn parse_backend_state_key(key: &str) -> Option<(&str, &str, u64)> {
+    let (provider, rest) = key.split_once(':')?;
+    let (repo, issue_id) = rest.rsplit_once(':')?;
+    Some((provider, repo, issue_id.parse().ok()?))
+}
+
+fn provider_name(backend: &BackendConfig) -> &'static str {
+    match backend.backend {
+        Backend::Github => "github",
+        Backend::Gitlab => "gitlab",
+        Backend::Local => "local",
+    }
 }
 
 pub fn resolve(paths: &AppPaths, args: ResolveArgs) -> Result<(), RiptskError> {

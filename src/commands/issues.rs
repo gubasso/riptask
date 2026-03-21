@@ -256,6 +256,13 @@ pub fn remove(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
     };
     let path = issue_store::find_issue(paths, &id)?;
     let issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
+    if let Some((provider, repo, issue_id)) = backend_delete_target(&issue) {
+        cache::mark_deleted(
+            paths,
+            &crate::domain::backend_state::backend_state_key(provider, &repo, issue_id),
+        )
+        .map_err(RiptskError::Other)?;
+    }
     IssueService::new(paths, &config).remove_issue(&id)?;
     maybe_auto_commit(
         &config,
@@ -281,8 +288,15 @@ async fn create_backend_issue(
     let upsert = BackendIssueUpsert {
         title: draft.title.clone(),
         body: draft.body.clone(),
+        state: None,
+        state_reason: None,
         labels: build_state_labels(&draft.state, &draft.labels),
-        assignee: draft.assignee.clone(),
+        assignees: draft.assignee.clone().into_iter().collect(),
+        milestone_id: None,
+        due_date: None,
+        weight: None,
+        confidential: None,
+        discussion_locked: None,
     };
     let record = provider.create_issue(repo, &upsert).await?;
     let scope = issue_ids::derive_scope_from_backend(backend);
@@ -297,14 +311,16 @@ async fn create_backend_issue(
             org: draft.org.clone(),
             priority: Some(draft.priority.clone()),
             labels: draft.labels.clone(),
-            assignee: draft.assignee.clone(),
-            milestone: None,
+            assignees: draft.assignee.clone().into_iter().collect(),
+            milestone: record.milestone.clone(),
+            state_reason: record.state_reason.clone(),
             cycle: None,
             order: Some(draft.order),
             gitlab: if backend.backend == Backend::Gitlab {
                 Some(GitlabIssueMeta {
                     repo: repo.to_owned(),
                     issue_id: Some(record.issue_id),
+                    milestone_id: record.milestone_id,
                     url: Some(record.url.clone()),
                     updated_at: record.updated_at.clone(),
                     last_pushed_state: Some(draft.state.clone()),
@@ -316,6 +332,8 @@ async fn create_backend_issue(
                 Some(GithubIssueMeta {
                     repo: repo.to_owned(),
                     issue_id: Some(record.issue_id),
+                    node_id: record.node_id.clone(),
+                    milestone_id: record.milestone_id,
                     url: Some(record.url.clone()),
                     updated_at: record.updated_at.clone(),
                     last_pushed_state: Some(draft.state.clone()),
@@ -324,7 +342,13 @@ async fn create_backend_issue(
                 None
             },
             local_updated_at: record.updated_at.clone(),
-            due: None,
+            due: record.due_date.clone(),
+            weight: record.weight,
+            confidential: record.confidential,
+            discussion_locked: record.discussion_locked,
+            issue_type: record.issue_type.clone(),
+            locked: record.locked,
+            lock_reason: record.lock_reason.clone(),
             recurring: None,
             remote_deleted: false,
             conflict: None,
@@ -358,4 +382,18 @@ fn provider_name(backend: &BackendConfig) -> &'static str {
         Backend::Gitlab => "gitlab",
         Backend::Local => "local",
     }
+}
+
+fn backend_delete_target(issue: &IssueDocument) -> Option<(&'static str, String, u64)> {
+    if let Some(meta) = issue.frontmatter.github.as_ref() {
+        return meta
+            .issue_id
+            .map(|issue_id| ("github", meta.repo.clone(), issue_id));
+    }
+    if let Some(meta) = issue.frontmatter.gitlab.as_ref() {
+        return meta
+            .issue_id
+            .map(|issue_id| ("gitlab", meta.repo.clone(), issue_id));
+    }
+    None
 }

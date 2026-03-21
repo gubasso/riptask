@@ -7,7 +7,8 @@ project: ice-shelf-tracker
 org: ~
 priority: low
 labels: []
-assignee: tester
+assignees:
+  - tester
 milestone: ~
 cycle: ~
 order: 1
