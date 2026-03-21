@@ -1,4 +1,4 @@
-use crate::adapters::picker::{FzfPicker, Picker, format_issue_picker_line};
+use crate::adapters::picker::{FzfPicker, IssueDisplayMode, Picker, format_issue_plain};
 use crate::cli::{LsArgs, ScopeArgs};
 use crate::config::Config;
 use crate::error::{RiptskError, StoreError};
@@ -72,18 +72,24 @@ pub fn require_id(
     let scope =
         crate::scope::resolve_scope(&scope_args.projects, scope_args.all_projects, cwd, config)?;
     let issues = IssueService::new(paths, config).list_matching(&LsArgs::default(), &scope)?;
+    let mode = if scope_args.all_projects {
+        IssueDisplayMode::AllProjects
+    } else {
+        IssueDisplayMode::PerProject
+    };
+    let issues_dir = paths.issues_dir();
     let picker = FzfPicker {
         fzf_opts: config.ui.fzf_opts.clone(),
     };
-    match picker.pick_issue(&issues, "issue> ") {
-        Ok(Some(line)) => Ok(Some(line.split('\t').next().unwrap_or_default().to_owned())),
+    match picker.pick_issue(&issues, "issue> ", Some(issues_dir.as_str()), &mode) {
+        Ok(Some(id)) => Ok(Some(id)),
         Ok(None) => Ok(None),
         Err(e) => {
             // fzf not installed — print available issues to stderr as fallback
             if !issues.is_empty() {
                 eprintln!("Available issues:");
                 for issue in &issues {
-                    eprintln!("  {}", format_issue_picker_line(issue));
+                    eprintln!("  {}", format_issue_plain(issue));
                 }
             }
             Err(e)
