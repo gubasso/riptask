@@ -92,7 +92,7 @@ mod tests {
             board: Some("personal".into()),
             project: Some("personal".into()),
             org: None,
-            state: Some(IssueState::Todo),
+            state: Some(IssueState::Backlog),
             priority: Some(Priority::Medium),
             assignee: None,
             labels: vec!["recurring".into()],

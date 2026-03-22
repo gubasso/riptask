@@ -117,7 +117,7 @@ impl<'a> TemplateService<'a> {
 
 pub fn seed_template(name: &str) -> String {
     format!(
-        "---\ntemplate_name: {name}\ndefault_labels: []\ndefault_state: todo\ndefault_priority: medium\ntitle_hint: \"\"\n---\n\n## Description\n\n[Describe the issue]\n\n## Tasks\n\n- [ ] ...\n"
+        "---\ntemplate_name: {name}\ndefault_labels: []\ndefault_state: backlog\ndefault_priority: medium\ntitle_hint: \"\"\n---\n\n## Description\n\n[Describe the issue]\n\n## Tasks\n\n- [ ] ...\n"
     )
 }
 
