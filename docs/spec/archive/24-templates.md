@@ -125,19 +125,19 @@ Where `<name>` is replaced with the user-provided template name.
 
 ### `tsk new` template selection
 
-Templates integrate with `tsk new` via a `--template` / `-t` flag:
+Templates integrate with `tsk new` via a `--template` / `-T` flag:
 
 ```bash
 tsk new --template bug
 # Use templates/bug.md as the starting point
 
-tsk new -t feature
+tsk new -T feature
 # Short form
 ```
 
 **Selection order:**
 
-1. `--template` / `-t` flag — explicit selection
+1. `--template` / `-T` flag — explicit selection
 2. Interactive mode (stdin is TTY, no `--template`): fzf picker over `$RIPTSK_REPO/templates/`
 3. Non-interactive fallback: `defaults.template` from `riptsk.yaml` (default: `task`)
 

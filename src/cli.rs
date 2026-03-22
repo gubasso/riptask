@@ -165,10 +165,10 @@ pub struct PrEditArgs {
     pub scope: ScopeArgs,
     pub id: Option<String>,
     /// Set PR title directly
-    #[arg(long)]
+    #[arg(short = 't', long)]
     pub title: Option<String>,
     /// Set PR description directly
-    #[arg(long)]
+    #[arg(short = 'd', long)]
     pub description: Option<String>,
     /// Accept AI-generated update without editor review
     #[arg(short = 'y', long)]
@@ -184,29 +184,29 @@ pub struct PrShowArgs {
     pub scope: ScopeArgs,
     pub id: Option<String>,
     /// Output in JSON format
-    #[arg(long)]
+    #[arg(short = 'j', long)]
     pub json: bool,
 }
 
 #[derive(Debug, Clone, Args, Default)]
 pub struct NewArgs {
     /// Issue title (or enter interactively)
-    #[arg(long)]
+    #[arg(short = 't', long)]
     pub title: Option<String>,
     /// Target project
-    #[arg(long)]
+    #[arg(short = 'p', long)]
     pub project: Option<String>,
     /// Board to assign
-    #[arg(long)]
+    #[arg(short = 'b', long)]
     pub board: Option<String>,
     /// Initial state
-    #[arg(long)]
+    #[arg(short = 's', long)]
     pub state: Option<String>,
     /// Priority level
-    #[arg(long)]
+    #[arg(short = 'P', long)]
     pub priority: Option<String>,
     /// Template to use
-    #[arg(long, short = 't')]
+    #[arg(short = 'T', long)]
     pub template: Option<String>,
     /// Generate issue content with AI
     #[arg(long)]
@@ -228,22 +228,22 @@ pub struct LsArgs {
     #[command(flatten)]
     pub scope: ScopeArgs,
     /// Filter by state
-    #[arg(long)]
+    #[arg(short = 's', long)]
     pub state: Option<String>,
     /// Filter by priority
-    #[arg(long)]
+    #[arg(short = 'P', long)]
     pub priority: Option<String>,
     /// Filter by board
-    #[arg(long)]
+    #[arg(short = 'b', long)]
     pub board: Option<String>,
     /// Filter by cycle
-    #[arg(long)]
+    #[arg(short = 'c', long)]
     pub cycle: Option<String>,
     /// Filter by assignee
     #[arg(long)]
     pub assignee: Option<String>,
     /// Include closed/done issues
-    #[arg(long = "all")]
+    #[arg(short = 'A', long = "all")]
     pub include_done: bool,
     /// Show only issues with sync conflicts
     #[arg(long)]
@@ -255,13 +255,13 @@ pub struct BoardArgs {
     #[command(flatten)]
     pub scope: ScopeArgs,
     /// Show all boards including inactive
-    #[arg(long)]
+    #[arg(short = 'A', long)]
     pub all: bool,
     /// Target a specific board
-    #[arg(long)]
+    #[arg(short = 'b', long)]
     pub board: Option<String>,
     /// Open the board in the default viewer
-    #[arg(long)]
+    #[arg(short = 'o', long)]
     pub open: bool,
     /// Print the board file path
     #[arg(long)]
@@ -273,7 +273,7 @@ pub struct ReorderArgs {
     #[command(flatten)]
     pub scope: ScopeArgs,
     /// Board to reorder within
-    #[arg(long)]
+    #[arg(short = 'b', long)]
     pub board: Option<String>,
     /// State column to reorder
     pub state: String,
@@ -288,19 +288,19 @@ pub struct SyncArgs {
     #[command(flatten)]
     pub scope: ScopeArgs,
     /// Sync all projects
-    #[arg(long)]
+    #[arg(short = 'A', long)]
     pub all: bool,
     /// Target a specific backend by name
-    #[arg(long = "backend")]
+    #[arg(short = 'b', long = "backend")]
     pub backend: Option<String>,
     /// Overwrite remote state on conflicts
-    #[arg(long)]
+    #[arg(short = 'f', long)]
     pub force: bool,
     /// Show triage prompt for new remote issues
-    #[arg(long)]
+    #[arg(short = 't', long)]
     pub triage: bool,
     /// Automatically triage new remote issues
-    #[arg(long = "auto-triage")]
+    #[arg(short = 'T', long = "auto-triage")]
     pub auto_triage: bool,
 }
 
@@ -319,7 +319,7 @@ pub struct PushArgs {
     #[command(flatten)]
     pub scope: ScopeArgs,
     /// Push all issues
-    #[arg(long)]
+    #[arg(short = 'A', long)]
     pub all: bool,
     /// Issue IDs to push
     pub ids: Vec<String>,
@@ -330,10 +330,10 @@ pub struct ResolveArgs {
     /// Issue ID with the conflict
     pub id: String,
     /// Keep the remote version
-    #[arg(long = "take-remote")]
+    #[arg(short = 'r', long = "take-remote")]
     pub take_remote: bool,
     /// Keep the local version
-    #[arg(long = "take-local")]
+    #[arg(short = 'l', long = "take-local")]
     pub take_local: bool,
 }
 
@@ -493,13 +493,13 @@ pub struct RegisterArgs {
 #[derive(Debug, Clone, Args, Default)]
 pub struct SummarizeArgs {
     /// Limit summary to a specific cycle
-    #[arg(long)]
+    #[arg(short = 'c', long)]
     pub cycle: Option<String>,
     /// Limit summary to a specific board
-    #[arg(long)]
+    #[arg(short = 'b', long)]
     pub board: Option<String>,
     /// Limit summary to a specific project
-    #[arg(long)]
+    #[arg(short = 'p', long)]
     pub project: Option<String>,
 }
 
@@ -589,9 +589,13 @@ mod tests {
     }
 
     #[test]
-    fn uppercase_all_projects_no_longer_parses() {
-        let result = Cli::try_parse_from(["tsk", "ls", "-A"]);
-        assert!(result.is_err());
+    fn ls_short_all_parses() {
+        let cli = Cli::try_parse_from(["tsk", "ls", "-A"]).expect("parse");
+        let Commands::Ls(args) = cli.command.expect("command") else {
+            panic!("expected ls command");
+        };
+        assert!(args.include_done);
+        assert!(!args.scope.all_projects);
     }
 
     #[test]
@@ -680,6 +684,42 @@ mod tests {
     }
 
     #[test]
+    fn new_short_title_parses() {
+        let cli = Cli::try_parse_from(["tsk", "new", "-t", "hello"]).expect("parse");
+        let Commands::New(args) = cli.command.expect("command") else {
+            panic!("expected new command");
+        };
+        assert_eq!(args.title.as_deref(), Some("hello"));
+    }
+
+    #[test]
+    fn new_short_template_uppercase_parses() {
+        let cli = Cli::try_parse_from(["tsk", "new", "-T", "bug"]).expect("parse");
+        let Commands::New(args) = cli.command.expect("command") else {
+            panic!("expected new command");
+        };
+        assert_eq!(args.template.as_deref(), Some("bug"));
+    }
+
+    #[test]
+    fn ls_short_state_parses() {
+        let cli = Cli::try_parse_from(["tsk", "ls", "-s", "todo"]).expect("parse");
+        let Commands::Ls(args) = cli.command.expect("command") else {
+            panic!("expected ls command");
+        };
+        assert_eq!(args.state.as_deref(), Some("todo"));
+    }
+
+    #[test]
+    fn ls_short_board_parses() {
+        let cli = Cli::try_parse_from(["tsk", "ls", "-b", "main"]).expect("parse");
+        let Commands::Ls(args) = cli.command.expect("command") else {
+            panic!("expected ls command");
+        };
+        assert_eq!(args.board.as_deref(), Some("main"));
+    }
+
+    #[test]
     fn pr_edit_title_and_description_parse() {
         let cli = Cli::try_parse_from([
             "tsk",
@@ -701,6 +741,19 @@ mod tests {
         assert_eq!(edit.id.as_deref(), Some("42"));
         assert_eq!(edit.title.as_deref(), Some("x"));
         assert_eq!(edit.description.as_deref(), Some("y"));
+    }
+
+    #[test]
+    fn pr_edit_short_title_parses() {
+        let cli =
+            Cli::try_parse_from(["tsk", "pr", "edit", "42", "-t", "new title"]).expect("parse");
+        let Commands::Pr(args) = cli.command.expect("command") else {
+            panic!("expected pr command");
+        };
+        let Some(PrSubcommand::Edit(edit)) = args.subcommand else {
+            panic!("expected pr edit subcommand");
+        };
+        assert_eq!(edit.title.as_deref(), Some("new title"));
     }
 
     #[test]
@@ -766,5 +819,41 @@ mod tests {
         };
         assert_eq!(show.id.as_deref(), Some("42"));
         assert!(show.json);
+    }
+
+    #[test]
+    fn pr_show_short_json_parses() {
+        let cli = Cli::try_parse_from(["tsk", "pr", "show", "42", "-j"]).expect("parse");
+        let Commands::Pr(args) = cli.command.expect("command") else {
+            panic!("expected pr command");
+        };
+        let Some(PrSubcommand::Show(show)) = args.subcommand else {
+            panic!("expected pr show subcommand");
+        };
+        assert!(show.json);
+    }
+
+    #[test]
+    fn sync_short_force_parses() {
+        let cli = Cli::try_parse_from(["tsk", "sync", "-f"]).expect("parse");
+        let Commands::Sync(args) = cli.command.expect("command") else {
+            panic!("expected sync command");
+        };
+        assert!(args.force);
+    }
+
+    #[test]
+    fn resolve_short_flags_parse() {
+        let cli = Cli::try_parse_from(["tsk", "resolve", "42", "-r"]).expect("parse");
+        let Commands::Resolve(args) = cli.command.expect("command") else {
+            panic!("expected resolve command");
+        };
+        assert!(args.take_remote);
+
+        let cli = Cli::try_parse_from(["tsk", "resolve", "42", "-l"]).expect("parse");
+        let Commands::Resolve(args) = cli.command.expect("command") else {
+            panic!("expected resolve command");
+        };
+        assert!(args.take_local);
     }
 }
