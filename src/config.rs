@@ -36,7 +36,7 @@ pub fn default_config() -> Config {
         auto_commit: false,
         defaults: DefaultsConfig {
             board: "personal".into(),
-            state: IssueState::Todo,
+            state: IssueState::Backlog,
             priority: Priority::Medium,
             assignee: None,
             template: Some("task".into()),

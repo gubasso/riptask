@@ -356,11 +356,11 @@ fn state_from_backend(record: &BackendIssueRecord) -> IssueState {
                 "in-progress" => IssueState::InProgress,
                 "review" => IssueState::Review,
                 "done" => IssueState::Done,
-                _ => IssueState::Todo,
+                _ => IssueState::Backlog,
             };
         }
     }
-    IssueState::Todo
+    IssueState::Backlog
 }
 
 fn labels_without_status(labels: &[String]) -> Vec<String> {
