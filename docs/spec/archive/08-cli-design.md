@@ -44,7 +44,7 @@ tsk new --title "Fix wormhole stabilizer" \
         --priority high \
         --template bug
 # Non-interactive. All flags optional — missing ones are prompted or defaulted.
-# --template / -t selects a template from $RIPTSK_REPO/templates/ (see [24 — Templates](24-templates.md))
+# --template / -T selects a template from $RIPTSK_REPO/templates/ (see [24 — Templates](24-templates.md))
 
 tsk new --title "Fix wormhole stabilizer" --ai
 # Same as above but pre-fills body via LLM before opening editor
