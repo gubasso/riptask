@@ -20,7 +20,7 @@ When any ID-taking command is invoked without `<ID>` and stdin is a TTY, `tsk` o
 
 Two main capabilities:
 
-- **`fzf_pick_issue`** — selects from `$TSK_REPO/issues/*.md`
+- **`fzf_pick_issue`** — selects from `$RIPTSK_REPO/issues/*.md`
 - **`fzf_pick_enum`** — selects from a fixed list (states, etc.)
 
 Both functions return the selected value on stdout or exit 1 if the user cancels (Esc / Ctrl-C).
@@ -90,11 +90,11 @@ All pickers respect `$PWD` project detection — if the working directory is ins
 - **ID only, no state:** pick target state from the board's defined `states[]` via `fzf_pick_enum`
 - **Both provided:** no picker needed
 
-The state picker uses the board's `states[]` array from `tsk.yaml`. The current state is excluded from the list.
+The state picker uses the board's `states[]` array from `riptsk.yaml`. The current state is excluded from the list.
 
 ### `tsk recur skip` — recurring definition picker
 
-When `tsk recur skip` is invoked without `<recur-id>` and stdin is a TTY, `fzf_pick_enum` is used to select from the `recurring[]` definitions in `tsk.yaml`. Display format:
+When `tsk recur skip` is invoked without `<recur-id>` and stdin is a TTY, `fzf_pick_enum` is used to select from the `recurring[]` definitions in `riptsk.yaml`. Display format:
 
 ```
 ID  FREQUENCY  TITLE_PATTERN
@@ -116,7 +116,7 @@ fzf remains "Recommended", not "Required".
 
 ### User-configurable fzf options
 
-Users can pass extra fzf flags globally via `ui.fzf_opts` in `tsk.yaml` (see [16 — Configuration](16-configuration.md)). These are appended to every fzf invocation, allowing customization of height, border, layout, etc.
+Users can pass extra fzf flags globally via `ui.fzf_opts` in `riptsk.yaml` (see [16 — Configuration](16-configuration.md)). These are appended to every fzf invocation, allowing customization of height, border, layout, etc.
 
 ### Commands affected
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tsk-hook-version: 1
+# riptsk-hook-version: 1
 set -euo pipefail
 IFS=$'\n\t'
 
@@ -25,7 +25,7 @@ validate_frontmatter_delimiters() {
 validate_issue_file() {
     local file="$1"
     local filename state priority remote_deleted title board project id updated
-    if [[ "$file" == *.REMOTE.md ]] && [[ "${TSK_HOOK_ALLOW_REMOTE:-0}" != "1" ]]; then
+    if [[ "$file" == *.REMOTE.md ]] && [[ "${RIPTSK_HOOK_ALLOW_REMOTE:-0}" != "1" ]]; then
         report_fail "$file" ".REMOTE.md should not be committed (use: tsk resolve <ID>)"
         return
     fi
@@ -63,8 +63,8 @@ validate_config_file() {
     yq '.' "$file" >/dev/null 2>&1 || { report_fail "$file" "invalid YAML"; return; }
     # Check name uniqueness
     local dup_name
-    dup_name="$(yq -o=json '.remotes // []' "$file" | jq -r '[.[].name] | group_by(.) | map(select(length > 1)) | .[0][0] // empty')"
-    [[ -z "$dup_name" ]] || report_fail "$file" "duplicate remote name \"$dup_name\""
+    dup_name="$(yq -o=json '.backends // []' "$file" | jq -r '[.[].name] | group_by(.) | map(select(length > 1)) | .[0][0] // empty')"
+    [[ -z "$dup_name" ]] || report_fail "$file" "duplicate backend name \"$dup_name\""
     # Check board name uniqueness
     local dup_board
     dup_board="$(yq -o=json '.boards // []' "$file" | jq -r '[.[].name] | group_by(.) | map(select(length > 1)) | .[0][0] // empty')"
@@ -89,7 +89,7 @@ validate_template_file() {
 while IFS= read -r file; do
     case "$file" in
         issues/*.md) validate_issue_file "$file" ;;
-        tsk.yaml) validate_config_file "$file" ;;
+        riptsk.yaml) validate_config_file "$file" ;;
         templates/*.md) validate_template_file "$file" ;;
     esac
 done < <(git diff --cached --name-only --diff-filter=ACM)

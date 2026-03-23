@@ -1,34 +1,33 @@
-use crate::config::{RemoteConfig, RemoteType};
+use crate::models::{Backend, BackendConfig};
 use crate::paths::AppPaths;
 use crate::storage::{frontmatter, issue_store};
 use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 
-pub fn derive_scope(remote_type: &RemoteType, repo: Option<&str>, name: &str) -> String {
-    let server = match remote_type {
-        RemoteType::Github => "GH",
-        RemoteType::Gitlab => "GL",
-        RemoteType::Local => "LO",
+pub fn derive_scope(backend: &Backend, repo: Option<&str>, name: &str) -> String {
+    let server = match backend {
+        Backend::Github => "GH",
+        Backend::Gitlab => "GL",
+        Backend::Local => "LO",
     };
 
-    let (parent, project) = match remote_type {
-        RemoteType::Github | RemoteType::Gitlab => {
+    let (parent, project) = match backend {
+        Backend::Github | Backend::Gitlab => {
             let repo_str = repo.unwrap_or(name);
             let owner = repo_str.split('/').next().unwrap_or(name);
             let project_name = repo_str.rsplit('/').next().unwrap_or(name);
             (scope_token(owner), scope_token(project_name))
         }
-        RemoteType::Local => {
-            let token = scope_token(name);
-            (token.clone(), token)
+        Backend::Local => {
+            return format!("{server}-{}", scope_token(name));
         }
     };
 
     format!("{server}-{parent}-{project}")
 }
 
-pub fn derive_scope_from_remote(remote: &RemoteConfig) -> String {
-    derive_scope(&remote.remote_type, remote.repo.as_deref(), &remote.name)
+pub fn derive_scope_from_backend(backend: &BackendConfig) -> String {
+    derive_scope(&backend.backend, backend.repo.as_deref(), &backend.name)
 }
 
 pub fn format_id(scope: &str, number: u64) -> String {
@@ -54,14 +53,14 @@ pub fn next_local_sequence(paths: &AppPaths, scope: &str) -> Result<u64> {
     Ok(max + 1)
 }
 
-pub fn validate_no_scope_collisions(remotes: &[RemoteConfig]) -> Result<()> {
+pub fn validate_no_scope_collisions(backends: &[BackendConfig]) -> Result<()> {
     let mut scopes = HashMap::new();
-    for remote in remotes {
-        let scope = derive_scope_from_remote(remote);
-        if let Some(existing) = scopes.insert(scope.clone(), remote.name.clone()) {
+    for backend in backends {
+        let scope = derive_scope_from_backend(backend);
+        if let Some(existing) = scopes.insert(scope.clone(), backend.name.clone()) {
             return Err(anyhow!(
-                "duplicate derived issue scope in tsk.yaml: {scope} ({existing}, {})",
-                remote.name
+                "duplicate derived issue scope in riptsk.yaml: {scope} ({existing}, {})",
+                backend.name
             ));
         }
     }

@@ -9,7 +9,8 @@ priority: high
 labels:
   - bug
   - temporal-drift
-assignee: tester
+assignees:
+  - tester
 milestone: ~
 cycle: 2026-Q1
 order: 1

@@ -1,17 +1,18 @@
 use crate::adapters::git::CliGit;
 use crate::cli::{NewArgs, RecurArgs, RecurNewArgs, RecurSubcommand};
-use crate::config::{
-    RecurrenceFrequency, RecurringDef, load_config, parse_priority, parse_state, save_config,
-};
-use crate::error::TskError;
+use crate::config::{load_config, parse_priority, parse_state, save_config};
+use crate::error::RiptskError;
+use crate::models::{RecurrenceFrequency, RecurringDef};
 use crate::paths::AppPaths;
 use crate::services::auto_commit::maybe_auto_commit;
 use crate::services::issue_service::IssueService;
 use crate::services::recurrence::{expand_tokens, instance_exists, is_due, update_last_run};
 use crate::storage::issue_store;
+use comfy_table::{Attribute, Cell, Color, ContentArrangement, Table, presets::NOTHING};
 use jiff::civil::Date;
+use std::io::IsTerminal;
 
-pub fn run(paths: &AppPaths, args: RecurArgs) -> Result<(), TskError> {
+pub fn run(paths: &AppPaths, args: RecurArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
     match args.subcommand.unwrap_or(RecurSubcommand::List) {
         RecurSubcommand::List => list(paths),
@@ -21,24 +22,56 @@ pub fn run(paths: &AppPaths, args: RecurArgs) -> Result<(), TskError> {
     }
 }
 
-fn list(paths: &AppPaths) -> Result<(), TskError> {
-    let config = load_config(paths.config_path().as_std_path()).map_err(TskError::Other)?;
-    for definition in config.recurring {
-        println!(
-            "{}\t{:?}\t{}",
-            definition.id, definition.frequency, definition.title_pattern
-        );
+fn list(paths: &AppPaths) -> Result<(), RiptskError> {
+    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    if std::io::stdout().is_terminal() {
+        let mut table = Table::new();
+        table
+            .load_preset(NOTHING)
+            .set_content_arrangement(ContentArrangement::Dynamic);
+        table.set_header(vec![
+            Cell::new("ID")
+                .add_attribute(Attribute::Bold)
+                .add_attribute(Attribute::Dim),
+            Cell::new("Frequency")
+                .add_attribute(Attribute::Bold)
+                .add_attribute(Attribute::Dim),
+            Cell::new("Title Pattern")
+                .add_attribute(Attribute::Bold)
+                .add_attribute(Attribute::Dim),
+            Cell::new("Last Run")
+                .add_attribute(Attribute::Bold)
+                .add_attribute(Attribute::Dim),
+        ]);
+        for def in &config.recurring {
+            table.add_row(vec![
+                Cell::new(&def.id).fg(Color::Cyan),
+                Cell::new(def.frequency.as_str()),
+                Cell::new(&def.title_pattern),
+                Cell::new(def.last_run.as_deref().unwrap_or("-")).fg(Color::Grey),
+            ]);
+        }
+        println!("{table}");
+    } else {
+        for def in &config.recurring {
+            println!(
+                "{}\t{}\t{}",
+                def.id,
+                def.frequency.as_str(),
+                def.title_pattern
+            );
+        }
     }
     Ok(())
 }
 
-fn run_due(paths: &AppPaths, date: Option<String>) -> Result<(), TskError> {
-    let mut config = load_config(paths.config_path().as_std_path()).map_err(TskError::Other)?;
+fn run_due(paths: &AppPaths, date: Option<String>) -> Result<(), RiptskError> {
+    let mut config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
     let today = date
         .as_deref()
         .map(str::parse::<Date>)
         .transpose()
-        .map_err(|error| TskError::Other(anyhow::Error::new(error)))?
+        .map_err(|error| RiptskError::Other(anyhow::Error::new(error)))?
         .unwrap_or_else(|| {
             jiff::Timestamp::now()
                 .to_zoned(jiff::tz::TimeZone::UTC)
@@ -54,7 +87,7 @@ fn run_due(paths: &AppPaths, date: Option<String>) -> Result<(), TskError> {
     let mut changed_paths = vec![paths.config_path()];
     let mut last_issue = None;
     for definition in config.recurring.clone() {
-        if !is_due(&definition, today).map_err(TskError::Other)? {
+        if !is_due(&definition, today).map_err(RiptskError::Other)? {
             continue;
         }
         let expanded_title = expand_tokens(&definition.title_pattern, today);
@@ -92,7 +125,7 @@ fn run_due(paths: &AppPaths, date: Option<String>) -> Result<(), TskError> {
             issue.frontmatter.labels = definition.labels.clone();
         }
         if let Some(ref assignee) = definition.assignee {
-            issue.frontmatter.assignee = Some(assignee.clone());
+            issue.frontmatter.assignees = vec![assignee.clone()];
         }
         if let Some(ref org) = definition.org {
             issue.frontmatter.org = Some(org.clone());
@@ -111,7 +144,7 @@ fn run_due(paths: &AppPaths, date: Option<String>) -> Result<(), TskError> {
 
         update_last_run(&mut config, &definition.id, today);
     }
-    save_config(paths.config_path().as_std_path(), &config).map_err(TskError::Other)?;
+    save_config(paths.config_path().as_std_path(), &config).map_err(RiptskError::Other)?;
     if let Some((id, title)) = last_issue {
         let files = changed_paths
             .iter()
@@ -120,32 +153,32 @@ fn run_due(paths: &AppPaths, date: Option<String>) -> Result<(), TskError> {
         maybe_auto_commit(
             &config,
             &CliGit,
-            paths.tsk_repo.as_std_path(),
-            &format!("tsk: recur run {} - {}", id, title),
+            paths.riptsk_repo.as_std_path(),
+            &format!("riptsk: recur run {} - {}", id, title),
             &files,
         )?;
     }
     Ok(())
 }
 
-fn skip(paths: &AppPaths, recur_id: Option<String>) -> Result<(), TskError> {
-    let recur_id = recur_id.ok_or_else(|| TskError::General("missing recurrence id".into()))?;
-    let mut config = load_config(paths.config_path().as_std_path()).map_err(TskError::Other)?;
+fn skip(paths: &AppPaths, recur_id: Option<String>) -> Result<(), RiptskError> {
+    let recur_id = recur_id.ok_or_else(|| RiptskError::General("missing recurrence id".into()))?;
+    let mut config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
     let today = jiff::Timestamp::now()
         .to_zoned(jiff::tz::TimeZone::UTC)
         .date();
     update_last_run(&mut config, &recur_id, today);
-    save_config(paths.config_path().as_std_path(), &config).map_err(TskError::Other)
+    save_config(paths.config_path().as_std_path(), &config).map_err(RiptskError::Other)
 }
 
-fn new_recur(paths: &AppPaths, args: RecurNewArgs) -> Result<(), TskError> {
-    let mut config = load_config(paths.config_path().as_std_path()).map_err(TskError::Other)?;
+fn new_recur(paths: &AppPaths, args: RecurNewArgs) -> Result<(), RiptskError> {
+    let mut config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
     if config
         .recurring
         .iter()
         .any(|definition| definition.id == args.id)
     {
-        return Err(TskError::Config(format!(
+        return Err(RiptskError::Config(format!(
             "duplicate recurrence id: {}",
             args.id
         )));
@@ -157,7 +190,7 @@ fn new_recur(paths: &AppPaths, args: RecurNewArgs) -> Result<(), TskError> {
         "monthly" => RecurrenceFrequency::Monthly,
         "yearly" => RecurrenceFrequency::Yearly,
         _ => {
-            return Err(TskError::Config(format!(
+            return Err(RiptskError::Config(format!(
                 "invalid frequency: {}",
                 args.frequency
             )));
@@ -169,25 +202,25 @@ fn new_recur(paths: &AppPaths, args: RecurNewArgs) -> Result<(), TskError> {
         .as_deref()
         .map(parse_state)
         .transpose()
-        .map_err(TskError::Other)?;
+        .map_err(RiptskError::Other)?;
     let priority = args
         .priority
         .as_deref()
         .map(parse_priority)
         .transpose()
-        .map_err(TskError::Other)?;
+        .map_err(RiptskError::Other)?;
 
     if let Some(start) = args.start.as_deref() {
         start
             .parse::<Date>()
-            .map_err(|error| TskError::Config(error.to_string()))?;
+            .map_err(|error| RiptskError::Config(error.to_string()))?;
     }
     if let Some(end) = args.end.as_deref() {
         end.parse::<Date>()
-            .map_err(|error| TskError::Config(error.to_string()))?;
+            .map_err(|error| RiptskError::Config(error.to_string()))?;
     }
     if matches!(frequency, RecurrenceFrequency::Weekly) && args.day_of_week.is_none() {
-        return Err(TskError::Config(
+        return Err(RiptskError::Config(
             "day_of_week is required for weekly recurrences".into(),
         ));
     }
@@ -202,20 +235,20 @@ fn new_recur(paths: &AppPaths, args: RecurNewArgs) -> Result<(), TskError> {
             "sunday",
         ];
         if !valid.contains(&day.to_lowercase().as_str()) {
-            return Err(TskError::Config(format!(
+            return Err(RiptskError::Config(format!(
                 "invalid day_of_week: {day} (expected: monday-sunday)"
             )));
         }
     }
     if matches!(frequency, RecurrenceFrequency::Monthly) && args.day_of_month.is_none() {
-        return Err(TskError::Config(
+        return Err(RiptskError::Config(
             "day_of_month is required for monthly recurrences".into(),
         ));
     }
     if let Some(day) = args.day_of_month
         && !(1..=31).contains(&day)
     {
-        return Err(TskError::Config(format!(
+        return Err(RiptskError::Config(format!(
             "day_of_month must be 1-31, got {day}"
         )));
     }
@@ -244,7 +277,7 @@ fn new_recur(paths: &AppPaths, args: RecurNewArgs) -> Result<(), TskError> {
         last_run: None,
     };
     config.recurring.push(definition);
-    save_config(paths.config_path().as_std_path(), &config).map_err(TskError::Other)?;
-    println!("added recurrence {}", args.id);
+    save_config(paths.config_path().as_std_path(), &config).map_err(RiptskError::Other)?;
+    crate::ui::success(&format!("added recurrence {}", args.id));
     Ok(())
 }

@@ -12,7 +12,8 @@ org: chrono
 priority: high
 labels:
 - bug
-assignee: tester
+assignees:
+- tester
 cycle: 2026-Q1
 order: 1
 gitlab:

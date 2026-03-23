@@ -70,14 +70,14 @@ fn init_creates_repository_layout() {
     let cache = temp.path().join("cache");
     Command::cargo_bin("tsk")
         .expect("binary")
-        .env("TSK_REPO", &repo)
+        .env("RIPTSK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .arg("init")
         .assert()
         .success();
     assert!(repo.join("issues").exists());
     assert!(repo.join("templates").exists());
-    assert!(repo.join("tsk.yaml").exists());
+    assert!(repo.join("riptsk.yaml").exists());
 }
 
 #[test]
@@ -90,13 +90,13 @@ fn summarize_warns_and_exits_cleanly_when_backend_is_unavailable() {
 
     Command::cargo_bin("tsk")
         .expect("binary")
-        .env("TSK_REPO", &repo)
+        .env("RIPTSK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .arg("init")
         .assert()
         .success();
 
-    let config_path = repo.join("tsk.yaml");
+    let config_path = repo.join("riptsk.yaml");
     let config = fs::read_to_string(&config_path).expect("read config");
     fs::write(
         &config_path,
@@ -106,7 +106,7 @@ fn summarize_warns_and_exits_cleanly_when_backend_is_unavailable() {
 
     Command::cargo_bin("tsk")
         .expect("binary")
-        .env("TSK_REPO", &repo)
+        .env("RIPTSK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("PATH", &empty_path)
         .arg("summarize")

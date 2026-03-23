@@ -162,7 +162,7 @@ Remote version of the issue body, preserved verbatim for manual conflict resolut
 
 `.REMOTE.md` files are:
 - Excluded from `tsk ls` output and all views
-- Committed to `$TSK_REPO` so conflict state survives host switches
+- Committed to `$RIPTSK_REPO` so conflict state survives host switches
 - Deleted on conflict resolution via `tsk resolve`
 
 ### Remote metadata subobject

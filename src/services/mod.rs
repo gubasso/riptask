@@ -1,9 +1,11 @@
 pub mod auto_commit;
+pub mod backend_mapping;
+pub mod editor;
+pub mod id_resolution;
 pub mod issue_ids;
 pub mod issue_service;
 pub mod project_detection;
 pub mod recurrence;
-pub mod remote_mapping;
 pub mod sync_engine;
 pub mod templates;
 pub mod view_builder;

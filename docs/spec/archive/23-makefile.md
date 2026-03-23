@@ -4,7 +4,7 @@ Status: archived
 
 > Source of truth has moved to code and tests. This document is retained as historical record.
 
-The Makefile is a thin wrapper around Cargo commands for building, testing, linting, and installing the Rust implementation of `tsk`.
+The Makefile is a thin wrapper around Cargo commands for building, testing, linting, and installing the Rust implementation of `riptsk`.
 
 ---
 
@@ -15,8 +15,8 @@ The Makefile is a thin wrapper around Cargo commands for building, testing, lint
 | `build` | Build the release binary |
 | `test` | Run the Rust test suite with `cargo nextest` |
 | `lint` | Run `cargo fmt --check` and `cargo clippy --all-targets --all-features -- -D warnings` |
-| `install` | Install `tsk` from the current source tree |
-| `uninstall` | Remove the installed `tsk` cargo binary |
+| `install` | Install `riptsk` from the current source tree |
+| `uninstall` | Remove the installed `riptsk` cargo package |
 | `check` | Run lint and test |
 | `help` | Print available targets |
 
@@ -55,7 +55,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 ### `install` target
 
-Installs `tsk` from the current path:
+Installs `riptsk` from the current path:
 
 ```bash
 cargo install --path .
@@ -86,8 +86,8 @@ help:
 	@echo "  build       Build the release binary"
 	@echo "  test        Run cargo nextest"
 	@echo "  lint        Run cargo fmt and cargo clippy"
-	@echo "  install     Install tsk from the current path"
-	@echo "  uninstall   Uninstall tsk"
+	@echo "  install     Install riptsk from the current path"
+	@echo "  uninstall   Uninstall riptsk"
 	@echo "  check       Run lint and test"
 
 build:
@@ -104,7 +104,7 @@ install:
 	cargo install --path .
 
 uninstall:
-	cargo uninstall tsk
+	cargo uninstall riptsk
 
 check:
 	$(MAKE) lint
