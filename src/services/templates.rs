@@ -1,6 +1,6 @@
 use crate::config::{Config, parse_priority, parse_state};
 use crate::domain::issue::{IssueState, Priority};
-use crate::error::TskError;
+use crate::error::RiptskError;
 use crate::paths::AppPaths;
 use crate::storage::frontmatter;
 use anyhow::{Context, Result};
@@ -73,7 +73,7 @@ impl<'a> TemplateService<'a> {
         })
     }
 
-    pub fn list_names(&self) -> Result<Vec<String>, TskError> {
+    pub fn list_names(&self) -> Result<Vec<String>, RiptskError> {
         let mut names = Vec::new();
         for entry in fs::read_dir(self.paths.templates_dir())? {
             let path = entry?.path();
@@ -87,29 +87,29 @@ impl<'a> TemplateService<'a> {
         Ok(names)
     }
 
-    pub fn validate_file(&self, path: &Path) -> Result<(), TskError> {
+    pub fn validate_file(&self, path: &Path) -> Result<(), RiptskError> {
         let content = fs::read_to_string(path)
             .with_context(|| format!("failed to read template {}", path.display()))
-            .map_err(TskError::Other)?;
+            .map_err(RiptskError::Other)?;
         let (yaml, _, _) = frontmatter::split(&content, &path.display().to_string())?;
-        let value: serde_json::Value =
-            serde_yaml_ng::from_str(&yaml).map_err(|error| TskError::Config(error.to_string()))?;
+        let value: serde_json::Value = serde_yaml_ng::from_str(&yaml)
+            .map_err(|error| RiptskError::Config(error.to_string()))?;
 
         let Some(template_name) = value.get("template_name").and_then(|value| value.as_str())
         else {
-            return Err(TskError::Config("template_name is required".into()));
+            return Err(RiptskError::Config("template_name is required".into()));
         };
         if template_name.is_empty() {
-            return Err(TskError::Config("template_name is required".into()));
+            return Err(RiptskError::Config("template_name is required".into()));
         }
         if let Some(state) = value.get("default_state").and_then(|value| value.as_str()) {
-            parse_state(state).map_err(|error| TskError::Config(error.to_string()))?;
+            parse_state(state).map_err(|error| RiptskError::Config(error.to_string()))?;
         }
         if let Some(priority) = value
             .get("default_priority")
             .and_then(|value| value.as_str())
         {
-            map_priority(priority).map_err(|error| TskError::Config(error.to_string()))?;
+            map_priority(priority).map_err(|error| RiptskError::Config(error.to_string()))?;
         }
         Ok(())
     }
@@ -117,7 +117,7 @@ impl<'a> TemplateService<'a> {
 
 pub fn seed_template(name: &str) -> String {
     format!(
-        "---\ntemplate_name: {name}\ndefault_labels: []\ndefault_state: todo\ndefault_priority: medium\ntitle_hint: \"\"\n---\n\n## Description\n\n[Describe the issue]\n\n## Tasks\n\n- [ ] ...\n"
+        "---\ntemplate_name: {name}\ndefault_labels: []\ndefault_state: backlog\ndefault_priority: medium\ntitle_hint: \"\"\n---\n\n## Description\n\n[Describe the issue]\n\n## Tasks\n\n- [ ] ...\n"
     )
 }
 

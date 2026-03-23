@@ -1,4 +1,4 @@
-# tsk
+# riptsk
 
 A plaintext, git-backed issue tracker that lives in your terminal.
 
@@ -97,7 +97,7 @@ tsk pr                               # 3. open PR/MR from current branch
 ```
 
 `tsk branch` must be run from within the project's git working directory (not
-`$TSK_REPO`). It creates the branch locally and pushes it to `origin`.
+`$RIPTSK_REPO`). It creates the branch locally and pushes it to `origin`.
 
 `tsk pr` detects the current branch, finds the matching issue (by `branch` or
 `id-slug` frontmatter field), and creates a pull request (GitHub) or merge
@@ -112,7 +112,7 @@ The issue is automatically moved to `in-progress` if it was in `backlog` or
 ### Kanban board
 
 The default board lanes are: **todo**, **in-progress**, and **done**. Custom
-boards and states can be defined in the `boards` section of `tsk.yaml`.
+boards and states can be defined in the `boards` section of `riptsk.yaml`.
 
 ```bash
 tsk board                    # show default board
@@ -121,7 +121,7 @@ tsk board --all              # show all boards
 tsk board --open             # open board directory in ui.opener (e.g. nvim)
 ```
 
-To open the board in `nvim`, set `ui.opener` in `tsk.yaml`:
+To open the board in `nvim`, set `ui.opener` in `riptsk.yaml`:
 
 ```bash
 tsk config set ui.opener nvim
@@ -141,7 +141,7 @@ tsk reorder-down <ID>        # move issue down in its lane
 
 ### Sync with GitHub / GitLab
 
-Requires a configured remote in `tsk.yaml` and an API token
+Requires a configured remote in `riptsk.yaml` and an API token
 (`GITHUB_TOKEN`/`GH_TOKEN` for GitHub, `GITLAB_TOKEN` for GitLab).
 
 ```bash
@@ -180,12 +180,12 @@ tsk recur run 2026-04-01     # create issues due on a specific date
 tsk recur skip <recur_id>    # skip without creating
 ```
 
-Recurring definitions live in `tsk.yaml` and support daily, weekly (with
+Recurring definitions live in `riptsk.yaml` and support daily, weekly (with
 `day_of_week`), monthly (with `day_of_month`), and yearly frequencies.
 
 ### Sessions
 
-For multi-host workflows where `$TSK_REPO` is a Git repository:
+For multi-host workflows where `$RIPTSK_REPO` is a Git repository:
 
 ```bash
 tsk session start            # git pull + sync pull
@@ -194,7 +194,7 @@ tsk session end              # sync push + git commit + git push
 
 ### AI features
 
-Requires `ai.enabled: true` in `tsk.yaml` and the `claude` or `llm` CLI with
+Requires `ai.enabled: true` in `riptsk.yaml` and the `claude` or `llm` CLI with
 an Anthropic API key.
 
 ```bash
@@ -224,7 +224,7 @@ tsk hooks uninstall          # remove hook
 
 ## Issue format
 
-Issues are Markdown files stored in `$TSK_REPO/issues/`. Each file has YAML
+Issues are Markdown files stored in `$RIPTSK_REPO/issues/`. Each file has YAML
 frontmatter followed by a Markdown body:
 
 ```markdown
@@ -272,15 +272,15 @@ receive a project-prefixed ID (e.g., `WHL-042`).
 
 ## Configuration
 
-tsk follows the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/):
+riptsk follows the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/):
 
 | Variable | Default | Contents |
 |----------|---------|----------|
-| `$TSK_REPO` (`$XDG_DATA_HOME/tsk`) | `~/.local/share/tsk` | Issues, templates, `tsk.yaml` |
-| `$XDG_CONFIG_HOME/tsk` | `~/.config/tsk` | `config.env` |
-| `$XDG_CACHE_HOME/tsk` | `~/.cache/tsk` | View cache, ID map |
+| `$RIPTSK_REPO` (`$XDG_DATA_HOME/riptsk`) | `~/.local/share/riptsk` | Issues, templates, `riptsk.yaml` |
+| `$XDG_CONFIG_HOME/riptsk` | `~/.config/riptsk` | `config.env` |
+| `$XDG_CACHE_HOME/riptsk` | `~/.cache/riptsk` | View cache, ID map |
 
-The main configuration file is `tsk.yaml` in `$TSK_REPO`. Run `tsk init` to
+The main configuration file is `riptsk.yaml` in `$RIPTSK_REPO`. Run `tsk init` to
 generate one with sensible defaults. Key sections:
 
 - **defaults** -- default board, state, priority, template for new issues

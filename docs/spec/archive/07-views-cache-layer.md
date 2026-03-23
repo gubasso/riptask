@@ -23,7 +23,7 @@
 
 ### Copy strategy
 
-Views live in `$XDG_CACHE_HOME/tsk/views/` (default `~/.cache/tsk/views/`), outside `$TSK_REPO`. View files are **copies** of `$TSK_REPO/issues/<ID>.md`. If `$TSK_REPO` moves, `tsk view` rebuilds everything.
+Views live in `$XDG_CACHE_HOME/riptsk/views/` (default `~/.cache/riptsk/views/`), outside `$RIPTSK_REPO`. View files are **copies** of `$RIPTSK_REPO/issues/<ID>.md`. If `$RIPTSK_REPO` moves, `tsk view` rebuilds everything.
 
 View files are disposable copies. Edits to view files are lost on next regeneration. Always use `tsk edit` or `tsk path` to modify canonical issues.
 
@@ -77,20 +77,20 @@ Also available explicitly: `tsk view`
 
 ```bash
 # Full kanban overview for a board
-tree ~/.cache/tsk/views/kanban/penguin-chrono-labs/
+tree ~/.cache/riptsk/views/kanban/penguin-chrono-labs/
 
 # What's in progress?
-ls ~/.cache/tsk/views/kanban/penguin-chrono-labs/in-progress/
+ls ~/.cache/riptsk/views/kanban/penguin-chrono-labs/in-progress/
 
 # Read an issue directly (view copy has the same content)
-cat ~/.cache/tsk/views/kanban/penguin-chrono-labs/in-progress/01-WHL-042.md
+cat ~/.cache/riptsk/views/kanban/penguin-chrono-labs/in-progress/01-WHL-042.md
 
 # Edit the canonical issue (not the view copy)
 tsk edit WHL-042
 
 # All issues for a project
-ls ~/.cache/tsk/views/projects/wormhole-router/
+ls ~/.cache/riptsk/views/projects/wormhole-router/
 
 # Cross-project org view
-tree ~/.cache/tsk/views/orgs/penguin-chrono-labs/
+tree ~/.cache/riptsk/views/orgs/penguin-chrono-labs/
 ```

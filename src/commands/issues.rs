@@ -1,76 +1,189 @@
+use crate::adapters::backend::BackendIssueUpsert;
 use crate::adapters::git::CliGit;
-use crate::adapters::remote::RemoteIssueUpsert;
+use crate::adapters::picker::{
+    IssueDisplayMode, format_issue_plain, sanitize_control, truncate_title,
+};
 use crate::cli::{IdArgs, LsArgs, MoveArgs, NewArgs};
-use crate::config::{load_config, save_config};
-use crate::domain::issue::{GithubIssueMeta, GitlabIssueMeta, IssueDocument, IssueFrontmatter};
-use crate::error::TskError;
+use crate::config::load_config;
+use crate::domain::issue::{
+    GithubIssueMeta, GitlabIssueMeta, IssueDocument, IssueFrontmatter, IssueState, Priority,
+};
+use crate::error::RiptskError;
+use crate::models::{Backend, BackendConfig};
 use crate::paths::AppPaths;
 use crate::services::auto_commit::maybe_auto_commit;
+use crate::services::backend_mapping::{build_provider_for_backend, build_state_labels};
+use crate::services::id_resolution;
 use crate::services::issue_ids;
 use crate::services::issue_service::{IssueDraft, IssueService, generate_slug};
-use crate::services::remote_mapping::{build_provider_for_remote, build_state_labels};
 use crate::storage::{cache, frontmatter, issue_store};
+use comfy_table::{
+    Attribute, Cell, CellAlignment, Color, ContentArrangement, Table, presets::NOTHING,
+};
 use std::io::IsTerminal;
 
-pub fn show(paths: &AppPaths, args: IdArgs) -> Result<(), TskError> {
+pub fn show(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    let id = args
-        .id
-        .ok_or_else(|| TskError::General("<ID> required".into()))?;
-    let path = issue_store::find_issue(paths, &id)?;
-    print!("{}", std::fs::read_to_string(path)?);
-    Ok(())
-}
-
-pub fn path(paths: &AppPaths, args: IdArgs) -> Result<(), TskError> {
-    paths.require_initialized()?;
-    let id = args
-        .id
-        .ok_or_else(|| TskError::General("<ID> required".into()))?;
-    println!("{}", issue_store::find_issue(paths, &id)?);
-    Ok(())
-}
-
-pub fn list(paths: &AppPaths, args: LsArgs) -> Result<(), TskError> {
-    paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path()).map_err(TskError::Other)?;
+    let IdArgs { scope, id } = args;
+    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
     let cwd = camino::Utf8PathBuf::from(
         std::env::current_dir()
             .unwrap_or_default()
             .to_string_lossy()
             .to_string(),
     );
-    let scope = crate::scope::resolve_scope(&args.projects, args.all_projects, &cwd, &config)?;
+    let Some(id) = id_resolution::require_id(paths, &config, &cwd, id, &scope)? else {
+        return Ok(());
+    };
+    let path = issue_store::find_issue(paths, &id)?;
+    print!("{}", std::fs::read_to_string(path)?);
+    Ok(())
+}
+
+pub fn path(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
+    paths.require_initialized()?;
+    let IdArgs { scope, id } = args;
+    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let cwd = camino::Utf8PathBuf::from(
+        std::env::current_dir()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string(),
+    );
+    let Some(id) = id_resolution::require_id(paths, &config, &cwd, id, &scope)? else {
+        return Ok(());
+    };
+    println!("{}", issue_store::find_issue(paths, &id)?);
+    Ok(())
+}
+
+pub fn list(paths: &AppPaths, args: LsArgs) -> Result<(), RiptskError> {
+    paths.require_initialized()?;
+    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let cwd = camino::Utf8PathBuf::from(
+        std::env::current_dir()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string(),
+    );
+    let scope =
+        crate::scope::resolve_scope(&args.scope.projects, args.scope.all_projects, &cwd, &config)?;
+    let mode = if args.scope.all_projects {
+        IssueDisplayMode::AllProjects
+    } else {
+        IssueDisplayMode::PerProject
+    };
+    let is_tty = std::io::stdout().is_terminal();
     let service = IssueService::new(paths, &config);
-    for issue in service.list_matching(&args, &scope)? {
-        let marker = if issue.frontmatter.conflict.is_some() {
-            " [CONFLICT]"
-        } else {
-            ""
-        };
-        println!(
-            "{}\t{}\t{}\t{}\t{}{}",
-            issue.frontmatter.id,
-            issue
-                .frontmatter
-                .priority
-                .as_ref()
-                .map(|value| value.as_str())
-                .unwrap_or(""),
-            issue.frontmatter.state.as_str(),
-            issue.frontmatter.project,
-            issue.frontmatter.title,
-            marker
-        );
+    let issues = service.list_matching(&args, &scope)?;
+
+    if is_tty {
+        if !issues.is_empty() {
+            println!("{}", render_issue_table(&issues, &mode));
+        }
+    } else {
+        for issue in &issues {
+            let marker = if issue.frontmatter.conflict.is_some() {
+                " [CONFLICT]"
+            } else {
+                ""
+            };
+            println!("{}{}", format_issue_plain(issue), marker);
+        }
     }
     Ok(())
 }
 
-pub async fn new(paths: &AppPaths, args: NewArgs) -> Result<(), TskError> {
+fn render_issue_table(issues: &[IssueDocument], mode: &IssueDisplayMode) -> String {
+    let mut table = Table::new();
+    table
+        .load_preset(NOTHING)
+        .set_content_arrangement(ContentArrangement::Dynamic);
+
+    let mut headers: Vec<Cell> = Vec::new();
+    if *mode == IssueDisplayMode::AllProjects {
+        headers.push(
+            Cell::new("Project")
+                .add_attribute(Attribute::Bold)
+                .add_attribute(Attribute::Dim),
+        );
+    }
+    headers.extend([
+        Cell::new("ID")
+            .add_attribute(Attribute::Bold)
+            .add_attribute(Attribute::Dim),
+        Cell::new("Title")
+            .add_attribute(Attribute::Bold)
+            .add_attribute(Attribute::Dim),
+        Cell::new("State")
+            .add_attribute(Attribute::Bold)
+            .add_attribute(Attribute::Dim),
+        Cell::new("Priority")
+            .add_attribute(Attribute::Bold)
+            .add_attribute(Attribute::Dim),
+        Cell::new("Board")
+            .add_attribute(Attribute::Bold)
+            .add_attribute(Attribute::Dim),
+    ]);
+    table.set_header(headers);
+
+    for issue in issues {
+        let fm = &issue.frontmatter;
+        let numeric_id = issue_ids::parse_id(&fm.id)
+            .map(|(_, n)| format!("#{}", n))
+            .unwrap_or_else(|| fm.id.clone());
+
+        let title = if fm.conflict.is_some() {
+            format!("{} [CONFLICT]", truncate_title(&fm.title, 50))
+        } else {
+            truncate_title(&fm.title, 50)
+        };
+
+        let priority_str = fm.priority.as_ref().map(Priority::as_str).unwrap_or("-");
+
+        let mut row: Vec<Cell> = Vec::new();
+        if *mode == IssueDisplayMode::AllProjects {
+            row.push(Cell::new(sanitize_control(&fm.project)).fg(Color::Magenta));
+        }
+        row.extend([
+            Cell::new(&numeric_id)
+                .fg(Color::Cyan)
+                .set_alignment(CellAlignment::Right),
+            Cell::new(&title),
+            Cell::new(fm.state.as_str()).fg(state_color(&fm.state)),
+            Cell::new(priority_str).fg(priority_color(fm.priority.as_ref())),
+            Cell::new(sanitize_control(&fm.board)).fg(Color::Grey),
+        ]);
+        table.add_row(row);
+    }
+
+    table.to_string()
+}
+
+fn state_color(state: &IssueState) -> Color {
+    match state {
+        IssueState::Backlog => Color::Grey,
+        IssueState::Todo => Color::Reset,
+        IssueState::InProgress => Color::Yellow,
+        IssueState::Review => Color::Cyan,
+        IssueState::Done => Color::Green,
+    }
+}
+
+fn priority_color(priority: Option<&Priority>) -> Color {
+    match priority {
+        Some(Priority::Urgent) => Color::Red,
+        Some(Priority::High) => Color::Yellow,
+        Some(Priority::Medium) => Color::Reset,
+        Some(Priority::Low) => Color::Grey,
+        None => Color::Grey,
+    }
+}
+
+pub async fn new(paths: &AppPaths, args: NewArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    let mut config = load_config(paths.config_path().as_std_path()).map_err(TskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
     let mut args = args;
-    let mut config_changed = false;
     if args.project.is_none() {
         let cwd = camino::Utf8PathBuf::from(
             std::env::current_dir()
@@ -78,20 +191,15 @@ pub async fn new(paths: &AppPaths, args: NewArgs) -> Result<(), TskError> {
                 .to_string_lossy()
                 .to_string(),
         );
-        if let Some(remote) = crate::services::project_detection::detect_from_cwd(&cwd, &config)? {
-            args.project = Some(remote.name);
-        } else if let Some(remote) =
-            crate::services::project_detection::register_project_auto(&cwd, &mut config)?
-        {
-            args.project = Some(remote.name);
-            config_changed = true;
+        if let Some(backend) = crate::services::project_detection::detect_from_cwd(&cwd, &config)? {
+            args.project = Some(backend.name);
         }
     }
     if args.title.is_none() && std::io::stdin().is_terminal() {
         let title = dialoguer::Input::<String>::new()
             .with_prompt("Title")
             .interact_text()
-            .map_err(|error| TskError::General(error.to_string()))?;
+            .map_err(|error| RiptskError::General(error.to_string()))?;
         args.title = Some(title);
     }
     let service = IssueService::new(paths, &config);
@@ -101,91 +209,96 @@ pub async fn new(paths: &AppPaths, args: NewArgs) -> Result<(), TskError> {
         draft.body = match crate::commands::ai::generate_body(paths, &draft.title, &draft.project) {
             Ok(body) => body,
             Err(_) => {
-                eprintln!("warning: AI body generation failed, using template body");
+                crate::ui::warn("AI body generation failed, using template body");
                 draft.body.clone()
             }
         };
     }
-    let issue = if matches!(
-        draft.remote_type.as_ref(),
-        Some(crate::config::RemoteType::Github | crate::config::RemoteType::Gitlab)
-    ) {
-        let remote = config
-            .remotes
+    let issue = if draft
+        .backend
+        .as_ref()
+        .is_some_and(|backend| matches!(backend, Backend::Github | Backend::Gitlab))
+    {
+        let backend = config
+            .backends
             .iter()
-            .find(|remote| remote.name == draft.project)
-            .ok_or_else(|| TskError::Unregistered(draft.project.clone()))?;
-        create_remote_issue(paths, &service, &draft, remote).await?
+            .find(|backend| backend.name == draft.project)
+            .ok_or_else(|| RiptskError::Unregistered(draft.project.clone()))?;
+        create_backend_issue(paths, &service, &draft, backend).await?
     } else {
         create_local_issue(&service, &draft)?
     };
-    if config_changed {
-        save_config(paths.config_path().as_std_path(), &config).map_err(TskError::Other)?;
-    }
     let issue_path = paths
         .issues_dir()
         .join(format!("{}.md", issue.frontmatter.id));
-    let mut files = vec![issue_path.as_std_path()];
-    let config_path = paths.config_path();
-    if config_changed {
-        files.push(config_path.as_std_path());
-    }
     maybe_auto_commit(
         &config,
         &CliGit,
-        paths.tsk_repo.as_std_path(),
+        paths.riptsk_repo.as_std_path(),
         &format!(
-            "tsk: new {} - {}",
+            "riptsk: new {} - {}",
             issue.frontmatter.id, issue.frontmatter.title
         ),
-        &files,
+        &[issue_path.as_std_path()],
     )?;
     println!("{}", issue.frontmatter.id);
     Ok(())
 }
 
-pub fn edit(paths: &AppPaths, args: IdArgs) -> Result<(), TskError> {
+pub fn edit(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path()).map_err(TskError::Other)?;
-    let id = args
-        .id
-        .ok_or_else(|| TskError::General("<ID> required".into()))?;
+    let IdArgs { scope, id } = args;
+    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let cwd = camino::Utf8PathBuf::from(
+        std::env::current_dir()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string(),
+    );
+    let Some(id) = id_resolution::require_id(paths, &config, &cwd, id, &scope)? else {
+        return Ok(());
+    };
     let path = issue_store::find_issue(paths, &id)?;
-    let issue = frontmatter::load_issue(path.as_std_path()).map_err(TskError::Other)?;
+    let issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
     IssueService::new(paths, &config).edit_issue(Some(id.clone()))?;
     maybe_auto_commit(
         &config,
         &CliGit,
-        paths.tsk_repo.as_std_path(),
-        &format!("tsk: edit {} - {}", id, issue.frontmatter.title),
+        paths.riptsk_repo.as_std_path(),
+        &format!("riptsk: edit {} - {}", id, issue.frontmatter.title),
         &[path.as_std_path()],
     )?;
     Ok(())
 }
 
-pub fn move_issue(paths: &AppPaths, args: MoveArgs) -> Result<(), TskError> {
+pub fn move_issue(paths: &AppPaths, args: MoveArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path()).map_err(TskError::Other)?;
-    let id = args
-        .id
-        .ok_or_else(|| TskError::General("<ID> required".into()))?;
-    let state = args
-        .state
-        .ok_or_else(|| TskError::General("<state> required".into()))?;
+    let MoveArgs { scope, id, state } = args;
+    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let cwd = camino::Utf8PathBuf::from(
+        std::env::current_dir()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string(),
+    );
+    let Some(id) = id_resolution::require_id(paths, &config, &cwd, id, &scope)? else {
+        return Ok(());
+    };
+    let state = state.ok_or_else(|| RiptskError::General("<state> required".into()))?;
     let path = issue_store::find_issue(paths, &id)?;
-    let issue = frontmatter::load_issue(path.as_std_path()).map_err(TskError::Other)?;
+    let issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
     IssueService::new(paths, &config).move_issue(&id, &state)?;
     maybe_auto_commit(
         &config,
         &CliGit,
-        paths.tsk_repo.as_std_path(),
-        &format!("tsk: move {} - {}", id, issue.frontmatter.title),
+        paths.riptsk_repo.as_std_path(),
+        &format!("riptsk: move {} - {}", id, issue.frontmatter.title),
         &[path.as_std_path()],
     )?;
     Ok(())
 }
 
-pub fn close(paths: &AppPaths, args: IdArgs) -> Result<(), TskError> {
+pub fn close(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
     move_issue(
         paths,
@@ -197,7 +310,7 @@ pub fn close(paths: &AppPaths, args: IdArgs) -> Result<(), TskError> {
     )
 }
 
-pub fn reopen(paths: &AppPaths, args: IdArgs) -> Result<(), TskError> {
+pub fn reopen(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
     move_issue(
         paths,
@@ -209,44 +322,65 @@ pub fn reopen(paths: &AppPaths, args: IdArgs) -> Result<(), TskError> {
     )
 }
 
-pub fn remove(paths: &AppPaths, args: IdArgs) -> Result<(), TskError> {
+pub fn remove(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path()).map_err(TskError::Other)?;
-    let id = args
-        .id
-        .ok_or_else(|| TskError::General("<ID> required".into()))?;
+    let IdArgs { scope, id } = args;
+    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let cwd = camino::Utf8PathBuf::from(
+        std::env::current_dir()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string(),
+    );
+    let Some(id) = id_resolution::require_id(paths, &config, &cwd, id, &scope)? else {
+        return Ok(());
+    };
     let path = issue_store::find_issue(paths, &id)?;
-    let issue = frontmatter::load_issue(path.as_std_path()).map_err(TskError::Other)?;
+    let issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
+    if let Some((provider, repo, issue_id)) = backend_delete_target(&issue) {
+        cache::mark_deleted(
+            paths,
+            &crate::domain::backend_state::backend_state_key(provider, &repo, issue_id),
+        )
+        .map_err(RiptskError::Other)?;
+    }
     IssueService::new(paths, &config).remove_issue(&id)?;
     maybe_auto_commit(
         &config,
         &CliGit,
-        paths.tsk_repo.as_std_path(),
-        &format!("tsk: rm {} - {}", id, issue.frontmatter.title),
+        paths.riptsk_repo.as_std_path(),
+        &format!("riptsk: rm {} - {}", id, issue.frontmatter.title),
         &[path.as_std_path()],
     )?;
     Ok(())
 }
 
-async fn create_remote_issue(
+async fn create_backend_issue(
     paths: &AppPaths,
     service: &IssueService<'_>,
     draft: &IssueDraft,
-    remote: &crate::config::RemoteConfig,
-) -> Result<IssueDocument, TskError> {
-    let provider = build_provider_for_remote(remote)?;
-    let repo = remote
+    backend: &BackendConfig,
+) -> Result<IssueDocument, RiptskError> {
+    let provider = build_provider_for_backend(backend)?;
+    let repo = backend
         .repo
         .as_deref()
-        .ok_or_else(|| TskError::Config(format!("remote {} is missing repo", remote.name)))?;
-    let upsert = RemoteIssueUpsert {
+        .ok_or_else(|| RiptskError::Config(format!("backend {} is missing repo", backend.name)))?;
+    let upsert = BackendIssueUpsert {
         title: draft.title.clone(),
         body: draft.body.clone(),
+        state: None,
+        state_reason: None,
         labels: build_state_labels(&draft.state, &draft.labels),
-        assignee: draft.assignee.clone(),
+        assignees: draft.assignee.clone().into_iter().collect(),
+        milestone_id: None,
+        due_date: None,
+        weight: None,
+        confidential: None,
+        discussion_locked: None,
     };
     let record = provider.create_issue(repo, &upsert).await?;
-    let scope = issue_ids::derive_scope_from_remote(remote);
+    let scope = issue_ids::derive_scope_from_backend(backend);
     let id = issue_ids::format_id(&scope, record.issue_id);
     let document = IssueDocument {
         frontmatter: IssueFrontmatter {
@@ -258,14 +392,16 @@ async fn create_remote_issue(
             org: draft.org.clone(),
             priority: Some(draft.priority.clone()),
             labels: draft.labels.clone(),
-            assignee: draft.assignee.clone(),
-            milestone: None,
+            assignees: draft.assignee.clone().into_iter().collect(),
+            milestone: record.milestone.clone(),
+            state_reason: record.state_reason.clone(),
             cycle: None,
             order: Some(draft.order),
-            gitlab: if remote.remote_type == crate::config::RemoteType::Gitlab {
+            gitlab: if backend.backend == Backend::Gitlab {
                 Some(GitlabIssueMeta {
                     repo: repo.to_owned(),
                     issue_id: Some(record.issue_id),
+                    milestone_id: record.milestone_id,
                     url: Some(record.url.clone()),
                     updated_at: record.updated_at.clone(),
                     last_pushed_state: Some(draft.state.clone()),
@@ -273,10 +409,12 @@ async fn create_remote_issue(
             } else {
                 None
             },
-            github: if remote.remote_type == crate::config::RemoteType::Github {
+            github: if backend.backend == Backend::Github {
                 Some(GithubIssueMeta {
                     repo: repo.to_owned(),
                     issue_id: Some(record.issue_id),
+                    node_id: record.node_id.clone(),
+                    milestone_id: record.milestone_id,
                     url: Some(record.url.clone()),
                     updated_at: record.updated_at.clone(),
                     last_pushed_state: Some(draft.state.clone()),
@@ -285,7 +423,13 @@ async fn create_remote_issue(
                 None
             },
             local_updated_at: record.updated_at.clone(),
-            due: None,
+            due: record.due_date.clone(),
+            weight: record.weight,
+            confidential: record.confidential,
+            discussion_locked: record.discussion_locked,
+            issue_type: record.issue_type.clone(),
+            locked: record.locked,
+            lock_reason: record.lock_reason.clone(),
             recurring: None,
             remote_deleted: false,
             conflict: None,
@@ -294,29 +438,44 @@ async fn create_remote_issue(
             id_slug: Some(generate_slug(&id, &draft.title)),
             branch: None,
             pr_url: None,
+            pr_number: None,
         },
         body: draft.body.clone(),
         remote_section: None,
     };
     service.persist_issue(&document)?;
-    cache::seed_remote_state_entry(paths, provider_name(remote), repo, &record)
-        .map_err(TskError::Other)?;
+    cache::seed_backend_state_entry(paths, provider_name(backend), repo, &record)
+        .map_err(RiptskError::Other)?;
     Ok(document)
 }
 
 fn create_local_issue(
     service: &IssueService<'_>,
     draft: &IssueDraft,
-) -> Result<IssueDocument, TskError> {
+) -> Result<IssueDocument, RiptskError> {
     let document = service.build_local_issue_document(draft)?;
     service.persist_issue(&document)?;
     Ok(document)
 }
 
-fn provider_name(remote: &crate::config::RemoteConfig) -> &'static str {
-    match remote.remote_type {
-        crate::config::RemoteType::Github => "github",
-        crate::config::RemoteType::Gitlab => "gitlab",
-        crate::config::RemoteType::Local => "local",
+fn provider_name(backend: &BackendConfig) -> &'static str {
+    match backend.backend {
+        Backend::Github => "github",
+        Backend::Gitlab => "gitlab",
+        Backend::Local => "local",
     }
+}
+
+fn backend_delete_target(issue: &IssueDocument) -> Option<(&'static str, String, u64)> {
+    if let Some(meta) = issue.frontmatter.github.as_ref() {
+        return meta
+            .issue_id
+            .map(|issue_id| ("github", meta.repo.clone(), issue_id));
+    }
+    if let Some(meta) = issue.frontmatter.gitlab.as_ref() {
+        return meta
+            .issue_id
+            .map(|issue_id| ("gitlab", meta.repo.clone(), issue_id));
+    }
+    None
 }

@@ -1,25 +1,31 @@
 use anyhow::Context;
 use clap::CommandFactory;
 use clap::Parser;
+use riptsk::cli::{Cli, Commands, CompletionShell};
+use riptsk::commands;
+use riptsk::error::RiptskError;
+use riptsk::paths::AppPaths;
 use std::process::ExitCode;
-use tsk::cli::{Cli, Commands, CompletionShell};
-use tsk::commands;
-use tsk::error::TskError;
-use tsk::paths::AppPaths;
 
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("tsk: {error}");
+            if std::io::IsTerminal::is_terminal(&std::io::stderr()) {
+                eprintln!("{} {error}", console::style("tsk:").red().bold());
+            } else {
+                eprintln!("tsk: {error}");
+            }
             ExitCode::from(error.exit_code() as u8)
         }
     }
 }
 
-fn run() -> Result<(), TskError> {
+fn run() -> Result<(), RiptskError> {
     let cli = Cli::parse();
     let paths = AppPaths::from_env().context("failed to resolve application paths")?;
+
+    riptsk::services::project_detection::ensure_registered(&paths, &riptsk::adapters::git::CliGit)?;
 
     match cli.command.unwrap_or(Commands::Help { command: None }) {
         Commands::Init => commands::init::run(&paths),
@@ -49,7 +55,7 @@ fn run() -> Result<(), TskError> {
                     println!();
                     Ok(())
                 } else {
-                    Err(TskError::General(format!("unknown command: {command}")))
+                    Err(RiptskError::General(format!("unknown command: {command}")))
                 }
             } else {
                 let mut root = Cli::command();
@@ -89,13 +95,19 @@ fn run() -> Result<(), TskError> {
         Commands::Resolve(args) => commands::sync_cmd::resolve(&paths, args),
         Commands::Session(args) => commands::sync_cmd::session(&paths, args),
         Commands::Commit(args) => commands::sync_cmd::commit(&paths, args),
-        Commands::Branch(args) => commands::branch_pr::branch(&paths, args),
+        Commands::Branch(args) => {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .context("failed to construct tokio runtime")?;
+            runtime.block_on(commands::branch::branch(&paths, args))
+        }
         Commands::Pr(args) => {
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .context("failed to construct tokio runtime")?;
-            runtime.block_on(commands::branch_pr::pr(&paths, args))
+            runtime.block_on(commands::pr::run(&paths, args))
         }
         Commands::Hooks(args) => commands::hooks::run(&paths, args),
         Commands::Summarize(args) => commands::ai::summarize(&paths, args),

@@ -8,7 +8,8 @@ org: chrono
 priority: medium
 labels:
   - enhancement
-assignee: tester
+assignees:
+  - tester
 milestone: ~
 cycle: ~
 order: 1

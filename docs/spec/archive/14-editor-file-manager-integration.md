@@ -17,7 +17,7 @@
 ### Core interaction model
 
 ```
-viewer (nvim/yazi)          tsk CLI              $TSK_REPO
+viewer (nvim/yazi)          tsk CLI              $RIPTSK_REPO
       │                        │                      │
       │  cursor on WHL-041     │                      │
       │  <leader>tm            │                      │
@@ -39,8 +39,8 @@ The issue ID is always recoverable from the view filename: `01-WHL-041.md` → `
 
 ```bash
 tsk board --open
-# internally: ui.opener $XDG_CACHE_HOME/tsk/views/kanban/<resolved-board>/
-# or: nvim -R ~/.cache/tsk/views/kanban/<resolved-board>/
+# internally: ui.opener $XDG_CACHE_HOME/riptsk/views/kanban/<resolved-board>/
+# or: nvim -R ~/.cache/riptsk/views/kanban/<resolved-board>/
 ```
 
 Opened in **readonly mode** (`-R` in nvim). Prevents accidental direct edits to view copies (changes would be lost on regeneration). All mutations go through `tsk` keymaps.
@@ -75,7 +75,7 @@ vim.keymap.set("n", "<leader>tm", function()
       end
     end
   )
-end, { desc = "tsk: move issue" })
+end, { desc = "riptsk: move issue" })
 
 -- Open issue for editing (opens canonical file, not the view copy)
 vim.keymap.set("n", "<leader>te", function()
@@ -83,7 +83,7 @@ vim.keymap.set("n", "<leader>te", function()
   if not id then return end
   local path = vim.fn.system("tsk path " .. id):gsub("\n", "")
   vim.cmd("edit " .. path)
-end, { desc = "tsk: edit issue" })
+end, { desc = "riptsk: edit issue" })
 
 -- Move up in lane
 vim.keymap.set("n", "<leader>t]", function()
@@ -91,7 +91,7 @@ vim.keymap.set("n", "<leader>t]", function()
   if not id then return end
   vim.fn.system("tsk reorder-up " .. id)
   require("oil").reload()
-end, { desc = "tsk: move up in lane" })
+end, { desc = "riptsk: move up in lane" })
 
 -- Move down in lane
 vim.keymap.set("n", "<leader>t[", function()
@@ -99,7 +99,7 @@ vim.keymap.set("n", "<leader>t[", function()
   if not id then return end
   vim.fn.system("tsk reorder-down " .. id)
   require("oil").reload()
-end, { desc = "tsk: move down in lane" })
+end, { desc = "riptsk: move down in lane" })
 
 -- Close issue
 vim.keymap.set("n", "<leader>tc", function()
@@ -107,14 +107,14 @@ vim.keymap.set("n", "<leader>tc", function()
   if not id then return end
   vim.fn.system("tsk close " .. id)
   require("oil").reload()
-end, { desc = "tsk: close issue" })
+end, { desc = "riptsk: close issue" })
 ```
 
-Apply these keymaps only when inside the views directory (`$XDG_CACHE_HOME/tsk/views/`):
+Apply these keymaps only when inside the views directory (`$XDG_CACHE_HOME/riptsk/views/`):
 
 ```lua
 vim.api.nvim_create_autocmd("BufEnter", {
-  pattern = (vim.env.XDG_CACHE_HOME or vim.env.HOME .. "/.cache") .. "/tsk/views/*",
+  pattern = (vim.env.XDG_CACHE_HOME or vim.env.HOME .. "/.cache") .. "/riptsk/views/*",
   callback = function()
     -- set buffer-local keymaps here
   end
@@ -133,28 +133,28 @@ run  = '''shell '
   STATE=$(printf "backlog\ntodo\nin-progress\nreview\ndone" | fzf --prompt "Move $ID to: ")
   [ -n "$STATE" ] && tsk move "$ID" "$STATE"
 ' --confirm'''
-desc = "tsk: move issue"
+desc = "riptsk: move issue"
 
 [[manager.prepend_keymap]]
 on   = ["<leader>", "e"]
 run  = 'shell "tsk edit $(basename \"$0\" | grep -oP \"[A-Z]+-[0-9]+|LOCAL-[a-f0-9]+\")" --block'
-desc = "tsk: edit issue"
+desc = "riptsk: edit issue"
 
 [[manager.prepend_keymap]]
 on   = ["<leader>", "c"]
 run  = 'shell "tsk close $(basename \"$0\" | grep -oP \"[A-Z]+-[0-9]+|LOCAL-[a-f0-9]+\")"'
-desc = "tsk: close issue"
+desc = "riptsk: close issue"
 
 [[manager.prepend_keymap]]
 on   = ["<leader>", "]"]
 run  = 'shell "tsk reorder-up $(basename \"$0\" | grep -oP \"[A-Z]+-[0-9]+|LOCAL-[a-f0-9]+\")"'
-desc = "tsk: move up in lane"
+desc = "riptsk: move up in lane"
 ```
 
 ### UI opener config
 
 ```yaml
-# tsk.yaml
+# riptsk.yaml
 ui:
   opener: nvim -R    # or: yazi, lf, ranger, nnn
                      # default: nvim -R

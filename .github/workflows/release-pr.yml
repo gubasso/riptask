@@ -1,0 +1,53 @@
+name: Create Release PR
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: patch/minor/major/exact
+        default: patch
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: develop
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-release
+        run: cargo install cargo-release --locked
+
+      - name: Get next version
+        id: version
+        run: |
+          VERSION=$(cargo release version "${{ inputs.bump }}" --no-confirm 2>&1 | grep -oP '\d+\.\d+\.\d+' | head -1)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Create release branch and bump version
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "release/v${{ steps.version.outputs.version }}"
+          cargo release version "${{ inputs.bump }}" --no-confirm --execute
+          git add Cargo.toml Cargo.lock
+          git commit -m "chore(release): bump version to ${{ steps.version.outputs.version }}"
+          git push -u origin "release/v${{ steps.version.outputs.version }}"
+
+      - name: Create PR to master
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr create \
+            --base master \
+            --head "release/v${{ steps.version.outputs.version }}" \
+            --title "Release v${{ steps.version.outputs.version }}" \
+            --body "Automated release PR."

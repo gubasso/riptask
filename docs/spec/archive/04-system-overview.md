@@ -22,14 +22,14 @@
 │       ↕ tsk                ↕ tsk                ↕ tsk          │
 │                                                                 │
 │  ┌──────────────────────────────────────────────────────────┐  │
-│  │             ~/.local/share/tsk/  (data repo)            │  │
+│  │             ~/.local/share/riptsk/  (data repo)            │  │
 │  │                                                          │  │
 │  │  issues/          ← SoT for all issue content           │  │
 │  │  templates/       ← issue and recurring task templates  │  │
-│  │  tsk.yaml         ← config, registered remotes          │  │
+│  │  riptsk.yaml         ← config, registered remotes          │  │
 │  └──────────────────────────────────────────────────────────┘  │
 │                                                                 │
-│  ~/.cache/tsk/        ← views, sync state, id map (outside repo) │
+│  ~/.cache/riptsk/        ← views, sync state, id map (outside repo) │
 │       ↕ git (for local-only issues + config)                   │
 └──────────────────┬──────────────────────────────────────────────┘
                    │ tsk sync (glab/gh)
@@ -43,13 +43,13 @@
 ### Sync flow
 
 ```
-Remote (gh/glab) ←──────── push ─────── $TSK_REPO/issues/*.md
-                 ────────── pull ──────► $TSK_REPO/issues/*.md
+Remote (gh/glab) ←──────── push ─────── $RIPTSK_REPO/issues/*.md
+                 ────────── pull ──────► $RIPTSK_REPO/issues/*.md
 ```
 
 ### Multi-host flow
 
 ```
-host-a/$TSK_REPO ──── git push ────► gitolite/private remote
-host-b/$TSK_REPO ◄─── git pull ────  gitolite/private remote
+host-a/$RIPTSK_REPO ──── git push ────► gitolite/private remote
+host-b/$RIPTSK_REPO ◄─── git pull ────  gitolite/private remote
 ```

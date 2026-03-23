@@ -1,9 +1,10 @@
 pub mod ai;
-pub mod branch_pr;
+pub mod branch;
 pub mod config_cmd;
 pub mod hooks;
 pub mod init;
 pub mod issues;
+pub mod pr;
 pub mod push_cmd;
 pub mod recur;
 pub mod register;

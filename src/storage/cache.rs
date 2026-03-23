@@ -1,32 +1,33 @@
-use crate::adapters::remote::RemoteIssueRecord;
+use crate::adapters::backend::BackendIssueRecord;
+use crate::domain::backend_state::BackendState;
+use crate::domain::backend_state::backend_state_key;
 use crate::domain::id_map::IdMap;
-use crate::domain::remote_state::RemoteState;
-use crate::domain::remote_state::remote_state_key;
 use crate::paths::AppPaths;
-use crate::services::remote_mapping::remote_state_entry;
+use crate::services::backend_mapping::backend_state_entry;
 use anyhow::{Context, Result};
+use std::collections::HashSet;
 use std::fs;
 
-pub fn load_remote_state(paths: &AppPaths) -> Result<RemoteState> {
-    load_json(paths.remote_state_path().as_str())
+pub fn load_backend_state(paths: &AppPaths) -> Result<BackendState> {
+    load_json(paths.backend_state_path().as_str())
 }
 
-pub fn save_remote_state(paths: &AppPaths, state: &RemoteState) -> Result<()> {
-    save_json(paths.remote_state_path().as_str(), state)
+pub fn save_backend_state(paths: &AppPaths, state: &BackendState) -> Result<()> {
+    save_json(paths.backend_state_path().as_str(), state)
 }
 
-pub fn seed_remote_state_entry(
+pub fn seed_backend_state_entry(
     paths: &AppPaths,
     provider_name: &str,
     repo: &str,
-    record: &RemoteIssueRecord,
+    record: &BackendIssueRecord,
 ) -> Result<()> {
-    let mut state = load_remote_state(paths)?;
+    let mut state = load_backend_state(paths)?;
     state.insert(
-        remote_state_key(provider_name, repo, record.issue_id),
-        remote_state_entry(record),
+        backend_state_key(provider_name, repo, record.issue_id),
+        backend_state_entry(record),
     );
-    save_remote_state(paths, &state)
+    save_backend_state(paths, &state)
 }
 
 pub fn load_id_map(paths: &AppPaths) -> Result<IdMap> {
@@ -35,6 +36,26 @@ pub fn load_id_map(paths: &AppPaths) -> Result<IdMap> {
 
 pub fn save_id_map(paths: &AppPaths, map: &IdMap) -> Result<()> {
     save_json(paths.id_map_path().as_str(), map)
+}
+
+pub fn load_deleted_keys(paths: &AppPaths) -> Result<HashSet<String>> {
+    load_json(paths.deleted_keys_path().as_str())
+}
+
+pub fn save_deleted_keys(paths: &AppPaths, keys: &HashSet<String>) -> Result<()> {
+    save_json(paths.deleted_keys_path().as_str(), keys)
+}
+
+pub fn mark_deleted(paths: &AppPaths, key: &str) -> Result<()> {
+    let mut keys = load_deleted_keys(paths)?;
+    keys.insert(key.to_owned());
+    save_deleted_keys(paths, &keys)
+}
+
+pub fn unmark_deleted(paths: &AppPaths, key: &str) -> Result<()> {
+    let mut keys = load_deleted_keys(paths)?;
+    keys.remove(key);
+    save_deleted_keys(paths, &keys)
 }
 
 fn load_json<T>(path: &str) -> Result<T>
@@ -81,13 +102,18 @@ mod tests {
     fn missing_cache_files_default_to_empty_maps() {
         let temp = tempdir().expect("temp dir");
         let paths = AppPaths {
-            tsk_repo: temp.path().join("repo").to_string_lossy().as_ref().into(),
+            riptsk_repo: temp.path().join("repo").to_string_lossy().as_ref().into(),
             cache_root: temp.path().join("cache").to_string_lossy().as_ref().into(),
         };
         assert!(super::load_id_map(&paths).expect("id map").is_empty());
         assert!(
-            super::load_remote_state(&paths)
-                .expect("remote state")
+            super::load_backend_state(&paths)
+                .expect("backend state")
+                .is_empty()
+        );
+        assert!(
+            super::load_deleted_keys(&paths)
+                .expect("deleted keys")
                 .is_empty()
         );
     }

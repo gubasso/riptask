@@ -12,7 +12,8 @@ org: chrono
 priority: medium
 labels:
 - enhancement
-assignee: tester
+assignees:
+- tester
 order: 1
 github:
   repo: Penguin-Chrono-Labs/fish-from-the-future
