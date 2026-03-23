@@ -24,6 +24,19 @@ fn help_prints_usage() {
 }
 
 #[test]
+fn done_help_prints_expected_flags() {
+    Command::cargo_bin("tsk")
+        .expect("binary")
+        .args(["done", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("--merge-method"))
+        .stdout(predicate::str::contains("--auto-merge"))
+        .stdout(predicate::str::contains("--timeout"))
+        .stdout(predicate::str::contains("--yes"));
+}
+
+#[test]
 fn completions_bash_produces_valid_output() {
     Command::cargo_bin("tsk")
         .expect("binary")

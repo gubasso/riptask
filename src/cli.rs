@@ -1,3 +1,4 @@
+use crate::adapters::backend::MergeMethod;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Debug, Parser)]
@@ -55,6 +56,8 @@ pub enum Commands {
     Path(IdArgs),
     /// Create, switch to, or delete an issue branch
     Branch(BranchArgs),
+    /// Complete an issue: merge PR, clean up branches, close issue
+    Done(DoneArgs),
     /// Create, edit, or show a pull/merge request
     Pr(PrArgs),
     /// Display or manage board views
@@ -137,6 +140,26 @@ pub struct PrArgs {
     pub scope: ScopeArgs,
     /// Issue ID (shorthand for `tsk pr create [ID]`)
     pub id: Option<String>,
+}
+
+#[derive(Debug, Clone, Args, Default)]
+pub struct DoneArgs {
+    #[command(flatten)]
+    pub scope: ScopeArgs,
+    /// Issue ID (or pick interactively)
+    pub id: Option<String>,
+    /// Merge method (merge, squash, rebase)
+    #[arg(long, value_enum)]
+    pub merge_method: Option<MergeMethod>,
+    /// Enable auto-merge and wait for checks to pass
+    #[arg(long)]
+    pub auto_merge: bool,
+    /// Skip confirmation prompts
+    #[arg(short = 'y', long = "yes")]
+    pub yes: bool,
+    /// Timeout in seconds for waiting (default 600)
+    #[arg(long, default_value_t = 600)]
+    pub timeout: u64,
 }
 
 #[derive(Debug, Clone, Subcommand)]
