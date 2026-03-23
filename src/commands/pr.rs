@@ -257,7 +257,7 @@ fn resolve_issue(
     Ok((path, issue))
 }
 
-fn resolve_hosted_backend<'a>(
+pub(crate) fn resolve_hosted_backend<'a>(
     config: &'a Config,
     issue: &IssueDocument,
 ) -> Result<&'a BackendConfig, RiptskError> {
@@ -275,7 +275,7 @@ fn resolve_hosted_backend<'a>(
     Ok(backend)
 }
 
-async fn resolve_pr_number(
+pub(crate) async fn resolve_pr_number(
     provider: &dyn crate::adapters::backend::BackendProvider,
     repo_name: &str,
     issue: &IssueDocument,
