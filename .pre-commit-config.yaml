@@ -26,6 +26,7 @@ repos:
           (?x)((^|/)devcontainer\.json$|[-.]lock\.json$)
       - id: no-commit-to-branch
         args: [--branch, develop, --branch, master]
+        stages: [pre-commit]
 
   - repo: https://github.com/maresb/check-json5
     rev: v1.0.1
