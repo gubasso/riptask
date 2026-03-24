@@ -22,8 +22,6 @@ repos:
       - id: detect-private-key
       - id: pretty-format-json
         args: ["--autofix", "--no-ensure-ascii", "--no-sort-keys", "--indent=2"]
-        exclude: >-
-          (?x)((^|/)devcontainer\.json$|[-.]lock\.json$)
       - id: no-commit-to-branch
         args: [--branch, develop, --branch, master]
         stages: [pre-commit]
