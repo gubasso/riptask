@@ -115,6 +115,7 @@ fn run_due(paths: &AppPaths, date: Option<String>) -> Result<(), RiptskError> {
                     .to_owned(),
             ),
             ai: false,
+            edit: false,
         };
         let draft = service.prepare_issue_draft(new_args)?;
         let mut issue = service.build_local_issue_document(&draft)?;
