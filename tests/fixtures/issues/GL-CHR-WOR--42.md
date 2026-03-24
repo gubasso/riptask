@@ -1,7 +1,7 @@
 ---
 id: GL-CHR-WOR--42
 title: Fix wormhole stabilizer retry logic
-state: in-progress
+status: in-progress
 board: personal
 project: wormhole-router
 org: chrono

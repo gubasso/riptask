@@ -12,7 +12,7 @@ pub struct TemplateDocument {
     pub name: String,
     pub template_name: String,
     pub default_labels: Vec<String>,
-    pub default_state: Option<IssueState>,
+    pub default_status: Option<IssueState>,
     pub default_priority: Option<Priority>,
     pub title_hint: Option<String>,
     pub body: String,
@@ -48,8 +48,8 @@ impl<'a> TemplateService<'a> {
                     .collect()
             })
             .unwrap_or_default();
-        let default_state = value
-            .get("default_state")
+        let default_status = value
+            .get("default_status")
             .and_then(|state| state.as_str())
             .map(parse_state)
             .transpose()?;
@@ -66,7 +66,7 @@ impl<'a> TemplateService<'a> {
                 .unwrap_or(name)
                 .to_owned(),
             default_labels,
-            default_state,
+            default_status,
             default_priority,
             title_hint: None,
             body,
@@ -102,7 +102,7 @@ impl<'a> TemplateService<'a> {
         if template_name.is_empty() {
             return Err(RiptskError::Config("template_name is required".into()));
         }
-        if let Some(state) = value.get("default_state").and_then(|value| value.as_str()) {
+        if let Some(state) = value.get("default_status").and_then(|value| value.as_str()) {
             parse_state(state).map_err(|error| RiptskError::Config(error.to_string()))?;
         }
         if let Some(priority) = value
@@ -117,7 +117,7 @@ impl<'a> TemplateService<'a> {
 
 pub fn seed_template(name: &str) -> String {
     format!(
-        "---\ntemplate_name: {name}\ndefault_labels: []\ndefault_state: backlog\ndefault_priority: medium\ntitle_hint: \"\"\n---\n\n## Description\n\n[Describe the issue]\n\n## Tasks\n\n- [ ] ...\n"
+        "---\ntemplate_name: {name}\ndefault_labels: []\ndefault_status: backlog\ndefault_priority: medium\ntitle_hint: \"\"\n---\n\n## Description\n\n[Describe the issue]\n\n## Tasks\n\n- [ ] ...\n"
     )
 }
 

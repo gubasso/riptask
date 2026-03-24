@@ -1,7 +1,7 @@
 ---
 template_name: Bug Report
 default_labels: [bug]
-default_state: todo
+default_status: todo
 default_priority: high
 ---
 

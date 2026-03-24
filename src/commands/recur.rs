@@ -103,7 +103,7 @@ fn run_due(paths: &AppPaths, date: Option<String>) -> Result<(), RiptskError> {
             title: Some(expanded_title.clone()),
             project: definition.project.clone(),
             board: definition.board.clone(),
-            state: definition.state.as_ref().map(|s| s.as_str().to_owned()),
+            status: definition.status.as_ref().map(|s| s.as_str().to_owned()),
             priority: definition.priority.as_ref().map(|p| p.as_str().to_owned()),
             template: Some(
                 definition
@@ -197,8 +197,8 @@ fn new_recur(paths: &AppPaths, args: RecurNewArgs) -> Result<(), RiptskError> {
         }
     };
 
-    let state = args
-        .state
+    let status = args
+        .status
         .as_deref()
         .map(parse_state)
         .transpose()
@@ -260,7 +260,7 @@ fn new_recur(paths: &AppPaths, args: RecurNewArgs) -> Result<(), RiptskError> {
         board: args.board,
         project: args.project,
         org: args.org,
-        state,
+        status,
         priority,
         assignee: args.assignee,
         labels: args.labels,

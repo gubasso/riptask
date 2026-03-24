@@ -78,7 +78,7 @@ fn config_with_backend_path(path: &std::path::Path) -> String {
         "version: 1
 defaults:
   board: personal
-  state: todo
+  status: todo
   priority: medium
   assignee: ~
   template: task
@@ -91,7 +91,7 @@ backends:
     path: {}
 boards:
   - name: personal
-    states: [backlog, todo, in-progress, review, done]
+    statuses: [backlog, todo, in-progress, review, done]
 ui:
   opener: \"nvim -R\"
   tree_depth: 2

@@ -128,10 +128,10 @@ async fn create(paths: &AppPaths, args: PrCreateArgs) -> Result<(), RiptskError>
     issue.frontmatter.pr_url = Some(record.url.clone());
     issue.frontmatter.pr_number = Some(record.number);
     if matches!(
-        issue.frontmatter.state,
+        issue.frontmatter.status,
         IssueState::Backlog | IssueState::Todo
     ) {
-        issue.frontmatter.state = IssueState::InProgress;
+        issue.frontmatter.status = IssueState::InProgress;
         issue.frontmatter.local_updated_at = now_utc();
     }
     frontmatter::save_issue(path.as_std_path(), &issue).map_err(RiptskError::Other)?;

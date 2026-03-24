@@ -28,7 +28,7 @@ pub struct IssueDraft {
     pub title: String,
     pub project: String,
     pub board: String,
-    pub state: IssueState,
+    pub status: IssueState,
     pub priority: Priority,
     pub labels: Vec<String>,
     pub assignee: Option<String>,
@@ -74,13 +74,13 @@ impl<'a> IssueService<'a> {
             .board
             .or_else(|| self.project_default_board(&project))
             .unwrap_or_else(|| self.config.defaults.board.clone());
-        let state = args
-            .state
+        let status = args
+            .status
             .map(|value| parse_state(&value))
             .transpose()
             .map_err(RiptskError::Other)?
-            .or(template.default_state)
-            .unwrap_or_else(|| self.config.defaults.state.clone());
+            .or(template.default_status)
+            .unwrap_or_else(|| self.config.defaults.status.clone());
         let priority = args
             .priority
             .map(|value| parse_priority(&value))
@@ -88,20 +88,20 @@ impl<'a> IssueService<'a> {
             .map_err(RiptskError::Other)?
             .or(template.default_priority)
             .unwrap_or_else(|| self.config.defaults.priority.clone());
-        self.validate_state_for_board(&board, &state)
+        self.validate_state_for_board(&board, &status)
             .map_err(RiptskError::Other)?;
         Ok(IssueDraft {
             title,
             project: project.clone(),
             board: board.clone(),
-            state: state.clone(),
+            status: status.clone(),
             priority,
             labels: template.default_labels,
             assignee: self.config.defaults.assignee.clone(),
             org: self.project_default_org(&project),
             body: template.body,
             order: self
-                .next_order_for_lane(&board, state.as_str())
+                .next_order_for_lane(&board, status.as_str())
                 .map_err(RiptskError::Other)?,
             backend: self.project_backend(&project),
             repo: self.project_repo(&project),
@@ -131,7 +131,7 @@ impl<'a> IssueService<'a> {
             frontmatter: IssueFrontmatter {
                 id: id.clone(),
                 title: draft.title.clone(),
-                state: draft.state.clone(),
+                status: draft.status.clone(),
                 board: draft.board.clone(),
                 project: draft.project.clone(),
                 org: draft.org.clone(),
@@ -194,7 +194,7 @@ impl<'a> IssueService<'a> {
         let state = parse_state(state).map_err(RiptskError::Other)?;
         self.validate_state_for_board(&issue.frontmatter.board, &state)
             .map_err(RiptskError::Other)?;
-        issue.frontmatter.state = state.clone();
+        issue.frontmatter.status = state.clone();
         issue.frontmatter.order = Some(
             self.next_order_for_lane(&issue.frontmatter.board, state.as_str())
                 .map_err(RiptskError::Other)?,
@@ -246,7 +246,7 @@ impl<'a> IssueService<'a> {
         let mut max = 0u32;
         for path in issue_store::list_issues(self.paths)? {
             let issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
-            if issue.frontmatter.board == board && issue.frontmatter.state.as_str() == state {
+            if issue.frontmatter.board == board && issue.frontmatter.status.as_str() == state {
                 max = max.max(issue.frontmatter.order.unwrap_or(0));
             }
         }
@@ -263,7 +263,7 @@ impl<'a> IssueService<'a> {
             frontmatter::load_issue(target_path.as_std_path()).map_err(RiptskError::Other)?;
         let mut lane = self.load_lane(
             &target_issue.frontmatter.board,
-            &target_issue.frontmatter.state,
+            &target_issue.frontmatter.status,
         )?;
         let Some(index) = lane.iter().position(|(issue_id, _)| issue_id == id) else {
             return Err(RiptskError::NotFound(id.to_owned()));
@@ -318,11 +318,11 @@ impl<'a> IssueService<'a> {
             .iter()
             .find(|candidate| candidate.name == board)
             .context("board not found")?;
-        if board.states.contains(state) {
+        if board.statuses.contains(state) {
             Ok(())
         } else {
             Err(anyhow::anyhow!(
-                "invalid state {} for board {}",
+                "invalid status {} for board {}",
                 state.as_str(),
                 board.name
             ))
@@ -369,7 +369,7 @@ impl<'a> IssueService<'a> {
         let mut lane = Vec::new();
         for path in issue_store::list_issues(self.paths)? {
             let issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
-            if issue.frontmatter.board == board && issue.frontmatter.state == *state {
+            if issue.frontmatter.board == board && issue.frontmatter.status == *state {
                 lane.push((issue.frontmatter.id, path));
             }
         }
@@ -450,14 +450,14 @@ pub fn generate_branch_slug(issue_number: u64, title: &str) -> String {
 }
 
 fn matches_issue(issue: &IssueDocument, args: &LsArgs) -> bool {
-    if !args.include_done && issue.frontmatter.state == IssueState::Done {
+    if !args.include_done && issue.frontmatter.status == IssueState::Done {
         return false;
     }
     if args.conflicts && issue.frontmatter.conflict.is_none() {
         return false;
     }
-    if let Some(state) = &args.state
-        && issue.frontmatter.state.as_str() != state
+    if let Some(status) = &args.status
+        && issue.frontmatter.status.as_str() != status
     {
         return false;
     }

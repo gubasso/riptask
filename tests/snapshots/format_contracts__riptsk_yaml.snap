@@ -6,7 +6,7 @@ version: 1
 auto_commit: false
 defaults:
   board: personal
-  state: todo
+  status: todo
   priority: medium
   assignee: tester
   template: task
@@ -19,7 +19,7 @@ backends:
   default_org: chrono
 boards:
 - name: personal
-  states:
+  statuses:
   - backlog
   - todo
   - in-progress

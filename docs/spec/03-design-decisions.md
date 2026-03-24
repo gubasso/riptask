@@ -30,14 +30,14 @@ Views are:
 - Never written directly — only `tsk` commands modify them as a side effect
 - Disposable — edits to view files are lost on next regeneration
 
-### 3.4 Filenames encode order, not state
+### 3.4 Filenames encode order, not status
 
-Moving a card = `tsk move WHL-041 in-progress`, which:
-1. Patches `state:` in `issues/WHL-041.md` frontmatter
+Moving a card = `tsk status WHL-041 in-progress`, which:
+1. Patches `status:` in `issues/WHL-041.md` frontmatter
 2. Updates `local_updated_at`
 3. Regenerates `views/` entirely
 
-You never touch view files directly. The view tree is a consequence of frontmatter state.
+You never touch view files directly. The view tree is a consequence of frontmatter status.
 
 ### 3.5 Conflict detection with manual resolution
 
@@ -76,13 +76,13 @@ Projects with non-GitHub/GitLab remotes (codeberg, gitolite, etc.) are fully man
 
 ### 3.9 Auto-commit on lifecycle events for local issues
 
-Lifecycle commands (`new`, `close`, `move`, `reopen`, `rm`) auto-commit `$RIPTSK_REPO` when all affected issues are local (belonging to a project without a GitHub/GitLab remote, or not tied to any project).
+Lifecycle commands (`new`, `close`, `status`, `reopen`, `rm`) auto-commit `$RIPTSK_REPO` when all affected issues are local (belonging to a project without a GitHub/GitLab remote, or not tied to any project).
 
-**Why auto-commit local lifecycle events:** For local issues, `$RIPTSK_REPO` git is the sole source of truth and the only sync mechanism across hosts. A lifecycle event is a meaningful state change — a `riptsk: new ICE-043` commit is signal, not noise. Deferring these commits risks data loss (forgotten `session end`, crash) with no offsetting benefit.
+**Why auto-commit local lifecycle events:** For local issues, `$RIPTSK_REPO` git is the sole source of truth and the only sync mechanism across hosts. A lifecycle event is a meaningful status change — a `riptsk: new ICE-043` commit is signal, not noise. Deferring these commits risks data loss (forgotten `session end`, crash) with no offsetting benefit.
 
 **Why not for synced issues:** Their source of truth is GitHub/GitLab. The `$RIPTSK_REPO` copy is a backup. Auto-committing every backup-copy mutation adds noise to `$RIPTSK_REPO` git history without improving data safety — the remote already has the canonical state.
 
-**Why not for trivial mutations:** Field edits (`tsk edit`), comments, and tag changes are low-signal individually. Batching them via `tsk commit` or `tsk session end` produces a cleaner history. The data loss risk is lower — these are incremental refinements, not state transitions.
+**Why not for trivial mutations:** Field edits (`tsk edit`), comments, and tag changes are low-signal individually. Batching them via `tsk commit` or `tsk session end` produces a cleaner history. The data loss risk is lower — these are incremental refinements, not status transitions.
 
 **Commit message format:** `riptsk: <verb> <ID> — <title>` (see [15 — Version Control & Backup](archive/15-version-control-backup.md) for full conventions).
 
