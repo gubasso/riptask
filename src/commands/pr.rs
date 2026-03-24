@@ -106,7 +106,7 @@ async fn create(paths: &AppPaths, args: PrCreateArgs) -> Result<(), RiptskError>
     let title = default_title(issue_number, &issue.frontmatter.title);
     let mut body = default_body(issue_number);
     if !args.no_ai && !skip_ai {
-        if let Some(ai) = optional_backend(&config)? {
+        if let Some(ai) = optional_backend(&config) {
             let context =
                 build_create_ai_context(&issue, &git, repo.as_path(), &default_branch, &branch)?;
             match ai.generate_pr_description(&context) {
@@ -202,7 +202,7 @@ async fn edit(paths: &AppPaths, args: PrEditArgs) -> Result<(), RiptskError> {
             None
         };
         let draft_body = if let Some(context) = ai_context {
-            match optional_backend(&config)? {
+            match optional_backend(&config) {
                 Some(ai) => match ai.update_pr_description(&context) {
                     Ok(description) => description,
                     Err(error) => {

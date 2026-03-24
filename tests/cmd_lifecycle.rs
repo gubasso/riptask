@@ -82,8 +82,6 @@ fn new_ai_falls_back_to_template_body_when_backend_unavailable() {
     let temp = tempdir().expect("temp dir");
     let repo = temp.path().join("repo");
     let cache = temp.path().join("cache");
-    let empty_path = temp.path().join("empty-path");
-    fs::create_dir_all(&empty_path).expect("empty path dir");
 
     Command::cargo_bin("tsk")
         .expect("binary")
@@ -102,30 +100,11 @@ fn new_ai_falls_back_to_template_body_when_backend_unavailable() {
     )
     .expect("write config");
 
-    // Run new --ai with no AI binary in PATH — should succeed with fallback.
-    // Keep git in PATH so auto-registration doesn't fail.
-    let git_dir = std::path::PathBuf::from(
-        StdCommand::new("which")
-            .arg("git")
-            .output()
-            .expect("which git")
-            .stdout
-            .iter()
-            .map(|&b| b as char)
-            .collect::<String>()
-            .trim()
-            .to_string(),
-    )
-    .parent()
-    .unwrap()
-    .to_owned();
-    let restricted_path = format!("{}:{}", empty_path.display(), git_dir.display());
     Command::cargo_bin("tsk")
         .expect("binary")
         .current_dir(temp.path())
         .env("RIPTSK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
-        .env("PATH", &restricted_path)
         .args(["new", "--title", "AI fallback test", "--ai"])
         .assert()
         .success()

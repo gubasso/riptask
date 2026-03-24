@@ -1,11 +1,11 @@
-use crate::adapters::ai::{AiBackend, CommandAiBackend};
+use crate::adapters::ai::{AiBackend, TemplateAiBackend};
 use crate::cli::{AskArgs, SummarizeArgs};
 use crate::config::load_config;
 use crate::error::RiptskError;
 use crate::paths::AppPaths;
 use crate::storage::{frontmatter, issue_store};
 
-pub(crate) const AI_BACKEND_MISSING: &str = "No AI CLI found. Install claude or llm.";
+pub(crate) const AI_BACKEND_MISSING: &str = "ai.command is not configured";
 
 pub fn summarize(paths: &AppPaths, args: SummarizeArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
@@ -14,7 +14,7 @@ pub fn summarize(paths: &AppPaths, args: SummarizeArgs) -> Result<(), RiptskErro
         println!("AI features disabled");
         return Ok(());
     }
-    let Some(backend) = optional_backend(&config)? else {
+    let Some(backend) = optional_backend(&config) else {
         crate::ui::warn(&format!("AI unavailable: {AI_BACKEND_MISSING}"));
         return Ok(());
     };
@@ -52,7 +52,7 @@ pub fn ask(paths: &AppPaths, args: AskArgs) -> Result<(), RiptskError> {
         println!("AI features disabled");
         return Ok(());
     }
-    let Some(backend) = optional_backend(&config)? else {
+    let Some(backend) = optional_backend(&config) else {
         crate::ui::warn(&format!("AI unavailable: {AI_BACKEND_MISSING}"));
         return Ok(());
     };
@@ -78,33 +78,12 @@ pub fn generate_body(paths: &AppPaths, title: &str, project: &str) -> Result<Str
     backend.generate_body(&format!("Title: {title}\n\nContext:\n{project}"))
 }
 
-fn backend(config: &crate::config::Config) -> Result<CommandAiBackend, RiptskError> {
-    optional_backend(config)?.ok_or_else(|| RiptskError::General(AI_BACKEND_MISSING.into()))
+fn backend(config: &crate::config::Config) -> Result<TemplateAiBackend, RiptskError> {
+    optional_backend(config).ok_or_else(|| RiptskError::General(AI_BACKEND_MISSING.into()))
 }
 
-pub(crate) fn optional_backend(
-    config: &crate::config::Config,
-) -> Result<Option<CommandAiBackend>, RiptskError> {
-    let model = config
-        .ai
-        .model
-        .clone()
-        .or_else(|| std::env::var("RIPTSK_AI_MODEL").ok())
-        .unwrap_or_else(|| "claude-haiku-4-5-20251001".into());
-    let binary = if std::process::Command::new("claude")
-        .arg("--help")
-        .output()
-        .is_ok()
-    {
-        "claude".to_owned()
-    } else if std::process::Command::new("llm")
-        .arg("--help")
-        .output()
-        .is_ok()
-    {
-        "llm".to_owned()
-    } else {
-        return Ok(None);
-    };
-    Ok(Some(CommandAiBackend { binary, model }))
+pub(crate) fn optional_backend(config: &crate::config::Config) -> Option<TemplateAiBackend> {
+    config.ai.command.as_ref().map(|cmd| TemplateAiBackend {
+        command_template: cmd.clone(),
+    })
 }
