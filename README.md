@@ -114,14 +114,17 @@ frontmatter field.
 `tsk done` completes the PR workflow for an issue. In order, it:
 
 1. Validates that the project working tree is clean.
-2. Checks the PR state and skips the merge step if the PR is already merged.
+2. Checks the PR state and skips the merge step if the PR is already merged
+   (`tsk pr show <ID>`).
 3. Merges the PR, with optional confirmation and optional auto-merge support.
-4. Checks out the default branch and pulls the latest changes.
-5. Deletes the remote branch.
+4. Checks out the default branch and pulls the latest changes (`git checkout`
+   + `git pull`).
+5. Deletes the remote branch (`tsk branch <ID> -D` handles both 5 and 6).
 6. Force-deletes the local branch.
-7. Clears the issue's `branch` and `id_slug` metadata.
-8. Changes the issue status to `done`.
-9. Auto-commits the issue update if auto-commit is enabled.
+7. Clears the issue's `branch` and `id_slug` metadata (`tsk edit <ID>`).
+8. Changes the issue status to `done` (`tsk status <ID> done` or
+   `tsk close <ID>`).
+9. Auto-commits the issue update if auto-commit is enabled (`tsk commit`).
 
 Options:
 
