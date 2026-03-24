@@ -1,7 +1,0 @@
-{
-  "name": "${localWorkspaceFolderBasename}-sandbox",
-  "image": "devimg/rust-dev:latest",
-  "postCreateCommand": {
-    "pre-commit": "pre-commit install"
-  }
-}
