@@ -9,7 +9,7 @@ use crate::domain::issue::IssueDocument;
 use crate::error::RiptskError;
 use crate::paths::AppPaths;
 use crate::services::auto_commit::maybe_auto_commit;
-use crate::services::backend_mapping::build_provider_for_backend;
+use crate::services::backend_mapping::{build_provider_for_backend, resolve_git_auth};
 use crate::services::id_resolution;
 use crate::services::issue_service::IssueService;
 use crate::storage::{frontmatter, issue_store};
@@ -23,7 +23,7 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
         id_resolution::resolve_id(paths, &config, &cwd, &input)?
     } else {
         match current_repo()
-            .and_then(|repo| CliGit.current_branch(repo.as_path()))
+            .and_then(|repo| CliGit::new().current_branch(repo.as_path()))
             .and_then(|branch| find_issue_for_branch(paths, &branch))
             .and_then(|path| {
                 frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)
@@ -47,7 +47,7 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
     let provider = build_provider_for_backend(backend)?;
     let repo_name = backend.repo.as_deref().unwrap_or_default();
     let pr_number = pr::resolve_pr_number(provider.as_ref(), repo_name, &issue).await?;
-    let git = CliGit;
+    let git = CliGit::with_auth(resolve_git_auth(backend));
     let repo_dir = current_repo()?;
 
     if git.has_working_tree_changes(repo_dir.as_path())? {

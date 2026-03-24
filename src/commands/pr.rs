@@ -11,7 +11,7 @@ use crate::error::RiptskError;
 use crate::models::{Backend, BackendConfig};
 use crate::paths::AppPaths;
 use crate::services::auto_commit::maybe_auto_commit;
-use crate::services::backend_mapping::build_provider_for_backend;
+use crate::services::backend_mapping::{build_provider_for_backend, resolve_git_auth};
 use crate::services::id_resolution;
 use crate::services::issue_service::now_utc;
 use crate::storage::{frontmatter, issue_store};
@@ -43,8 +43,7 @@ async fn create(paths: &AppPaths, args: PrCreateArgs) -> Result<(), RiptskError>
     paths.require_initialized()?;
     let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
     let repo = current_repo()?;
-    let git = CliGit;
-    let current_branch = git.current_branch(repo.as_path())?;
+    let current_branch = CliGit::new().current_branch(repo.as_path())?;
     let (path, mut issue) = resolve_issue(paths, &config, &args.scope, args.id.as_deref())?;
     let branch = issue
         .frontmatter
@@ -58,6 +57,7 @@ async fn create(paths: &AppPaths, args: PrCreateArgs) -> Result<(), RiptskError>
     }
 
     let backend = resolve_hosted_backend(&config, &issue)?;
+    let git = CliGit::with_auth(resolve_git_auth(backend));
     let provider = build_provider_for_backend(backend)?;
     let repo_name = backend.repo.as_deref().unwrap_or_default();
     let default_branch = provider.default_branch(repo_name).await?;
@@ -193,7 +193,7 @@ async fn edit(paths: &AppPaths, args: PrEditArgs) -> Result<(), RiptskError> {
         let ai_context = if let Some(branch) = issue.frontmatter.branch.as_deref() {
             match (provider.default_branch(repo_name).await, current_repo()) {
                 (Ok(default_branch), Ok(repo)) => {
-                    let git = CliGit;
+                    let git = CliGit::new();
                     build_update_ai_context(&current, &git, repo.as_path(), &default_branch, branch)
                         .ok()
                 }
@@ -254,7 +254,7 @@ fn resolve_issue(
         issue_store::find_issue(paths, &resolved)?
     } else {
         let repo = current_repo()?;
-        let branch = CliGit.current_branch(repo.as_path())?;
+        let branch = CliGit::new().current_branch(repo.as_path())?;
         find_issue_for_branch(paths, &branch)?
     };
     let issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;

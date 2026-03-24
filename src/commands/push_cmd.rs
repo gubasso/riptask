@@ -65,7 +65,7 @@ fn push_backend(
     file_refs.push(config_path.as_std_path());
     maybe_auto_commit(
         config,
-        &crate::adapters::git::CliGit,
+        &crate::adapters::git::CliGit::new(),
         paths.riptsk_repo.as_std_path(),
         &format!("riptsk: push local issues to {}", backend.name),
         &file_refs,
