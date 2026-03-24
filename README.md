@@ -232,14 +232,14 @@ a custom script, etc.).
 ```yaml
 ai:
   enabled: true
-  command: "cat {{input_file}} | claude -p --model haiku --system-prompt '{{system}}'"
+  command: "cat {{input_file}} | claude -p --model haiku --system-prompt {{system}}"
 ```
 
 Or via the CLI:
 
 ```bash
 tsk config set ai.enabled true
-tsk config set ai.command "cat {{input_file}} | claude -p --model haiku --system-prompt '{{system}}'"
+tsk config set ai.command "cat {{input_file}} | claude -p --model haiku --system-prompt {{system}}"
 ```
 
 2. Make sure your AI CLI is authenticated and on `$PATH`.
@@ -250,8 +250,8 @@ Your `ai.command` is a shell command template with these placeholders:
 
 | Placeholder | Value | Notes |
 |---|---|---|
-| `{{system}}` | Shell-escaped system prompt | Task instructions (e.g. "Generate a PR description") |
-| `{{input}}` | Shell-escaped input content | Good for short inputs; may hit shell arg limits on large diffs |
+| `{{system}}` | Shell-escaped system prompt | Already quoted — do **not** wrap in extra quotes |
+| `{{input}}` | Shell-escaped input content | Already quoted — do **not** wrap in extra quotes; may hit shell arg limits on large diffs |
 | `{{input_file}}` | Path to a temp file with raw input | Recommended for large inputs (PR diffs, issue corpora) |
 
 The command is executed via `sh -c`, stdout is captured as the AI response, and
@@ -263,28 +263,28 @@ a non-zero exit code is treated as an error.
 
 ```yaml
 ai:
-  command: "cat {{input_file}} | claude -p --model haiku --system-prompt '{{system}}'"
+  command: "cat {{input_file}} | claude -p --model haiku --system-prompt {{system}}"
 ```
 
 **llm** (Simon Willison's CLI):
 
 ```yaml
 ai:
-  command: "cat {{input_file}} | llm -s '{{system}}'"
+  command: "cat {{input_file}} | llm -s {{system}}"
 ```
 
 **Ollama** (local models):
 
 ```yaml
 ai:
-  command: "cat {{input_file}} | ollama run llama3 --system '{{system}}'"
+  command: "cat {{input_file}} | ollama run llama3 --system {{system}}"
 ```
 
 **Simple inline** (for CLIs that accept short prompts as arguments):
 
 ```yaml
 ai:
-  command: "my-ai-cli --system '{{system}}' --prompt '{{input}}'"
+  command: "my-ai-cli --system {{system}} --prompt {{input}}"
 ```
 
 #### Feature toggles
