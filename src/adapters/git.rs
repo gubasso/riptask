@@ -70,12 +70,14 @@ impl CliGit {
             std::fs::set_permissions(askpass.path(), std::fs::Permissions::from_mode(0o700))
                 .map_err(RiptskError::Io)?;
         }
+        // Close the write fd so the OS allows exec (avoids ETXTBSY on Linux).
+        let askpass_path = askpass.into_temp_path();
 
         let mut command = Command::new("git");
         command
             .arg("-C")
             .arg(repo)
-            .env("GIT_ASKPASS", askpass.path())
+            .env("GIT_ASKPASS", &askpass_path)
             .env("GIT_TERMINAL_PROMPT", "0");
         for arg in args {
             command.arg(arg);
