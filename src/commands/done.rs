@@ -2,7 +2,7 @@ use crate::adapters::backend::{BackendPrRecord, BackendProvider, MergeMethod, Pr
 use crate::adapters::git::{CliGit, GitBackend};
 use crate::adapters::prompts::{DialoguerPrompts, PromptBackend};
 use crate::cli::DoneArgs;
-use crate::commands::branch::{current_repo, cwd_utf8};
+use crate::commands::branch::{current_repo, cwd_utf8, find_issue_for_branch};
 use crate::commands::pr;
 use crate::config::load_config;
 use crate::domain::issue::IssueDocument;
@@ -19,9 +19,21 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
     let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
     let cwd = cwd_utf8();
-    let Some(id) = id_resolution::require_id(paths, &config, &cwd, args.id.clone(), &args.scope)?
-    else {
-        return Ok(());
+    let id = if let Some(input) = args.id.clone() {
+        id_resolution::resolve_id(paths, &config, &cwd, &input)?
+    } else {
+        match current_repo()
+            .and_then(|repo| CliGit.current_branch(repo.as_path()))
+            .and_then(|branch| find_issue_for_branch(paths, &branch))
+            .and_then(|path| {
+                frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)
+            }) {
+            Ok(issue) => issue.frontmatter.id,
+            Err(_) => match id_resolution::require_id(paths, &config, &cwd, None, &args.scope)? {
+                Some(id) => id,
+                None => return Ok(()),
+            },
+        }
     };
     let issue_path = issue_store::find_issue(paths, &id)?;
     let mut issue =
