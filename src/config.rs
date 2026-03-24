@@ -112,13 +112,19 @@ pub fn validate_config(config: &Config) -> Result<()> {
 }
 
 fn validate_ai_command(config: &Config) -> Result<()> {
-    if let Some(command) = &config.ai.command
-        && (!command.contains("{{")
-            || !(command.contains("input") || command.contains("input_file")))
-    {
-        return Err(anyhow::anyhow!(
-            "ai.command must contain the {{{{input}}}} placeholder\n\nExamples:\n  ai.command: \"my-ai-cli --system '{{{{system}}}}' --context '{{{{input}}}}'\"\n  ai.command: \"cat {{{{input_file}}}} | my-ai-cli --system '{{{{system}}}}'\""
-        ));
+    if let Some(command) = &config.ai.command {
+        // Try to compile the template to catch syntax errors early
+        let mut env = minijinja::Environment::new();
+        env.set_undefined_behavior(minijinja::UndefinedBehavior::Strict);
+        env.add_template("cmd", command)
+            .with_context(|| format!("invalid ai.command template syntax: {command}"))?;
+
+        // Verify template contains at least one of the required input placeholders
+        if !command.contains("{{input}}") && !command.contains("{{input_file}}") {
+            return Err(anyhow::anyhow!(
+                "ai.command must contain {{{{input}}}} or {{{{input_file}}}} placeholder\n\nExamples:\n  ai.command: \"my-ai-cli --system '{{{{system}}}}' --context '{{{{input}}}}'\"\n  ai.command: \"cat {{{{input_file}}}} | my-ai-cli --system '{{{{system}}}}'\""
+            ));
+        }
     }
     Ok(())
 }
