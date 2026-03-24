@@ -105,7 +105,7 @@ mod tests {
 
     #[test]
     fn preserves_yaml_like_body_content() {
-        let content = "---\nid: TEST-001\nstate: todo\nboard: personal\nproject: demo\nlocal_updated_at: 2026-03-18T00:00:00Z\nlabels: []\nremote_deleted: false\n---\n## Example\n\n```yaml\n---\nfake: frontmatter\n---\n```\n";
+        let content = "---\nid: TEST-001\nstatus: todo\nboard: personal\nproject: demo\nlocal_updated_at: 2026-03-18T00:00:00Z\nlabels: []\nremote_deleted: false\n---\n## Example\n\n```yaml\n---\nfake: frontmatter\n---\n```\n";
         let (_, body, _) = split(content, "inline").expect("split content");
         assert!(body.contains("fake: frontmatter"));
     }

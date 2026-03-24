@@ -1,5 +1,6 @@
 use crate::adapters::backend::{
     BackendIssueRecord, BackendIssueUpsert, BackendPrRecord, BackendProvider, DeleteOutcome,
+    MergeMethod, PrChecksStatus,
 };
 use crate::error::RiptskError;
 use async_trait::async_trait;
@@ -292,6 +293,159 @@ impl BackendProvider for GithubProvider {
         Ok(Some(map_pull_request(pull, repo)?))
     }
 
+    async fn merge_pr(
+        &self,
+        repo: &str,
+        number: u64,
+        method: MergeMethod,
+        commit_title: Option<&str>,
+        commit_message: Option<&str>,
+    ) -> Result<(), RiptskError> {
+        let (owner, repo_name) = self.split_owner_repo(repo)?;
+        let pulls = self.client.pulls(owner, repo_name);
+        let mut builder = pulls.merge(number).method(match method {
+            MergeMethod::Merge => octocrab::params::pulls::MergeMethod::Merge,
+            MergeMethod::Squash => octocrab::params::pulls::MergeMethod::Squash,
+            MergeMethod::Rebase => octocrab::params::pulls::MergeMethod::Rebase,
+        });
+        if let Some(title) = commit_title {
+            builder = builder.title(title);
+        }
+        if let Some(message) = commit_message {
+            builder = builder.message(message);
+        }
+        builder.send().await.map_err(|error| {
+            RiptskError::General(format!("failed to merge PR #{number}: {error}"))
+        })?;
+        Ok(())
+    }
+
+    async fn enable_auto_merge(
+        &self,
+        repo: &str,
+        number: u64,
+        method: MergeMethod,
+    ) -> Result<(), RiptskError> {
+        let pr = self.get_pr(repo, number).await?;
+        let node_id = pr
+            .node_id
+            .ok_or_else(|| RiptskError::General("PR node_id not available".into()))?;
+        let merge_method = match method {
+            MergeMethod::Merge => "MERGE",
+            MergeMethod::Squash => "SQUASH",
+            MergeMethod::Rebase => "REBASE",
+        };
+        let query = r#"mutation($input: EnablePullRequestAutoMergeInput!) {
+            enablePullRequestAutoMerge(input: $input) {
+                pullRequest { number }
+            }
+        }"#;
+        let payload = serde_json::json!({
+            "query": query,
+            "variables": {
+                "input": {
+                    "pullRequestId": node_id,
+                    "mergeMethod": merge_method
+                }
+            }
+        });
+        let response = self
+            .client
+            .graphql::<serde_json::Value>(&payload)
+            .await
+            .map_err(|error| {
+                RiptskError::General(format!("failed to enable auto-merge: {error}"))
+            })?;
+        if let Some(errors) = response.get("errors").and_then(serde_json::Value::as_array)
+            && !errors.is_empty()
+        {
+            return Err(RiptskError::General(format!(
+                "auto-merge failed: {}",
+                serde_json::Value::Array(errors.clone())
+            )));
+        }
+        Ok(())
+    }
+
+    async fn get_pr_checks_status(
+        &self,
+        repo: &str,
+        number: u64,
+    ) -> Result<PrChecksStatus, RiptskError> {
+        let (owner, repo_name) = self.split_owner_repo(repo)?;
+        let pr = self.get_pr(repo, number).await?;
+        let head_sha = pr
+            .head_sha
+            .ok_or_else(|| RiptskError::General("PR head SHA not available".into()))?;
+
+        // Check commit statuses (legacy integrations)
+        let status_result = self
+            .client
+            .get::<octocrab::models::CombinedStatus, _, _>(
+                format!("/repos/{owner}/{repo_name}/commits/{head_sha}/status"),
+                None::<&()>,
+            )
+            .await
+            .ok();
+
+        // Check runs (GitHub Actions, third-party apps)
+        let check_runs_result = self
+            .client
+            .checks(owner.to_string(), repo_name.to_string())
+            .list_check_runs_for_git_ref(octocrab::params::repos::Commitish(head_sha))
+            .send()
+            .await
+            .ok();
+
+        // Evaluate check runs
+        let checks_status = check_runs_result.and_then(|page| {
+            let runs = page.check_runs;
+            if runs.is_empty() {
+                return None;
+            }
+            let any_in_progress = runs.iter().any(|r| r.completed_at.is_none());
+            if any_in_progress {
+                return Some(PrChecksStatus::Pending);
+            }
+            // All completed — only success/skipped/neutral count as passed
+            let all_passed = runs.iter().all(|r| {
+                matches!(
+                    r.conclusion.as_deref(),
+                    Some("success" | "skipped" | "neutral")
+                )
+            });
+            if all_passed {
+                Some(PrChecksStatus::Passed)
+            } else {
+                Some(PrChecksStatus::Failed)
+            }
+        });
+
+        // Evaluate legacy commit statuses
+        let status_state = status_result.map(|combined| match combined.state {
+            octocrab::models::StatusState::Success => PrChecksStatus::Passed,
+            octocrab::models::StatusState::Failure | octocrab::models::StatusState::Error => {
+                PrChecksStatus::Failed
+            }
+            octocrab::models::StatusState::Pending => PrChecksStatus::Pending,
+            _ => PrChecksStatus::None,
+        });
+
+        // Merge both signals: worst status wins
+        match (checks_status, status_state) {
+            (Some(PrChecksStatus::Failed), _) | (_, Some(PrChecksStatus::Failed)) => {
+                Ok(PrChecksStatus::Failed)
+            }
+            (Some(PrChecksStatus::Pending), _) | (_, Some(PrChecksStatus::Pending)) => {
+                Ok(PrChecksStatus::Pending)
+            }
+            (Some(PrChecksStatus::Passed), _) | (_, Some(PrChecksStatus::Passed)) => {
+                Ok(PrChecksStatus::Passed)
+            }
+            _ => Ok(PrChecksStatus::None),
+        }
+    }
+
     async fn create_branch(
         &self,
         repo: &str,
@@ -450,7 +604,10 @@ fn map_pull_request(
         url,
         state,
         head: pull.head.ref_field,
+        head_sha: Some(pull.head.sha),
         base: pull.base.ref_field,
+        node_id: pull.node_id,
+        merged: pull.merged.unwrap_or(false) || pull.merged_at.is_some(),
         updated_at: pull
             .updated_at
             .map(|updated_at| updated_at.to_string())

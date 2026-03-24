@@ -43,7 +43,7 @@ impl<'a> ViewBuilder<'a> {
 
     fn build_kanban(&self, scope: Option<&ProjectScope>) -> Result<()> {
         for board in &self.config.boards {
-            for state in &board.states {
+            for state in &board.statuses {
                 fs::create_dir_all(
                     self.paths
                         .views_root()
@@ -69,7 +69,7 @@ impl<'a> ViewBuilder<'a> {
                 .views_root()
                 .join("kanban")
                 .join(&issue.frontmatter.board)
-                .join(issue.frontmatter.state.as_str())
+                .join(issue.frontmatter.status.as_str())
                 .join(name);
             fs::create_dir_all(target.parent().context("missing target parent")?)?;
             fs::copy(&path, &target)?;

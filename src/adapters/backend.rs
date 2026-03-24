@@ -57,8 +57,27 @@ pub struct BackendPrRecord {
     pub url: String,
     pub state: String,
     pub head: String,
+    pub head_sha: Option<String>,
     pub base: String,
+    pub node_id: Option<String>,
+    pub merged: bool,
     pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
+pub enum MergeMethod {
+    #[default]
+    Merge,
+    Squash,
+    Rebase,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrChecksStatus {
+    None,
+    Pending,
+    Passed,
+    Failed,
 }
 
 #[async_trait]
@@ -113,6 +132,25 @@ pub trait BackendProvider: Send + Sync {
         head: &str,
         base: &str,
     ) -> Result<Option<BackendPrRecord>, RiptskError>;
+    async fn merge_pr(
+        &self,
+        repo: &str,
+        number: u64,
+        method: MergeMethod,
+        commit_title: Option<&str>,
+        commit_message: Option<&str>,
+    ) -> Result<(), RiptskError>;
+    async fn enable_auto_merge(
+        &self,
+        repo: &str,
+        number: u64,
+        method: MergeMethod,
+    ) -> Result<(), RiptskError>;
+    async fn get_pr_checks_status(
+        &self,
+        repo: &str,
+        number: u64,
+    ) -> Result<PrChecksStatus, RiptskError>;
     async fn create_branch(
         &self,
         repo: &str,

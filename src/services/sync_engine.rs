@@ -255,7 +255,7 @@ impl<'a> SyncEngine<'a> {
             provider
                 .sync_labels(repo, record.issue_id, &upsert.labels)
                 .await?;
-            if issue.frontmatter.state == crate::domain::issue::IssueState::Done {
+            if issue.frontmatter.status == crate::domain::issue::IssueState::Done {
                 provider.close_issue(repo, record.issue_id).await?;
                 record.state = "closed".into();
             } else {
@@ -437,7 +437,9 @@ fn parse_backend_state_key(key: &str) -> Option<(&str, &str, u64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adapters::backend::{BackendIssueUpsert, BackendPrRecord, DeleteOutcome};
+    use crate::adapters::backend::{
+        BackendIssueUpsert, BackendPrRecord, DeleteOutcome, MergeMethod, PrChecksStatus,
+    };
     use crate::config::default_config;
     use crate::domain::issue::{
         ConflictMeta, GithubIssueMeta, IssueFrontmatter, IssueState, Priority,
@@ -638,6 +640,34 @@ mod tests {
             _base: &str,
         ) -> Result<Option<BackendPrRecord>, RiptskError> {
             Err(RiptskError::General("unused in test".into()))
+        }
+
+        async fn merge_pr(
+            &self,
+            _repo: &str,
+            _number: u64,
+            _method: MergeMethod,
+            _commit_title: Option<&str>,
+            _commit_message: Option<&str>,
+        ) -> Result<(), RiptskError> {
+            Ok(())
+        }
+
+        async fn enable_auto_merge(
+            &self,
+            _repo: &str,
+            _number: u64,
+            _method: MergeMethod,
+        ) -> Result<(), RiptskError> {
+            Ok(())
+        }
+
+        async fn get_pr_checks_status(
+            &self,
+            _repo: &str,
+            _number: u64,
+        ) -> Result<PrChecksStatus, RiptskError> {
+            Ok(PrChecksStatus::None)
         }
 
         async fn create_branch(
@@ -1077,7 +1107,7 @@ mod tests {
             frontmatter: IssueFrontmatter {
                 id: id.into(),
                 title: title.into(),
-                state: IssueState::Todo,
+                status: IssueState::Todo,
                 board: "personal".into(),
                 project: project.into(),
                 org: None,
@@ -1129,7 +1159,7 @@ mod tests {
             frontmatter: IssueFrontmatter {
                 id: id.into(),
                 title: "Remote".into(),
-                state: IssueState::Todo,
+                status: IssueState::Todo,
                 board: "personal".into(),
                 project: "remote-project".into(),
                 org: None,

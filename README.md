@@ -15,7 +15,7 @@ offline; AI features are available but never required.
 - **Offline by default** -- no network needed for day-to-day work
 - **Multi-remote sync** -- pull/push issues to GitHub and GitLab projects with
   conflict detection and resolution
-- **Kanban board** -- terminal tree view grouped by state
+- **Kanban board** -- terminal tree view grouped by status
 - **Recurring tasks** -- schedule daily/weekly/monthly/yearly issues from
   templates
 - **Sessions** -- one-command start/end workflow for multi-host setups
@@ -68,13 +68,13 @@ tsk new --template bug --priority high   # use a template
 tsk new --title "Draft spec" --ai        # AI generates the body
 
 tsk ls                                   # list issues (default: todo)
-tsk ls --state in-progress               # filter by state
+tsk ls --status in-progress              # filter by status
 tsk ls --priority high --project myapp   # combine filters
-tsk ls --all                             # all states
+tsk ls --all                             # all statuses
 
 tsk show <ID>                            # display full issue
 tsk edit <ID>                            # open in $EDITOR
-tsk move <ID> in-progress                # change state
+tsk status <ID> in-progress              # change status
 tsk close <ID>                           # move to done
 tsk reopen <ID>                          # move back from done
 tsk rm <ID>                              # delete issue
@@ -94,6 +94,7 @@ tsk new --title "Fix login bug"      # 1. create the issue (required first)
 tsk branch WHL-042                   # 2. create & push branch from issue
 # ... work on the branch, commit, push ...
 tsk pr                               # 3. open PR/MR from current branch
+tsk done WHL-042                     # 4. merge, clean up, and mark done
 ```
 
 `tsk branch` must be run from within the project's git working directory (not
@@ -106,13 +107,38 @@ request (GitLab) with:
 - **Title**: `Resolve "<issue title>"`
 - **Body**: `Closes #<issue_number>` followed by the issue body
 
-The issue is automatically moved to `in-progress` if it was in `backlog` or
-`todo`. The PR/MR URL is stored in the issue's `pr_url` frontmatter field.
+The issue status is automatically changed to `in-progress` if it was in
+`backlog` or `todo`. The PR/MR URL is stored in the issue's `pr_url`
+frontmatter field.
+
+`tsk done` completes the PR workflow for an issue. In order, it:
+
+1. Validates that the project working tree is clean.
+2. Checks the PR state and skips the merge step if the PR is already merged
+   (`tsk pr show <ID>`).
+3. Merges the PR, with optional confirmation and optional auto-merge support.
+4. Checks out the default branch and pulls the latest changes (`git checkout`
+   + `git pull`).
+5. Deletes the remote branch (`tsk branch <ID> -D` handles both 5 and 6).
+6. Force-deletes the local branch.
+7. Clears the issue's `branch` and `id_slug` metadata (`tsk edit <ID>`).
+8. Changes the issue status to `done` (`tsk status <ID> done` or
+   `tsk close <ID>`).
+9. Auto-commits the issue update if auto-commit is enabled (`tsk commit`).
+
+Options:
+
+- `--merge-method <merge|squash|rebase>`: choose the merge strategy.
+- `--auto-merge`: enable auto-merge and wait for required checks to pass.
+- `--yes`, `-y`: skip the confirmation prompt before merging.
+- `--timeout <SECONDS>`: set how long to wait for auto-merge before failing.
+- `--project`, `-p`: limit issue resolution to one or more specific projects.
+- `--all-projects`, `-a`: allow issue resolution across all registered projects.
 
 ### Kanban board
 
 The default board lanes are: **todo**, **in-progress**, and **done**. Custom
-boards and states can be defined in the `boards` section of `riptsk.yaml`.
+boards and statuses can be defined in the `boards` section of `riptsk.yaml`.
 
 ```bash
 tsk board                    # show default board
@@ -127,14 +153,14 @@ To open the board in `nvim`, set `ui.opener` in `riptsk.yaml`:
 tsk config set ui.opener nvim
 ```
 
-Move issues between lanes (states) and reorder within a lane:
+Change issue status between lanes and reorder within a lane:
 
 ```bash
-tsk move <ID> in-progress    # change state (move to a different lane)
+tsk status <ID> in-progress  # change status (move to a different lane)
 tsk close <ID>               # move to done
 tsk reopen <ID>              # move back from done
 
-tsk reorder <state>          # interactive reorder (requires fzf)
+tsk reorder <status>         # interactive reorder (requires fzf)
 tsk reorder-up <ID>          # move issue up in its lane
 tsk reorder-down <ID>        # move issue down in its lane
 ```
@@ -231,7 +257,7 @@ frontmatter followed by a Markdown body:
 ---
 id: WHL-042
 title: Fix wormhole stabilizer retry logic
-state: in-progress
+status: in-progress
 board: personal
 project: wormhole-router
 priority: high
@@ -247,7 +273,7 @@ due: 2026-03-20
 The stabilizer retry logic does not back off correctly...
 ```
 
-Key frontmatter fields: `id`, `title`, `state`, `board`, `project`, `org`,
+Key frontmatter fields: `id`, `title`, `status`, `board`, `project`, `org`,
 `priority` (low/medium/high/urgent), `labels`, `assignee`, `milestone`,
 `cycle`, `order`, `due`, `recurring`.
 
@@ -283,9 +309,9 @@ riptsk follows the [XDG Base Directory Specification](https://specifications.fre
 The main configuration file is `riptsk.yaml` in `$RIPTSK_REPO`. Run `tsk init` to
 generate one with sensible defaults. Key sections:
 
-- **defaults** -- default board, state, priority, template for new issues
+- **defaults** -- default board, status, priority, template for new issues
 - **remotes** -- GitHub/GitLab project connections
-- **boards** -- kanban board definitions with custom state lists
+- **boards** -- kanban board definitions with custom status lists
 - **ui** -- opener command, tree depth, fzf options
 - **ai** -- model, enabled features
 - **sync** -- conflict detection toggle

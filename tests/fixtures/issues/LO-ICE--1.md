@@ -1,7 +1,7 @@
 ---
 id: LO-ICE--1
 title: Local project issue
-state: todo
+status: todo
 board: personal
 project: ice-shelf-tracker
 org: ~

@@ -72,7 +72,7 @@ fn run() -> Result<(), RiptskError> {
             runtime.block_on(commands::issues::new(&paths, args))
         }
         Commands::Edit(args) => commands::issues::edit(&paths, args),
-        Commands::Move(args) => commands::issues::move_issue(&paths, args),
+        Commands::Status(args) => commands::issues::set_status(&paths, args),
         Commands::Close(args) => commands::issues::close(&paths, args),
         Commands::Reopen(args) => commands::issues::reopen(&paths, args),
         Commands::Rm(args) => commands::issues::remove(&paths, args),
@@ -101,6 +101,13 @@ fn run() -> Result<(), RiptskError> {
                 .build()
                 .context("failed to construct tokio runtime")?;
             runtime.block_on(commands::branch::branch(&paths, args))
+        }
+        Commands::Done(args) => {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .context("failed to construct tokio runtime")?;
+            runtime.block_on(commands::done::run(&paths, args))
         }
         Commands::Pr(args) => {
             let runtime = tokio::runtime::Builder::new_current_thread()
