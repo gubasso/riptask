@@ -245,13 +245,16 @@ fn non_empty_env(name: &str) -> Option<String> {
         .filter(|value| !value.trim().is_empty())
 }
 
-fn run_cli_token(cmd: &str, args: &[&str]) -> Result<String, String> {
-    let output = match Command::new(cmd).args(args).output() {
+fn run_gh_auth_token(host: &str) -> Result<String, String> {
+    let output = match Command::new("gh")
+        .args(["auth", "token", "--hostname", host])
+        .output()
+    {
         Ok(output) => output,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Err(format!("{cmd} not found on PATH"));
+            return Err("'gh' not found on PATH".into());
         }
-        Err(error) => return Err(format!("{cmd} failed to run: {error}")),
+        Err(error) => return Err(format!("'gh' failed to run: {error}")),
     };
 
     if !output.status.success() {
@@ -260,24 +263,56 @@ fn run_cli_token(cmd: &str, args: &[&str]) -> Result<String, String> {
             .code()
             .map(|code| code.to_string())
             .unwrap_or_else(|| "unknown".into());
-        return Err(format!("{cmd} exited with status {status}"));
+        return Err(format!("'gh auth token' exited with status {status}"));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
     if stdout.is_empty() {
-        return Err(format!("{cmd} returned empty output"));
+        return Err("'gh auth token' returned empty output (expected raw token on stdout)".into());
     }
 
     Ok(stdout)
 }
 
-fn parse_glab_token(stdout: &str) -> Option<String> {
-    stdout.lines().find_map(|line| {
+fn run_glab_auth_token(host: &str) -> Result<String, String> {
+    let output = match Command::new("glab")
+        .args(["auth", "status", "--show-token", "--hostname", host])
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err("'glab' not found on PATH".into());
+        }
+        Err(error) => return Err(format!("'glab' failed to run: {error}")),
+    };
+
+    if !output.status.success() {
+        let status = output
+            .status
+            .code()
+            .map(|code| code.to_string())
+            .unwrap_or_else(|| "unknown".into());
+        return Err(format!("'glab auth status' exited with status {status}"));
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    if stderr.trim().is_empty() {
+        return Err("'glab auth status' produced no output on stderr".into());
+    }
+
+    parse_glab_token(&stderr).ok_or_else(|| {
+        "glab output did not contain expected 'Token found:' line (glab may have changed its output format)".into()
+    })
+}
+
+fn parse_glab_token(stderr_output: &str) -> Option<String> {
+    stderr_output.lines().find_map(|line| {
         let normalized = line
             .trim()
             .trim_start_matches(|ch: char| !ch.is_alphanumeric());
         normalized
-            .strip_prefix("Token:")
+            .strip_prefix("Token found:")
+            .or_else(|| normalized.strip_prefix("Token:"))
             .map(str::trim)
             .filter(|token| !token.is_empty())
             .map(ToOwned::to_owned)
@@ -292,7 +327,7 @@ fn resolve_github_token(backend_name: &str) -> Result<(String, CredentialSource)
         return Ok((token, CredentialSource::EnvVar("GH_TOKEN")));
     }
 
-    match run_cli_token("gh", &["auth", "token", "--hostname", "github.com"]) {
+    match run_gh_auth_token("github.com") {
         Ok(token) => Ok((token, CredentialSource::CliTool("gh auth token"))),
         Err(reason) => Err(RiptskError::Auth(format!(
             "GitHub authentication failed for backend '{backend_name}'\n\n\
@@ -314,25 +349,11 @@ fn resolve_gitlab_token(
         return Ok((token, CredentialSource::EnvVar("GITLAB_TOKEN")));
     }
 
-    let cli_output = run_cli_token(
-        "glab",
-        &["auth", "status", "--show-token", "--hostname", host],
-    );
-    match cli_output {
-        Ok(stdout) => match parse_glab_token(&stdout) {
-            Some(token) => Ok((
-                token,
-                CredentialSource::CliTool("glab auth status --show-token"),
-            )),
-            None => Err(RiptskError::Auth(format!(
-                "GitLab authentication failed for backend '{backend_name}' (host: {host})\n\n\
-Tried: GITLAB_TOKEN, glab auth status --show-token\n\n\
-glab returned no Token line\n\n\
-To fix, do one of:\n\
-  • export GITLAB_TOKEN=<your-token>\n\
-  • glab auth login --hostname {host}"
-            ))),
-        },
+    match run_glab_auth_token(host) {
+        Ok(token) => Ok((
+            token,
+            CredentialSource::CliTool("glab auth status --show-token"),
+        )),
         Err(reason) => Err(RiptskError::Auth(format!(
             "GitLab authentication failed for backend '{backend_name}' (host: {host})\n\n\
 Tried: GITLAB_TOKEN, glab auth status --show-token\n\n\
@@ -459,22 +480,36 @@ mod tests {
 
     #[test]
     fn parse_glab_token_extracts_token_from_multiline_output() {
-        let stdout = "gitlab.com\n  ✓ Logged in\n  ✓ Token: glpat-xxxx\n  ✓ API calls: 123";
+        let stderr_output = "gitlab.suse.de\n  ✓ Logged in to gitlab.suse.de as user\n  ✓ Token found: glpat-xxxx\n  ✓ REST API Endpoint: https://gitlab.suse.de/api/v4/";
 
-        assert_eq!(parse_glab_token(stdout), Some("glpat-xxxx".into()));
+        assert_eq!(parse_glab_token(stderr_output), Some("glpat-xxxx".into()));
     }
 
     #[test]
     fn parse_glab_token_returns_none_without_token_line() {
-        let stdout = "gitlab.com\n  ✓ Logged in\n  ✓ API calls: 123";
+        let stderr_output = "gitlab.com\n  ✓ Logged in\n  ✓ API calls: 123";
 
-        assert_eq!(parse_glab_token(stdout), None);
+        assert_eq!(parse_glab_token(stderr_output), None);
     }
 
     #[test]
-    fn parse_glab_token_handles_plain_token_line() {
-        let stdout = "gitlab.com\nToken: glpat-xxxx";
+    fn parse_glab_token_handles_plain_token_found_line() {
+        let stderr_output = "gitlab.com\nToken found: glpat-xxxx";
 
-        assert_eq!(parse_glab_token(stdout), Some("glpat-xxxx".into()));
+        assert_eq!(parse_glab_token(stderr_output), Some("glpat-xxxx".into()));
+    }
+
+    #[test]
+    fn parse_glab_token_falls_back_to_token_prefix() {
+        let stderr_output = "gitlab.com\nToken: glpat-xxxx";
+
+        assert_eq!(parse_glab_token(stderr_output), Some("glpat-xxxx".into()));
+    }
+
+    #[test]
+    fn parse_glab_token_returns_none_for_empty_token_value() {
+        let stderr_output = "Token found:  ";
+
+        assert_eq!(parse_glab_token(stderr_output), None);
     }
 }
