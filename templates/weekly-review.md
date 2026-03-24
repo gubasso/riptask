@@ -1,7 +1,7 @@
 ---
 template_name: Weekly Review
 default_labels: [recurring, review]
-default_state: todo
+default_status: todo
 default_priority: medium
 ---
 

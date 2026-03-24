@@ -33,7 +33,7 @@ pub struct RecurringDef {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub org: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub state: Option<IssueState>,
+    pub status: Option<IssueState>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub priority: Option<Priority>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

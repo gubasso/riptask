@@ -46,7 +46,7 @@ impl AiBackend for CommandAiBackend {
         let output = run_ai(
             &self.binary,
             &self.model,
-            "Return JSON with keys state, priority, labels.",
+            "Return JSON with keys status, priority, labels.",
             issue_context,
         )?;
         let parsed: serde_json::Value = serde_json::from_str(&output).map_err(|error| {
@@ -54,7 +54,7 @@ impl AiBackend for CommandAiBackend {
         })?;
         Ok(TriageSuggestion {
             state: parsed
-                .get("state")
+                .get("status")
                 .and_then(|value| value.as_str())
                 .map(ToOwned::to_owned),
             priority: parsed

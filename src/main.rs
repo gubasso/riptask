@@ -72,7 +72,7 @@ fn run() -> Result<(), RiptskError> {
             runtime.block_on(commands::issues::new(&paths, args))
         }
         Commands::Edit(args) => commands::issues::edit(&paths, args),
-        Commands::Move(args) => commands::issues::move_issue(&paths, args),
+        Commands::Status(args) => commands::issues::set_status(&paths, args),
         Commands::Close(args) => commands::issues::close(&paths, args),
         Commands::Reopen(args) => commands::issues::reopen(&paths, args),
         Commands::Rm(args) => commands::issues::remove(&paths, args),

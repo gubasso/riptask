@@ -32,7 +32,7 @@ validate_issue_file() {
     validate_frontmatter_delimiters "$file" || { report_fail "$file" "missing frontmatter delimiters"; return; }
     yq --front-matter=extract '.' "$file" >/dev/null 2>&1 || { report_fail "$file" "invalid YAML in frontmatter"; return; }
     title="$(yq --front-matter=extract -r '.title // ""' "$file")"
-    state="$(yq --front-matter=extract -r '.state // ""' "$file")"
+    state="$(yq --front-matter=extract -r '.status // ""' "$file")"
     board="$(yq --front-matter=extract -r '.board // ""' "$file")"
     project="$(yq --front-matter=extract -r '.project // ""' "$file")"
     id="$(yq --front-matter=extract -r '.id // ""' "$file")"
@@ -40,12 +40,12 @@ validate_issue_file() {
     priority="$(yq --front-matter=extract -r '.priority // ""' "$file")"
     remote_deleted="$(yq --front-matter=extract -r '.remote_deleted // ""' "$file")"
     [[ -n "$title" ]] || report_fail "$file" "missing required field: title"
-    [[ -n "$state" ]] || report_fail "$file" "missing required field: state"
+    [[ -n "$state" ]] || report_fail "$file" "missing required field: status"
     [[ -n "$board" ]] || report_fail "$file" "missing required field: board"
     [[ -n "$project" ]] || report_fail "$file" "missing required field: project"
     [[ -n "$updated" ]] || report_fail "$file" "missing required field: local_updated_at"
     [[ -n "$id" ]] || report_fail "$file" "missing required field: id"
-    case "$state" in backlog|todo|in-progress|review|done) ;; *) report_fail "$file" "invalid state: \"$state\"" ;; esac
+    case "$state" in backlog|todo|in-progress|review|done) ;; *) report_fail "$file" "invalid status: \"$state\"" ;; esac
     if [[ -n "$priority" ]]; then
         case "$priority" in low|medium|high|urgent) ;; *) report_fail "$file" "invalid priority: \"$priority\"" ;; esac
     fi
@@ -76,10 +76,10 @@ validate_template_file() {
     local state priority
     validate_frontmatter_delimiters "$file" || { report_fail "$file" "missing frontmatter delimiters"; return; }
     yq --front-matter=extract '.' "$file" >/dev/null 2>&1 || { report_fail "$file" "invalid YAML in frontmatter"; return; }
-    state="$(yq --front-matter=extract -r '.default_state // ""' "$file")"
+    state="$(yq --front-matter=extract -r '.default_status // ""' "$file")"
     priority="$(yq --front-matter=extract -r '.default_priority // ""' "$file")"
     if [[ -n "$state" ]]; then
-        case "$state" in backlog|todo|in-progress|review|done) ;; *) report_fail "$file" "invalid default_state: \"$state\"" ;; esac
+        case "$state" in backlog|todo|in-progress|review|done) ;; *) report_fail "$file" "invalid default_status: \"$state\"" ;; esac
     fi
     if [[ -n "$priority" ]]; then
         case "$priority" in none|low|medium|high|critical) ;; *) report_fail "$file" "invalid default_priority: \"$priority\"" ;; esac

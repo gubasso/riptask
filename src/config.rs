@@ -36,7 +36,7 @@ pub fn default_config() -> Config {
         auto_commit: false,
         defaults: DefaultsConfig {
             board: "personal".into(),
-            state: IssueState::Backlog,
+            status: IssueState::Backlog,
             priority: Priority::Medium,
             assignee: None,
             template: Some("task".into()),
@@ -44,7 +44,7 @@ pub fn default_config() -> Config {
         backends: Vec::new(),
         boards: vec![BoardConfig {
             name: "personal".into(),
-            states: vec![
+            statuses: vec![
                 IssueState::Backlog,
                 IssueState::Todo,
                 IssueState::InProgress,
@@ -126,7 +126,7 @@ pub fn config_set(config: &mut Config, key: &str, value: &str) -> Result<()> {
             config.auto_commit = value.parse().context("auto_commit must be true or false")?
         }
         "defaults.board" => config.defaults.board = value.to_owned(),
-        "defaults.state" => config.defaults.state = parse_state(value)?,
+        "defaults.status" => config.defaults.status = parse_state(value)?,
         "defaults.priority" => config.defaults.priority = parse_priority(value)?,
         "defaults.assignee" => config.defaults.assignee = some_if_not_empty(value),
         "defaults.template" => config.defaults.template = some_if_not_empty(value),
@@ -168,7 +168,7 @@ pub fn parse_state(value: &str) -> Result<IssueState> {
         "in-progress" => Ok(IssueState::InProgress),
         "review" => Ok(IssueState::Review),
         "done" => Ok(IssueState::Done),
-        _ => Err(anyhow::anyhow!("invalid state: {value}")),
+        _ => Err(anyhow::anyhow!("invalid status: {value}")),
     }
 }
 

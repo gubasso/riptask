@@ -143,7 +143,7 @@ pub fn format_issue_plain(issue: &IssueDocument) -> String {
             .as_ref()
             .map(Priority::as_str)
             .unwrap_or(""),
-        issue.frontmatter.state.as_str(),
+        issue.frontmatter.status.as_str(),
         sanitize_control(&issue.frontmatter.project),
         sanitize_control(&issue.frontmatter.title)
     )

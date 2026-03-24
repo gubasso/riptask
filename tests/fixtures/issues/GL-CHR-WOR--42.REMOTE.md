@@ -3,7 +3,7 @@ conflict_role: remote
 conflict_parent: GL-CHR-WOR--42
 id: GL-CHR-WOR--42
 title: Fix wormhole stabilizer retry logic
-state: review
+status: review
 board: personal
 project: wormhole-router
 org: chrono

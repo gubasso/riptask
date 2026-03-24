@@ -179,7 +179,7 @@ pub fn reorder(paths: &AppPaths, args: ReorderArgs) -> Result<(), RiptskError> {
         .board
         .or_else(|| config.boards.first().map(|board| board.name.clone()))
         .unwrap_or_else(|| "personal".into());
-    let state = parse_state(&args.state).map_err(RiptskError::Other)?;
+    let state = parse_state(&args.status).map_err(RiptskError::Other)?;
 
     let ids = if args.ids.is_empty() {
         let scope = crate::scope::resolve_scope(
@@ -200,7 +200,7 @@ pub fn reorder(paths: &AppPaths, args: ReorderArgs) -> Result<(), RiptskError> {
         let issues = service
             .list_matching(
                 &crate::cli::LsArgs {
-                    state: Some(state.as_str().to_owned()),
+                    status: Some(state.as_str().to_owned()),
                     board: Some(board.clone()),
                     ..Default::default()
                 },

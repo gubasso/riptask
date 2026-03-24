@@ -5,7 +5,7 @@ expression: "round_trip_issue(\"GL-CHR-WOR--42.REMOTE.md\")"
 ---
 id: GL-CHR-WOR--42
 title: Fix wormhole stabilizer retry logic
-state: review
+status: review
 board: personal
 project: wormhole-router
 org: chrono

@@ -85,7 +85,7 @@ pub struct ConflictMeta {
 pub struct IssueFrontmatter {
     pub id: String,
     pub title: String,
-    pub state: IssueState,
+    pub status: IssueState,
     pub board: String,
     pub project: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -183,7 +183,7 @@ mod tests {
         let yaml = r#"---
 id: TEST--1
 title: Legacy assignee
-state: todo
+status: todo
 board: personal
 project: test
 assignee: alice
@@ -199,7 +199,7 @@ body"#;
         let yaml = r#"---
 id: TEST--2
 title: Multi assignees
-state: todo
+status: todo
 board: personal
 project: test
 assignees:
@@ -217,7 +217,7 @@ body"#;
         let yaml = r#"---
 id: TEST--3
 title: No assignee
-state: todo
+status: todo
 board: personal
 project: test
 local_updated_at: "2026-03-20T10:00:00Z"

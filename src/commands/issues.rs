@@ -3,7 +3,7 @@ use crate::adapters::git::CliGit;
 use crate::adapters::picker::{
     IssueDisplayMode, format_issue_plain, sanitize_control, truncate_title,
 };
-use crate::cli::{IdArgs, LsArgs, MoveArgs, NewArgs};
+use crate::cli::{IdArgs, LsArgs, NewArgs, StatusArgs};
 use crate::config::load_config;
 use crate::domain::issue::{
     GithubIssueMeta, GitlabIssueMeta, IssueDocument, IssueFrontmatter, IssueState, Priority,
@@ -115,7 +115,7 @@ fn render_issue_table(issues: &[IssueDocument], mode: &IssueDisplayMode) -> Stri
         Cell::new("Title")
             .add_attribute(Attribute::Bold)
             .add_attribute(Attribute::Dim),
-        Cell::new("State")
+        Cell::new("Status")
             .add_attribute(Attribute::Bold)
             .add_attribute(Attribute::Dim),
         Cell::new("Priority")
@@ -150,7 +150,7 @@ fn render_issue_table(issues: &[IssueDocument], mode: &IssueDisplayMode) -> Stri
                 .fg(Color::Cyan)
                 .set_alignment(CellAlignment::Right),
             Cell::new(&title),
-            Cell::new(fm.state.as_str()).fg(state_color(&fm.state)),
+            Cell::new(fm.status.as_str()).fg(state_color(&fm.status)),
             Cell::new(priority_str).fg(priority_color(fm.priority.as_ref())),
             Cell::new(sanitize_control(&fm.board)).fg(Color::Grey),
         ]);
@@ -271,9 +271,9 @@ pub fn edit(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
     Ok(())
 }
 
-pub fn move_issue(paths: &AppPaths, args: MoveArgs) -> Result<(), RiptskError> {
+pub fn set_status(paths: &AppPaths, args: StatusArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    let MoveArgs { scope, id, state } = args;
+    let StatusArgs { scope, id, status } = args;
     let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
     let cwd = camino::Utf8PathBuf::from(
         std::env::current_dir()
@@ -284,15 +284,15 @@ pub fn move_issue(paths: &AppPaths, args: MoveArgs) -> Result<(), RiptskError> {
     let Some(id) = id_resolution::require_id(paths, &config, &cwd, id, &scope)? else {
         return Ok(());
     };
-    let state = state.ok_or_else(|| RiptskError::General("<state> required".into()))?;
+    let status = status.ok_or_else(|| RiptskError::General("<status> required".into()))?;
     let path = issue_store::find_issue(paths, &id)?;
     let issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
-    IssueService::new(paths, &config).move_issue(&id, &state)?;
+    IssueService::new(paths, &config).move_issue(&id, &status)?;
     maybe_auto_commit(
         &config,
         &CliGit,
         paths.riptsk_repo.as_std_path(),
-        &format!("riptsk: move {} - {}", id, issue.frontmatter.title),
+        &format!("riptsk: status {} - {}", id, issue.frontmatter.title),
         &[path.as_std_path()],
     )?;
     Ok(())
@@ -300,24 +300,24 @@ pub fn move_issue(paths: &AppPaths, args: MoveArgs) -> Result<(), RiptskError> {
 
 pub fn close(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    move_issue(
+    set_status(
         paths,
-        MoveArgs {
+        StatusArgs {
             scope: args.scope,
             id: args.id,
-            state: Some("done".into()),
+            status: Some("done".into()),
         },
     )
 }
 
 pub fn reopen(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    move_issue(
+    set_status(
         paths,
-        MoveArgs {
+        StatusArgs {
             scope: args.scope,
             id: args.id,
-            state: Some("todo".into()),
+            status: Some("todo".into()),
         },
     )
 }
@@ -371,7 +371,7 @@ async fn create_backend_issue(
         body: draft.body.clone(),
         state: None,
         state_reason: None,
-        labels: build_state_labels(&draft.state, &draft.labels),
+        labels: build_state_labels(&draft.status, &draft.labels),
         assignees: draft.assignee.clone().into_iter().collect(),
         milestone_id: None,
         due_date: None,
@@ -386,7 +386,7 @@ async fn create_backend_issue(
         frontmatter: IssueFrontmatter {
             id: id.clone(),
             title: draft.title.clone(),
-            state: draft.state.clone(),
+            status: draft.status.clone(),
             board: draft.board.clone(),
             project: draft.project.clone(),
             org: draft.org.clone(),
@@ -404,7 +404,7 @@ async fn create_backend_issue(
                     milestone_id: record.milestone_id,
                     url: Some(record.url.clone()),
                     updated_at: record.updated_at.clone(),
-                    last_pushed_state: Some(draft.state.clone()),
+                    last_pushed_state: Some(draft.status.clone()),
                 })
             } else {
                 None
@@ -417,7 +417,7 @@ async fn create_backend_issue(
                     milestone_id: record.milestone_id,
                     url: Some(record.url.clone()),
                     updated_at: record.updated_at.clone(),
-                    last_pushed_state: Some(draft.state.clone()),
+                    last_pushed_state: Some(draft.status.clone()),
                 })
             } else {
                 None

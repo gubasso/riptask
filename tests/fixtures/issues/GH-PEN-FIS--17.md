@@ -1,7 +1,7 @@
 ---
 id: GH-PEN-FIS--17
 title: Investigate temporal image drift
-state: todo
+status: todo
 board: personal
 project: fish-from-the-future
 org: chrono

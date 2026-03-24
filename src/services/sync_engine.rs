@@ -255,7 +255,7 @@ impl<'a> SyncEngine<'a> {
             provider
                 .sync_labels(repo, record.issue_id, &upsert.labels)
                 .await?;
-            if issue.frontmatter.state == crate::domain::issue::IssueState::Done {
+            if issue.frontmatter.status == crate::domain::issue::IssueState::Done {
                 provider.close_issue(repo, record.issue_id).await?;
                 record.state = "closed".into();
             } else {
@@ -1107,7 +1107,7 @@ mod tests {
             frontmatter: IssueFrontmatter {
                 id: id.into(),
                 title: title.into(),
-                state: IssueState::Todo,
+                status: IssueState::Todo,
                 board: "personal".into(),
                 project: project.into(),
                 org: None,
@@ -1159,7 +1159,7 @@ mod tests {
             frontmatter: IssueFrontmatter {
                 id: id.into(),
                 title: "Remote".into(),
-                state: IssueState::Todo,
+                status: IssueState::Todo,
                 board: "personal".into(),
                 project: "remote-project".into(),
                 org: None,
