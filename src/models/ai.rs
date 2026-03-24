@@ -5,7 +5,7 @@ pub struct AiConfig {
     #[serde(default)]
     pub enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
+    pub command: Option<String>,
     #[serde(default)]
     pub features: AiFeatures,
 }

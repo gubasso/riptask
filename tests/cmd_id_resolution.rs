@@ -98,7 +98,6 @@ ui:
   fzf_opts: \"--border\"
 ai:
   enabled: false
-  model: claude-haiku-4-5-20251001
   features:
     new_body_gen: true
     triage: true
