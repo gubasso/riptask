@@ -234,6 +234,9 @@ pub struct NewArgs {
     /// Generate issue content with AI
     #[arg(long)]
     pub ai: bool,
+    /// Open in $EDITOR after creation
+    #[arg(short = 'e', long)]
+    pub edit: bool,
 }
 
 #[derive(Debug, Clone, Args, Default)]
@@ -722,6 +725,15 @@ mod tests {
             panic!("expected new command");
         };
         assert_eq!(args.template.as_deref(), Some("bug"));
+    }
+
+    #[test]
+    fn new_edit_flag_parses() {
+        let cli = Cli::try_parse_from(["tsk", "new", "-t", "hello", "-e"]).expect("parse");
+        let Commands::New(args) = cli.command.expect("command") else {
+            panic!("expected new command");
+        };
+        assert!(args.edit);
     }
 
     #[test]

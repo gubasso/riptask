@@ -204,6 +204,7 @@ pub async fn new(paths: &AppPaths, args: NewArgs) -> Result<(), RiptskError> {
     }
     let service = IssueService::new(paths, &config);
     let ai = args.ai;
+    let edit = args.edit;
     let mut draft = service.prepare_issue_draft(args)?;
     if ai {
         draft.body = match crate::commands::ai::generate_body(paths, &draft.title, &draft.project) {
@@ -242,6 +243,19 @@ pub async fn new(paths: &AppPaths, args: NewArgs) -> Result<(), RiptskError> {
         &[issue_path.as_std_path()],
     )?;
     println!("{}", issue.frontmatter.id);
+    if edit {
+        service.edit_issue(Some(issue.frontmatter.id.clone()))?;
+        maybe_auto_commit(
+            &config,
+            &CliGit,
+            paths.riptsk_repo.as_std_path(),
+            &format!(
+                "riptsk: edit {} - {}",
+                issue.frontmatter.id, issue.frontmatter.title
+            ),
+            &[issue_path.as_std_path()],
+        )?;
+    }
     Ok(())
 }
 

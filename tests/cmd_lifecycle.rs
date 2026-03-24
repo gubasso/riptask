@@ -1,6 +1,8 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::process::Command as StdCommand;
 use tempfile::tempdir;
 
@@ -28,6 +30,61 @@ fn new_creates_issue_file() {
         .assert()
         .success()
         .stdout(predicate::str::contains("LO-PER--1"));
+}
+
+#[cfg(unix)]
+#[test]
+fn new_edit_opens_editor_after_creation() {
+    let temp = tempdir().expect("temp dir");
+    let repo = temp.path().join("repo");
+    let cache = temp.path().join("cache");
+    let editor_script = temp.path().join("fake-editor.sh");
+
+    Command::cargo_bin("tsk")
+        .expect("binary")
+        .env("RIPTSK_REPO", &repo)
+        .env("XDG_CACHE_HOME", &cache)
+        .arg("init")
+        .assert()
+        .success();
+
+    fs::write(
+        &editor_script,
+        "#!/bin/sh\nprintf '\\nEDITOR_MARKER\\n' >> \"$1\"\n",
+    )
+    .expect("write editor script");
+    let mut permissions = fs::metadata(&editor_script)
+        .expect("editor metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&editor_script, permissions).expect("chmod editor script");
+
+    Command::cargo_bin("tsk")
+        .expect("binary")
+        .current_dir(temp.path())
+        .env("RIPTSK_REPO", &repo)
+        .env("XDG_CACHE_HOME", &cache)
+        .env("EDITOR", &editor_script)
+        .args([
+            "new",
+            "--title",
+            "Edit test",
+            "--project",
+            "personal",
+            "--edit",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("LO-PER--1"));
+
+    let issue_path = fs::read_dir(repo.join("issues"))
+        .expect("issues dir")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .find(|path| path.extension().and_then(|value| value.to_str()) == Some("md"))
+        .expect("issue file");
+    let issue = fs::read_to_string(issue_path).expect("read issue");
+    assert!(issue.contains("EDITOR_MARKER"));
 }
 
 #[test]
