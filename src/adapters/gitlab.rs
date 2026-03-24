@@ -1,5 +1,6 @@
 use crate::adapters::backend::{
     BackendIssueRecord, BackendIssueUpsert, BackendPrRecord, BackendProvider, DeleteOutcome,
+    MergeMethod, PrChecksStatus,
 };
 use crate::error::RiptskError;
 use async_trait::async_trait;
@@ -384,6 +385,106 @@ impl BackendProvider for GitlabProvider {
         Ok(merge_requests.into_iter().next().map(map_merge_request))
     }
 
+    async fn merge_pr(
+        &self,
+        repo: &str,
+        number: u64,
+        method: MergeMethod,
+        _commit_title: Option<&str>,
+        commit_message: Option<&str>,
+    ) -> Result<(), RiptskError> {
+        if method == MergeMethod::Rebase {
+            return Err(RiptskError::General(
+                "GitLab does not support rebase as a merge method. Use merge or squash.".into(),
+            ));
+        }
+        let client = self.client().await?;
+        let mut builder = gitlab::api::projects::merge_requests::MergeMergeRequest::builder();
+        builder.project(repo).merge_request(number);
+        if method == MergeMethod::Squash {
+            builder.squash(true);
+        }
+        if let Some(message) = commit_message {
+            builder.merge_commit_message(message);
+        }
+        let endpoint = builder.build().map_err(|error| {
+            RiptskError::General(format!("failed to build merge request: {error}"))
+        })?;
+        gitlab::api::ignore(endpoint)
+            .query_async(&client)
+            .await
+            .map_err(|error| {
+                RiptskError::General(format!("failed to merge MR !{number}: {error}"))
+            })?;
+        Ok(())
+    }
+
+    async fn enable_auto_merge(
+        &self,
+        repo: &str,
+        number: u64,
+        method: MergeMethod,
+    ) -> Result<(), RiptskError> {
+        if method == MergeMethod::Rebase {
+            return Err(RiptskError::General(
+                "GitLab does not support rebase as a merge method. Use merge or squash.".into(),
+            ));
+        }
+        let client = self.client().await?;
+        let mut builder = gitlab::api::projects::merge_requests::MergeMergeRequest::builder();
+        builder
+            .project(repo)
+            .merge_request(number)
+            .merge_when_pipeline_succeeds(true);
+        if method == MergeMethod::Squash {
+            builder.squash(true);
+        }
+        let endpoint = builder.build().map_err(|error| {
+            RiptskError::General(format!("failed to build merge request: {error}"))
+        })?;
+        gitlab::api::ignore(endpoint)
+            .query_async(&client)
+            .await
+            .map_err(|error| {
+                RiptskError::General(format!(
+                    "failed to enable auto-merge for MR !{number}: {error}"
+                ))
+            })?;
+        Ok(())
+    }
+
+    async fn get_pr_checks_status(
+        &self,
+        repo: &str,
+        number: u64,
+    ) -> Result<PrChecksStatus, RiptskError> {
+        let client = self.client().await?;
+        let endpoint = gitlab::api::projects::merge_requests::MergeRequest::builder()
+            .project(repo)
+            .merge_request(number)
+            .build()
+            .map_err(|error| RiptskError::General(error.to_string()))?;
+        let merge_request: GitlabMergeRequest = endpoint
+            .query_async(&client)
+            .await
+            .map_err(|error| RiptskError::Unreachable(error.to_string()))?;
+        match merge_request.head_pipeline {
+            Some(pipeline) => match pipeline.status.as_str() {
+                "success" => Ok(PrChecksStatus::Passed),
+                "failed" | "canceled" => Ok(PrChecksStatus::Failed),
+                "running"
+                | "pending"
+                | "created"
+                | "waiting_for_resource"
+                | "preparing"
+                | "manual"
+                | "scheduled" => Ok(PrChecksStatus::Pending),
+                _ => Ok(PrChecksStatus::None),
+            },
+            None => Ok(PrChecksStatus::None),
+        }
+    }
+
     async fn create_branch(
         &self,
         repo: &str,
@@ -504,8 +605,17 @@ struct GitlabMergeRequest {
     state: String,
     source_branch: String,
     target_branch: String,
+    #[serde(default)]
+    sha: Option<String>,
+    #[serde(default)]
+    head_pipeline: Option<GitlabPipeline>,
     updated_at: String,
     web_url: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct GitlabPipeline {
+    status: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -549,6 +659,7 @@ fn map_issue(issue: GitlabIssue) -> BackendIssueRecord {
 }
 
 fn map_merge_request(merge_request: GitlabMergeRequest) -> BackendPrRecord {
+    let merged = merge_request.state == "merged";
     BackendPrRecord {
         number: merge_request.iid,
         title: merge_request.title,
@@ -556,7 +667,10 @@ fn map_merge_request(merge_request: GitlabMergeRequest) -> BackendPrRecord {
         url: merge_request.web_url,
         state: merge_request.state,
         head: merge_request.source_branch,
+        head_sha: merge_request.sha,
         base: merge_request.target_branch,
+        node_id: None,
+        merged,
         updated_at: merge_request.updated_at,
     }
 }

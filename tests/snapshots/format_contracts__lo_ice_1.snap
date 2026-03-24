@@ -1,12 +1,11 @@
 ---
 source: tests/format_contracts.rs
-assertion_line: 40
 expression: "round_trip_issue(\"LO-ICE--1.md\")"
 ---
 ---
 id: LO-ICE--1
 title: Local project issue
-state: todo
+status: todo
 board: personal
 project: ice-shelf-tracker
 priority: low

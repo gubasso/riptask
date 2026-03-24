@@ -6,7 +6,7 @@ version: 1
 auto_commit: false
 defaults:
   board: personal
-  state: todo
+  status: todo
   priority: medium
   assignee: tester
   template: task
@@ -28,14 +28,14 @@ backends:
   path: /tmp/penguin-scratch
 boards:
 - name: penguin-chrono-labs
-  states:
+  statuses:
   - backlog
   - todo
   - in-progress
   - review
   - done
 - name: personal
-  states:
+  statuses:
   - backlog
   - todo
   - in-progress
@@ -60,7 +60,7 @@ recurring:
   title_pattern: Weekly review - {YYYY-MM-DD}
   board: personal
   project: personal
-  state: todo
+  status: todo
   priority: medium
   assignee: tester
   labels:

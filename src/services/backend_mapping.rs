@@ -61,12 +61,12 @@ pub fn issue_to_upsert(doc: &IssueDocument) -> BackendIssueUpsert {
     BackendIssueUpsert {
         title: doc.frontmatter.title.clone(),
         body: doc.body.clone(),
-        state: Some(match doc.frontmatter.state {
+        state: Some(match doc.frontmatter.status {
             IssueState::Done => "closed".into(),
             _ => "open".into(),
         }),
         state_reason: doc.frontmatter.state_reason.clone(),
-        labels: build_state_labels(&doc.frontmatter.state, &doc.frontmatter.labels),
+        labels: build_state_labels(&doc.frontmatter.status, &doc.frontmatter.labels),
         assignees: doc.frontmatter.assignees.clone(),
         milestone_id: doc
             .frontmatter
@@ -96,7 +96,7 @@ pub fn backend_to_local(record: &BackendIssueRecord, backend: &BackendConfig) ->
         frontmatter: IssueFrontmatter {
             id: issue_id.clone(),
             title: record.title.clone(),
-            state: state.clone(),
+            status: state.clone(),
             board: backend
                 .default_board
                 .clone()
@@ -175,7 +175,7 @@ pub fn update_issue_from_backend(
 ) {
     let state = state_from_backend(record);
     issue.frontmatter.title = record.title.clone();
-    issue.frontmatter.state = state.clone();
+    issue.frontmatter.status = state.clone();
     issue.frontmatter.labels = labels_without_status(&record.labels);
     issue.frontmatter.assignees = record.assignees.clone();
     issue.frontmatter.milestone = record.milestone.clone();

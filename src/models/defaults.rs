@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DefaultsConfig {
     pub board: String,
-    pub state: IssueState,
+    pub status: IssueState,
     pub priority: Priority,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assignee: Option<String>,

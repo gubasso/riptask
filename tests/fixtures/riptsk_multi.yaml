@@ -1,7 +1,7 @@
 version: 1
 defaults:
   board: personal
-  state: todo
+  status: todo
   priority: medium
   assignee: tester
   template: task
@@ -25,9 +25,9 @@ backends:
     default_org: ~
 boards:
   - name: penguin-chrono-labs
-    states: [backlog, todo, in-progress, review, done]
+    statuses: [backlog, todo, in-progress, review, done]
   - name: personal
-    states: [backlog, todo, in-progress, done]
+    statuses: [backlog, todo, in-progress, done]
 ui:
   opener: "nvim -R"
   tree_depth: 2
@@ -49,7 +49,7 @@ recurring:
     board: personal
     project: personal
     org: ~
-    state: todo
+    status: todo
     priority: medium
     assignee: tester
     labels: [recurring, review]

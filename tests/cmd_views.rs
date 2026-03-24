@@ -80,7 +80,7 @@ fn board_respects_explicit_multi_project_scope() {
             "penguin-scratch",
             "--board",
             "personal",
-            "--state",
+            "--status",
             "todo",
             "--priority",
             "low",

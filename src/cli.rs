@@ -1,3 +1,4 @@
+use crate::adapters::backend::MergeMethod;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Debug, Parser)]
@@ -40,9 +41,9 @@ pub enum Commands {
     Edit(IdArgs),
     /// Display issue details
     Show(IdArgs),
-    /// Move an issue to a different state
-    #[command(name = "move")]
-    Move(MoveArgs),
+    /// Change the status of an issue
+    #[command(name = "status")]
+    Status(StatusArgs),
     /// Close an issue
     Close(IdArgs),
     /// Reopen a closed issue
@@ -55,18 +56,20 @@ pub enum Commands {
     Path(IdArgs),
     /// Create, switch to, or delete an issue branch
     Branch(BranchArgs),
+    /// Complete an issue: merge PR, clean up branches, close issue
+    Done(DoneArgs),
     /// Create, edit, or show a pull/merge request
     Pr(PrArgs),
     /// Display or manage board views
     Board(BoardArgs),
     /// Regenerate all board view files
     View,
-    /// Set the order of issues in a state
+    /// Set the order of issues by status
     Reorder(ReorderArgs),
-    /// Move an issue one position up in its state
+    /// Move an issue one position up in its status
     #[command(name = "reorder-up")]
     ReorderUp(IdArgs),
-    /// Move an issue one position down in its state
+    /// Move an issue one position down in its status
     #[command(name = "reorder-down")]
     ReorderDown(IdArgs),
     /// Sync issues with a remote backend (GitHub/GitLab)
@@ -139,6 +142,26 @@ pub struct PrArgs {
     pub id: Option<String>,
 }
 
+#[derive(Debug, Clone, Args, Default)]
+pub struct DoneArgs {
+    #[command(flatten)]
+    pub scope: ScopeArgs,
+    /// Issue ID (or pick interactively)
+    pub id: Option<String>,
+    /// Merge method (merge, squash, rebase)
+    #[arg(long, value_enum)]
+    pub merge_method: Option<MergeMethod>,
+    /// Enable auto-merge and wait for checks to pass
+    #[arg(long)]
+    pub auto_merge: bool,
+    /// Skip confirmation prompts
+    #[arg(short = 'y', long = "yes")]
+    pub yes: bool,
+    /// Timeout in seconds for waiting (default 600)
+    #[arg(long, default_value_t = 600)]
+    pub timeout: u64,
+}
+
 #[derive(Debug, Clone, Subcommand)]
 pub enum PrSubcommand {
     /// Create a pull/merge request for an issue
@@ -199,9 +222,9 @@ pub struct NewArgs {
     /// Board to assign
     #[arg(short = 'b', long)]
     pub board: Option<String>,
-    /// Initial state
+    /// Initial status
     #[arg(short = 's', long)]
-    pub state: Option<String>,
+    pub status: Option<String>,
     /// Priority level
     #[arg(short = 'P', long)]
     pub priority: Option<String>,
@@ -214,22 +237,22 @@ pub struct NewArgs {
 }
 
 #[derive(Debug, Clone, Args, Default)]
-pub struct MoveArgs {
+pub struct StatusArgs {
     #[command(flatten)]
     pub scope: ScopeArgs,
-    /// Issue ID to move
+    /// Issue ID
     pub id: Option<String>,
-    /// Target state
-    pub state: Option<String>,
+    /// Target status
+    pub status: Option<String>,
 }
 
 #[derive(Debug, Clone, Args, Default)]
 pub struct LsArgs {
     #[command(flatten)]
     pub scope: ScopeArgs,
-    /// Filter by state
+    /// Filter by status
     #[arg(short = 's', long)]
-    pub state: Option<String>,
+    pub status: Option<String>,
     /// Filter by priority
     #[arg(short = 'P', long)]
     pub priority: Option<String>,
@@ -275,8 +298,8 @@ pub struct ReorderArgs {
     /// Board to reorder within
     #[arg(short = 'b', long)]
     pub board: Option<String>,
-    /// State column to reorder
-    pub state: String,
+    /// Status column to reorder
+    pub status: String,
     /// Issue IDs in desired order
     pub ids: Vec<String>,
 }
@@ -420,9 +443,9 @@ pub struct RecurNewArgs {
     /// Organization for generated issues
     #[arg(long)]
     pub org: Option<String>,
-    /// Initial state for generated issues
+    /// Initial status for generated issues
     #[arg(long)]
-    pub state: Option<String>,
+    pub status: Option<String>,
     /// Priority for generated issues
     #[arg(long)]
     pub priority: Option<String>,
@@ -702,12 +725,22 @@ mod tests {
     }
 
     #[test]
-    fn ls_short_state_parses() {
+    fn ls_short_status_parses() {
         let cli = Cli::try_parse_from(["tsk", "ls", "-s", "todo"]).expect("parse");
         let Commands::Ls(args) = cli.command.expect("command") else {
             panic!("expected ls command");
         };
-        assert_eq!(args.state.as_deref(), Some("todo"));
+        assert_eq!(args.status.as_deref(), Some("todo"));
+    }
+
+    #[test]
+    fn status_command_parses() {
+        let cli = Cli::try_parse_from(["tsk", "status", "42", "in-progress"]).expect("parse");
+        let Commands::Status(args) = cli.command.expect("command") else {
+            panic!("expected status command");
+        };
+        assert_eq!(args.id.as_deref(), Some("42"));
+        assert_eq!(args.status.as_deref(), Some("in-progress"));
     }
 
     #[test]

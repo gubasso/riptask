@@ -1,6 +1,7 @@
 pub mod ai;
 pub mod branch;
 pub mod config_cmd;
+pub mod done;
 pub mod hooks;
 pub mod init;
 pub mod issues;
