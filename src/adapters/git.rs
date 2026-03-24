@@ -1,4 +1,6 @@
 use crate::error::RiptskError;
+use crate::services::backend_mapping::GitHttpAuth;
+use std::io::Write;
 use std::path::Path;
 use std::process::Command;
 
@@ -38,8 +40,49 @@ pub trait GitBackend {
     fn diff_between(&self, repo: &Path, base: &str, head: &str) -> Result<String, RiptskError>;
 }
 
-#[derive(Debug, Clone, Copy, Default)]
-pub struct CliGit;
+#[derive(Debug, Clone, Default)]
+pub struct CliGit {
+    auth: Option<GitHttpAuth>,
+}
+
+impl CliGit {
+    pub fn new() -> Self {
+        Self { auth: None }
+    }
+
+    pub fn with_auth(auth: Option<GitHttpAuth>) -> Self {
+        Self { auth }
+    }
+
+    fn run_git_remote(&self, repo: &Path, args: &[&str]) -> Result<(), RiptskError> {
+        let Some(auth) = self.auth.as_ref() else {
+            return run_git_dynamic(repo, args);
+        };
+
+        let mut askpass = tempfile::NamedTempFile::new().map_err(RiptskError::Io)?;
+        askpass
+            .write_all(build_askpass_script(&auth.token).as_bytes())
+            .map_err(RiptskError::Io)?;
+        askpass.flush().map_err(RiptskError::Io)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(askpass.path(), std::fs::Permissions::from_mode(0o700))
+                .map_err(RiptskError::Io)?;
+        }
+
+        let mut command = Command::new("git");
+        command
+            .arg("-C")
+            .arg(repo)
+            .env("GIT_ASKPASS", askpass.path())
+            .env("GIT_TERMINAL_PROMPT", "0");
+        for arg in args {
+            command.arg(arg);
+        }
+        status_to_result(command.status()?)
+    }
+}
 
 impl GitBackend for CliGit {
     fn init(&self, path: &Path) -> Result<(), RiptskError> {
@@ -72,11 +115,11 @@ impl GitBackend for CliGit {
     }
 
     fn pull(&self, repo: &Path) -> Result<(), RiptskError> {
-        run_git(repo, ["pull"])
+        self.run_git_remote(repo, &["pull"])
     }
 
     fn push(&self, repo: &Path) -> Result<(), RiptskError> {
-        run_git(repo, ["push"])
+        self.run_git_remote(repo, &["push"])
     }
 
     fn checkout(&self, repo: &Path, branch: &str) -> Result<(), RiptskError> {
@@ -98,13 +141,13 @@ impl GitBackend for CliGit {
     }
 
     fn fetch_and_checkout_tracking(&self, repo: &Path, branch: &str) -> Result<(), RiptskError> {
-        run_git(repo, ["fetch", "origin", branch])?;
+        self.run_git_remote(repo, &["fetch", "origin", branch])?;
         let tracking = format!("origin/{branch}");
         run_git_dynamic(repo, &["checkout", "-b", branch, "--track", &tracking])
     }
 
     fn push_with_upstream(&self, repo: &Path, branch: &str) -> Result<(), RiptskError> {
-        run_git(repo, ["push", "-u", "origin", branch])
+        self.run_git_remote(repo, &["push", "-u", "origin", branch])
     }
 
     fn has_working_tree_changes(&self, repo: &Path) -> Result<bool, RiptskError> {
@@ -190,7 +233,7 @@ impl GitBackend for CliGit {
     }
 
     fn fetch(&self, repo: &Path) -> Result<(), RiptskError> {
-        run_git(repo, ["fetch", "origin"])
+        self.run_git_remote(repo, &["fetch", "origin"])
     }
 
     fn commits_ahead_of_base(
@@ -272,5 +315,27 @@ fn status_to_result(status: std::process::ExitStatus) -> Result<(), RiptskError>
         Ok(())
     } else {
         Err(RiptskError::General("git command failed".into()))
+    }
+}
+
+fn build_askpass_script(token: &str) -> String {
+    let escaped = shell_escape::escape(token.into());
+    format!(
+        "#!/bin/sh\ncase \"$1\" in\n  Username*) echo \"oauth2\" ;;\n  *) echo {escaped} ;;\nesac\n"
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_askpass_script;
+
+    #[test]
+    fn builds_askpass_script_with_shell_escaped_token() {
+        let script = build_askpass_script("glpat-token'with-quote");
+
+        assert_eq!(
+            script,
+            "#!/bin/sh\ncase \"$1\" in\n  Username*) echo \"oauth2\" ;;\n  *) echo 'glpat-token'\\''with-quote' ;;\nesac\n"
+        );
     }
 }

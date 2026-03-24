@@ -15,6 +15,12 @@ enum CredentialSource {
     CliTool(&'static str),
 }
 
+#[derive(Debug, Clone)]
+pub struct GitHttpAuth {
+    pub host: String,
+    pub token: String,
+}
+
 impl std::fmt::Display for CredentialSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -54,6 +60,30 @@ pub fn build_provider_for_backend(
             "backend {} is local-only",
             backend.name
         ))),
+    }
+}
+
+pub fn resolve_git_auth(backend: &BackendConfig) -> Option<GitHttpAuth> {
+    match backend.backend {
+        Backend::Gitlab => {
+            let host = backend
+                .host
+                .as_deref()
+                .unwrap_or("https://gitlab.com")
+                .trim_start_matches("https://")
+                .trim_start_matches("http://")
+                .to_owned();
+            let (token, _source) = resolve_gitlab_token(&backend.name, &host).ok()?;
+            Some(GitHttpAuth { host, token })
+        }
+        Backend::Github => {
+            let (token, _source) = resolve_github_token(&backend.name).ok()?;
+            Some(GitHttpAuth {
+                host: "github.com".into(),
+                token,
+            })
+        }
+        Backend::Local => None,
     }
 }
 
@@ -394,7 +424,8 @@ fn labels_without_status(labels: &[String]) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{non_empty_env, parse_glab_token};
+    use super::{non_empty_env, parse_glab_token, resolve_git_auth};
+    use crate::models::{Backend, BackendConfig};
     use std::sync::{LazyLock, Mutex};
 
     static ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
@@ -511,5 +542,20 @@ mod tests {
         let stderr_output = "Token found:  ";
 
         assert_eq!(parse_glab_token(stderr_output), None);
+    }
+
+    #[test]
+    fn resolve_git_auth_returns_none_for_local_backend() {
+        let backend = BackendConfig {
+            name: "local".into(),
+            backend: Backend::Local,
+            host: None,
+            repo: None,
+            default_board: None,
+            default_org: None,
+            path: None,
+        };
+
+        assert!(resolve_git_auth(&backend).is_none());
     }
 }
