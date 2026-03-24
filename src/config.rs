@@ -58,7 +58,7 @@ pub fn default_config() -> Config {
         },
         ai: AiConfig {
             enabled: false,
-            model: Some("claude-haiku-4-5-20251001".into()),
+            command: None,
             features: AiFeatures {
                 new_body_gen: true,
                 triage: true,
@@ -107,6 +107,25 @@ pub fn validate_config(config: &Config) -> Result<()> {
         config.boards.iter().map(|board| board.name.as_str()),
         "duplicate board name in riptsk.yaml",
     )?;
+    validate_ai_command(config)?;
+    Ok(())
+}
+
+fn validate_ai_command(config: &Config) -> Result<()> {
+    if let Some(command) = &config.ai.command {
+        // Try to compile the template to catch syntax errors early
+        let mut env = minijinja::Environment::new();
+        env.set_undefined_behavior(minijinja::UndefinedBehavior::Strict);
+        env.add_template("cmd", command)
+            .with_context(|| format!("invalid ai.command template syntax: {command}"))?;
+
+        // Verify template contains at least one of the required input placeholders
+        if !command.contains("{{input}}") && !command.contains("{{input_file}}") {
+            return Err(anyhow::anyhow!(
+                "ai.command must contain {{{{input}}}} or {{{{input_file}}}} placeholder\n\nExamples:\n  ai.command: \"my-ai-cli --system '{{{{system}}}}' --context '{{{{input}}}}'\"\n  ai.command: \"cat {{{{input_file}}}} | my-ai-cli --system '{{{{system}}}}'\""
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -142,7 +161,7 @@ pub fn config_set(config: &mut Config, key: &str, value: &str) -> Result<()> {
         "ai.enabled" => {
             config.ai.enabled = value.parse().context("ai.enabled must be true or false")?
         }
-        "ai.model" => config.ai.model = some_if_not_empty(value),
+        "ai.command" => config.ai.command = some_if_not_empty(value),
         "sync.conflict_detection" => {
             config.sync.conflict_detection = value
                 .parse()
@@ -185,6 +204,7 @@ pub fn parse_priority(value: &str) -> Result<Priority> {
 #[cfg(test)]
 mod tests {
     use super::{config_set, load_config, parse_priority, parse_state};
+    use std::path::Path;
     use tempfile::NamedTempFile;
 
     #[test]
@@ -225,5 +245,27 @@ mod tests {
             parse_priority("high").expect("priority"),
             crate::domain::issue::Priority::High
         ));
+    }
+
+    #[test]
+    fn config_set_ai_command_stores_value() {
+        let mut config = load_config(Path::new("tests/fixtures/riptsk.yaml")).expect("load");
+        config_set(&mut config, "ai.command", "echo {{input}}").expect("set");
+        assert_eq!(config.ai.command.as_deref(), Some("echo {{input}}"));
+    }
+
+    #[test]
+    fn config_set_ai_command_empty_clears() {
+        let mut config = load_config(Path::new("tests/fixtures/riptsk.yaml")).expect("load");
+        config_set(&mut config, "ai.command", "echo {{input}}").expect("set");
+        config_set(&mut config, "ai.command", "").expect("clear");
+        assert!(config.ai.command.is_none());
+    }
+
+    #[test]
+    fn config_rejects_ai_command_without_input_placeholder() {
+        let mut config = load_config(Path::new("tests/fixtures/riptsk.yaml")).expect("load");
+        let result = config_set(&mut config, "ai.command", "echo hello");
+        assert!(result.is_err());
     }
 }

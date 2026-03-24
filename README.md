@@ -20,7 +20,7 @@ offline; AI features are available but never required.
   templates
 - **Sessions** -- one-command start/end workflow for multi-host setups
 - **AI-optional** -- generate issue bodies, auto-triage, summarize, and ask
-  questions about your backlog (requires `claude` or `llm` CLI)
+  questions about your backlog (bring your own AI CLI)
 
 ## Quick start
 
@@ -220,15 +220,100 @@ tsk session end              # sync push + git commit + git push
 
 ### AI features
 
-Requires `ai.enabled: true` in `riptsk.yaml` and the `claude` or `llm` CLI with
-an Anthropic API key.
+riptsk is **agent-agnostic** -- you provide your own AI CLI command and riptsk
+injects the right context via template placeholders. Any CLI tool that reads a
+prompt and writes to stdout will work (`claude`, `llm`, `ollama`, `sgpt`,
+a custom script, etc.).
+
+#### Setup
+
+1. Enable AI and set your command in `riptsk.yaml`:
+
+```yaml
+ai:
+  enabled: true
+  command: "cat {{input_file}} | claude -p --model haiku --system-prompt {{system}}"
+```
+
+Or via the CLI:
+
+```bash
+tsk config set ai.enabled true
+tsk config set ai.command "cat {{input_file}} | claude -p --model haiku --system-prompt {{system}}"
+```
+
+2. Make sure your AI CLI is authenticated and on `$PATH`.
+
+#### Template placeholders
+
+Your `ai.command` is a shell command template with these placeholders:
+
+| Placeholder | Value | Notes |
+|---|---|---|
+| `{{system}}` | Shell-escaped system prompt | Already quoted — do **not** wrap in extra quotes |
+| `{{input}}` | Shell-escaped input content | Already quoted — do **not** wrap in extra quotes; may hit shell arg limits on large diffs |
+| `{{input_file}}` | Path to a temp file with raw input | Recommended for large inputs (PR diffs, issue corpora) |
+
+The command is executed via `sh -c`, stdout is captured as the AI response, and
+a non-zero exit code is treated as an error.
+
+#### Recommended configurations
+
+**Claude Code CLI** (recommended -- handles large inputs via stdin):
+
+```yaml
+ai:
+  command: "cat {{input_file}} | claude -p --model haiku --system-prompt {{system}}"
+```
+
+**llm** (Simon Willison's CLI):
+
+```yaml
+ai:
+  command: "cat {{input_file}} | llm -s {{system}}"
+```
+
+**Ollama** (local models):
+
+```yaml
+ai:
+  command: "cat {{input_file}} | ollama run llama3 --system {{system}}"
+```
+
+**Simple inline** (for CLIs that accept short prompts as arguments):
+
+```yaml
+ai:
+  command: "my-ai-cli --system {{system}} --prompt {{input}}"
+```
+
+#### Feature toggles
+
+Individual AI features can be enabled or disabled:
+
+```yaml
+ai:
+  enabled: true
+  command: "..."
+  features:
+    new_body_gen: true   # tsk new --ai
+    triage: true         # tsk sync pull --auto-triage
+    summarize: true      # tsk summarize
+    ask: true            # tsk ask
+```
+
+#### Usage
 
 ```bash
 tsk new --title "Refactor auth" --ai   # AI writes the issue body
+tsk pr                                 # AI generates PR description
+tsk pr edit                            # AI updates PR description
 tsk summarize                          # summarize all issues
 tsk summarize --cycle 2026-Q1          # summarize a cycle
 tsk ask "What are the highest priority bugs?"
 ```
+
+Use `--no-ai` with `tsk pr` or `tsk pr edit` to skip AI generation.
 
 ### Configuration
 
@@ -292,7 +377,7 @@ receive a project-prefixed ID (e.g., `WHL-042`).
 | Tool | Used for |
 |------|----------|
 | `fzf` | Interactive issue selection |
-| `claude` or `llm` | AI features |
+| Any AI CLI (`claude`, `llm`, `ollama`, etc.) | AI features (configured via `ai.command`) |
 | `bash` | Managed hook script execution after `tsk hooks install` |
 | `yq`, `jq` | Managed hook validation after `tsk hooks install` |
 
@@ -313,7 +398,7 @@ generate one with sensible defaults. Key sections:
 - **remotes** -- GitHub/GitLab project connections
 - **boards** -- kanban board definitions with custom status lists
 - **ui** -- opener command, tree depth, fzf options
-- **ai** -- model, enabled features
+- **ai** -- command template, enabled features
 - **sync** -- conflict detection toggle
 - **recurring** -- recurring task definitions
 

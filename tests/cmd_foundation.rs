@@ -94,12 +94,10 @@ fn init_creates_repository_layout() {
 }
 
 #[test]
-fn summarize_warns_and_exits_cleanly_when_backend_is_unavailable() {
+fn summarize_warns_when_ai_command_not_configured() {
     let temp = tempdir().expect("temp dir");
     let repo = temp.path().join("repo");
     let cache = temp.path().join("cache");
-    let empty_path = temp.path().join("empty-path");
-    fs::create_dir_all(&empty_path).expect("empty path dir");
 
     Command::cargo_bin("tsk")
         .expect("binary")
@@ -121,11 +119,52 @@ fn summarize_warns_and_exits_cleanly_when_backend_is_unavailable() {
         .expect("binary")
         .env("RIPTSK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
-        .env("PATH", &empty_path)
         .arg("summarize")
         .assert()
         .success()
-        .stderr(predicate::str::contains(
-            "warning: AI unavailable: No AI CLI found. Install claude or llm.",
-        ));
+        .stderr(predicate::str::contains("ai.command is not configured"));
+}
+
+#[test]
+fn summarize_uses_echo_ai_command_end_to_end() {
+    let temp = tempdir().expect("temp dir");
+    let repo = temp.path().join("repo");
+    let cache = temp.path().join("cache");
+
+    Command::cargo_bin("tsk")
+        .expect("binary")
+        .env("RIPTSK_REPO", &repo)
+        .env("XDG_CACHE_HOME", &cache)
+        .arg("init")
+        .assert()
+        .success();
+
+    let config_path = repo.join("riptsk.yaml");
+    let config = fs::read_to_string(&config_path).expect("read config");
+    fs::write(
+        &config_path,
+        config.replace(
+            "enabled: false",
+            "enabled: true\n  command: \"echo {{input}}\"",
+        ),
+    )
+    .expect("write config");
+
+    fs::copy(
+        format!(
+            "{}/tests/fixtures/issues/GL-CHR-WOR--42.md",
+            env!("CARGO_MANIFEST_DIR")
+        ),
+        repo.join("issues/GL-CHR-WOR--42.md"),
+    )
+    .expect("copy issue");
+
+    Command::cargo_bin("tsk")
+        .expect("binary")
+        .env("RIPTSK_REPO", &repo)
+        .env("XDG_CACHE_HOME", &cache)
+        .arg("summarize")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("GL-CHR-WOR--42"));
 }
