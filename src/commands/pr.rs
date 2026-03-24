@@ -106,9 +106,10 @@ async fn create(paths: &AppPaths, args: PrCreateArgs) -> Result<(), RiptskError>
     let title = default_title(issue_number, &issue.frontmatter.title);
     let mut body = default_body(issue_number);
     if !args.no_ai && !skip_ai {
-        if let Some(ai) = optional_backend(&config)? {
+        if let Some(ai) = optional_backend(&config) {
             let context =
                 build_create_ai_context(&issue, &git, repo.as_path(), &default_branch, &branch)?;
+            crate::ui::info("generating AI PR description...");
             match ai.generate_pr_description(&context) {
                 Ok(description) if !description.trim().is_empty() => {
                     body = format!("{body}\n\n{}", description.trim());
@@ -202,14 +203,17 @@ async fn edit(paths: &AppPaths, args: PrEditArgs) -> Result<(), RiptskError> {
             None
         };
         let draft_body = if let Some(context) = ai_context {
-            match optional_backend(&config)? {
-                Some(ai) => match ai.update_pr_description(&context) {
-                    Ok(description) => description,
-                    Err(error) => {
-                        crate::ui::warn(&format!("AI PR update unavailable: {error}"));
-                        String::new()
+            match optional_backend(&config) {
+                Some(ai) => {
+                    crate::ui::info("generating AI PR description update...");
+                    match ai.update_pr_description(&context) {
+                        Ok(description) => description,
+                        Err(error) => {
+                            crate::ui::warn(&format!("AI PR update unavailable: {error}"));
+                            String::new()
+                        }
                     }
-                },
+                }
                 None => {
                     if config.ai.enabled {
                         crate::ui::warn(&format!("AI unavailable: {AI_BACKEND_MISSING}"));
