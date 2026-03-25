@@ -298,7 +298,7 @@ pub fn session(paths: &AppPaths, args: SessionArgs) -> Result<(), RiptskError> {
 
 pub fn commit(paths: &AppPaths, args: CommitArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    let git = CliGit;
+    let git = CliGit::new();
     let repo = paths.riptsk_repo.as_std_path().to_path_buf();
     let tracked = [
         paths.riptsk_repo.join("issues"),
@@ -348,7 +348,7 @@ fn session_start(paths: &AppPaths, args: SessionStartArgs) -> Result<(), RiptskE
     let Some(id) = id_resolution::require_id(paths, &config, &cwd, id, &scope)? else {
         return Ok(());
     };
-    let git = CliGit;
+    let git = CliGit::new();
     let repo = current_repo()?;
     let previous_branch = git.current_branch(repo.as_path())?;
     let session_branch = {
@@ -389,7 +389,7 @@ fn session_end(paths: &AppPaths) -> Result<(), RiptskError> {
     else {
         return Err(RiptskError::NotFound("no active session".into()));
     };
-    let git = CliGit;
+    let git = CliGit::new();
     let repo = current_repo()?;
     if git.has_working_tree_changes(paths.riptsk_repo.as_std_path())? {
         commit(paths, CommitArgs { edit: false })?;

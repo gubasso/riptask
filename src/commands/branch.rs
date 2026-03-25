@@ -6,7 +6,7 @@ use crate::error::RiptskError;
 use crate::models::{Backend, BackendConfig};
 use crate::paths::AppPaths;
 use crate::services::auto_commit::maybe_auto_commit;
-use crate::services::backend_mapping::build_provider_for_backend;
+use crate::services::backend_mapping::{build_provider_for_backend, resolve_git_auth};
 use crate::services::issue_service::generate_branch_slug;
 use crate::services::{id_resolution, project_detection};
 use crate::storage::{frontmatter, issue_store};
@@ -45,7 +45,8 @@ async fn create_branch(paths: &AppPaths, args: BranchArgs) -> Result<(), RiptskE
     let slug = generate_branch_slug(issue_number, &issue.frontmatter.title);
 
     let repo = current_repo()?;
-    let git = CliGit;
+    let auth = resolve_git_auth(backend);
+    let git = CliGit::with_auth(auth);
 
     let provider = build_provider_for_backend(backend)?;
     let repo_name = backend.repo.as_deref().unwrap_or_default();
@@ -90,8 +91,7 @@ async fn delete_branch(paths: &AppPaths, args: BranchArgs) -> Result<(), RiptskE
     let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
     let cwd = cwd_utf8();
     let repo = current_repo()?;
-    let git = CliGit;
-    let current = git.current_branch(repo.as_path())?;
+    let current = CliGit::new().current_branch(repo.as_path())?;
     let force = args.force_delete;
 
     let target_branch = if let Some(ref input) = args.id {
@@ -119,6 +119,8 @@ async fn delete_branch(paths: &AppPaths, args: BranchArgs) -> Result<(), RiptskE
     };
     let (backend, default_branch) =
         resolve_backend_and_default(&config, &cwd, issue_path.as_ref()).await?;
+    let auth = resolve_git_auth(&backend);
+    let git = CliGit::with_auth(auth);
     let provider = build_provider_for_backend(&backend)?;
     let repo_name = backend.repo.as_deref().unwrap_or_default();
 
