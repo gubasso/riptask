@@ -18,7 +18,8 @@ use crate::storage::{frontmatter, issue_store};
 use std::fs;
 use std::io::Write;
 use std::path::Path;
-const EMPTY_BRANCH_COMMIT_MESSAGE: &str = "chore: initialize branch for PR";
+const EMPTY_BRANCH_COMMIT_MESSAGE: &str = "chore: initialize branch for PR\n\n\
+                                          Empty commit to allow PR creation on a branch with no changes yet.";
 
 pub async fn run(paths: &AppPaths, args: PrArgs) -> Result<(), RiptskError> {
     match args.subcommand {
@@ -97,6 +98,7 @@ async fn create(paths: &AppPaths, args: PrCreateArgs) -> Result<(), RiptskError>
                 "branch has no commits but has staged changes; commit or unstage them first".into(),
             ));
         }
+        crate::ui::info("branch has no commits; creating empty commit for PR...");
         git.create_empty_commit(repo.as_path(), EMPTY_BRANCH_COMMIT_MESSAGE)?;
         git.push_with_upstream(repo.as_path(), &branch)?;
         skip_ai = true;

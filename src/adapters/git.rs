@@ -264,7 +264,12 @@ impl GitBackend for CliGit {
     }
 
     fn create_empty_commit(&self, repo: &Path, message: &str) -> Result<(), RiptskError> {
-        run_git_dynamic(repo, &["commit", "--allow-empty", "-m", message])
+        let mut args: Vec<&str> = vec!["commit", "--allow-empty"];
+        for part in message.split("\n\n") {
+            args.push("-m");
+            args.push(part);
+        }
+        run_git_dynamic(repo, &args)
     }
 
     fn log_between(&self, repo: &Path, base: &str, head: &str) -> Result<String, RiptskError> {
