@@ -234,7 +234,7 @@ pub async fn new(paths: &AppPaths, args: NewArgs) -> Result<(), RiptskError> {
         .join(format!("{}.md", issue.frontmatter.id));
     maybe_auto_commit(
         &config,
-        &CliGit,
+        &CliGit::new(),
         paths.riptsk_repo.as_std_path(),
         &format!(
             "riptsk: new {} - {}",
@@ -247,7 +247,7 @@ pub async fn new(paths: &AppPaths, args: NewArgs) -> Result<(), RiptskError> {
         service.edit_issue(Some(issue.frontmatter.id.clone()))?;
         maybe_auto_commit(
             &config,
-            &CliGit,
+            &CliGit::new(),
             paths.riptsk_repo.as_std_path(),
             &format!(
                 "riptsk: edit {} - {}",
@@ -277,7 +277,7 @@ pub fn edit(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
     IssueService::new(paths, &config).edit_issue(Some(id.clone()))?;
     maybe_auto_commit(
         &config,
-        &CliGit,
+        &CliGit::new(),
         paths.riptsk_repo.as_std_path(),
         &format!("riptsk: edit {} - {}", id, issue.frontmatter.title),
         &[path.as_std_path()],
@@ -304,7 +304,7 @@ pub fn set_status(paths: &AppPaths, args: StatusArgs) -> Result<(), RiptskError>
     IssueService::new(paths, &config).move_issue(&id, &status)?;
     maybe_auto_commit(
         &config,
-        &CliGit,
+        &CliGit::new(),
         paths.riptsk_repo.as_std_path(),
         &format!("riptsk: status {} - {}", id, issue.frontmatter.title),
         &[path.as_std_path()],
@@ -361,7 +361,7 @@ pub fn remove(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
     IssueService::new(paths, &config).remove_issue(&id)?;
     maybe_auto_commit(
         &config,
-        &CliGit,
+        &CliGit::new(),
         paths.riptsk_repo.as_std_path(),
         &format!("riptsk: rm {} - {}", id, issue.frontmatter.title),
         &[path.as_std_path()],

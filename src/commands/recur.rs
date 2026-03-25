@@ -153,7 +153,7 @@ fn run_due(paths: &AppPaths, date: Option<String>) -> Result<(), RiptskError> {
             .collect::<Vec<_>>();
         maybe_auto_commit(
             &config,
-            &CliGit,
+            &CliGit::new(),
             paths.riptsk_repo.as_std_path(),
             &format!("riptsk: recur run {} - {}", id, title),
             &files,
