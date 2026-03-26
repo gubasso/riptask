@@ -56,7 +56,7 @@ pub enum Commands {
     Path(IdArgs),
     /// Create, switch to, or delete an issue branch
     Branch(BranchArgs),
-    /// Complete an issue: merge PR, clean up branches, close issue
+    /// Complete an issue: merge PR, clean up branches, close issue (convenience wrapper — see `tsk pr merge`, `tsk branch -D`, `tsk close`)
     Done(DoneArgs),
     /// Create, edit, or show a pull/merge request
     Pr(PrArgs),
@@ -170,6 +170,8 @@ pub enum PrSubcommand {
     Edit(PrEditArgs),
     /// Show pull/merge request details
     Show(PrShowArgs),
+    /// Merge a pull/merge request
+    Merge(PrMergeArgs),
 }
 
 #[derive(Debug, Clone, Args, Default)]
@@ -209,6 +211,25 @@ pub struct PrShowArgs {
     /// Output in JSON format
     #[arg(short = 'j', long)]
     pub json: bool,
+}
+
+#[derive(Debug, Clone, Args, Default)]
+pub struct PrMergeArgs {
+    #[command(flatten)]
+    pub scope: ScopeArgs,
+    pub id: Option<String>,
+    /// Merge method (merge, squash, rebase)
+    #[arg(long, value_enum)]
+    pub merge_method: Option<MergeMethod>,
+    /// Enable auto-merge and wait for checks to pass
+    #[arg(long)]
+    pub auto_merge: bool,
+    /// Skip confirmation prompts
+    #[arg(short = 'y', long = "yes")]
+    pub yes: bool,
+    /// Timeout in seconds for waiting (default 600)
+    #[arg(long, default_value_t = 600)]
+    pub timeout: u64,
 }
 
 #[derive(Debug, Clone, Args, Default)]
