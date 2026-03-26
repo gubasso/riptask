@@ -111,27 +111,47 @@ The issue status is automatically changed to `in-progress` if it was in
 `backlog` or `todo`. The PR/MR URL is stored in the issue's `pr_url`
 frontmatter field.
 
-`tsk done` completes the PR workflow for an issue. In order, it:
+`tsk done` completes the PR workflow for an issue. It is a convenience
+wrapper that combines several individual commands into a single operation.
+In order, it:
 
 1. Validates that the project working tree is clean.
-2. Checks the PR state and skips the merge step if the PR is already merged
-   (`tsk pr show <ID>`).
-3. Merges the PR, with optional confirmation and optional auto-merge support.
-4. Checks out the default branch and pulls the latest changes (`git checkout`
-   + `git pull`).
-5. Deletes the remote branch (`tsk branch <ID> -D` handles both 5 and 6).
-6. Force-deletes the local branch.
-7. Clears the issue's `branch` and `id_slug` metadata (`tsk edit <ID>`).
-8. Changes the issue status to `done` (`tsk status <ID> done` or
-   `tsk close <ID>`).
-9. Auto-commits the issue update if auto-commit is enabled (`tsk commit`).
+2. Merges the PR — skips if already merged, supports confirmation and
+   auto-merge (`tsk pr merge <ID>`).
+3. Checks out the default branch and pulls the latest changes
+   (`git checkout` + `git pull`).
+4. Deletes the remote and local branch, clears the issue's `branch` and
+   `id_slug` metadata (`tsk branch <ID> -D`).
+5. Changes the issue status to `done` (`tsk close <ID>`).
 
-Options:
+When auto-commit is enabled, `tsk done` creates a single commit in the
+`$RIPTSK_REPO` (the tasks repository, not the project repository) covering
+all issue metadata changes (steps 4-5). When running the steps individually,
+each command (`tsk branch -D`, `tsk close`) auto-commits to `$RIPTSK_REPO`
+separately.
+
+#### Manual step-by-step (equivalent to `tsk done`)
+
+Each step of `tsk done` can be performed individually:
+
+```bash
+tsk pr merge <ID>                          # 1. merge the PR (or --auto-merge)
+git checkout <default-branch> && git pull   # 2. switch to default branch
+tsk branch <ID> -D                         # 3. delete branches + clear metadata
+tsk close <ID>                             # 4. set status to done
+```
+
+`tsk pr show <ID>` can be used beforehand to inspect the PR state.
+
+Options (shared by both `tsk done` and `tsk pr merge`):
 
 - `--merge-method <merge|squash|rebase>`: choose the merge strategy.
 - `--auto-merge`: enable auto-merge and wait for required checks to pass.
 - `--yes`, `-y`: skip the confirmation prompt before merging.
 - `--timeout <SECONDS>`: set how long to wait for auto-merge before failing.
+
+Additional `tsk done` options:
+
 - `--project`, `-p`: limit issue resolution to one or more specific projects.
 - `--all-projects`, `-a`: allow issue resolution across all registered projects.
 

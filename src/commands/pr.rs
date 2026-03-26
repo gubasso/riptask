@@ -1,6 +1,10 @@
 use crate::adapters::ai::AiBackend;
+use crate::adapters::backend::{BackendPrRecord, BackendProvider, MergeMethod, PrChecksStatus};
 use crate::adapters::git::{CliGit, GitBackend};
-use crate::cli::{PrArgs, PrCreateArgs, PrEditArgs, PrShowArgs, PrSubcommand, ScopeArgs};
+use crate::adapters::prompts::{DialoguerPrompts, PromptBackend};
+use crate::cli::{
+    PrArgs, PrCreateArgs, PrEditArgs, PrMergeArgs, PrShowArgs, PrSubcommand, ScopeArgs,
+};
 use crate::commands::ai::{AI_BACKEND_MISSING, optional_backend};
 use crate::commands::branch::{
     backend_issue_number, current_repo, cwd_utf8, find_issue_for_branch,
@@ -18,6 +22,7 @@ use crate::storage::{frontmatter, issue_store};
 use std::fs;
 use std::io::Write;
 use std::path::Path;
+use std::time::{Duration, Instant};
 const EMPTY_BRANCH_COMMIT_MESSAGE: &str = "chore: initialize branch for PR\n\n\
                                           Empty commit to allow PR creation on a branch with no changes yet.";
 
@@ -26,6 +31,7 @@ pub async fn run(paths: &AppPaths, args: PrArgs) -> Result<(), RiptskError> {
         Some(PrSubcommand::Create(args)) => create(paths, args).await,
         Some(PrSubcommand::Edit(args)) => edit(paths, args).await,
         Some(PrSubcommand::Show(args)) => show(paths, args).await,
+        Some(PrSubcommand::Merge(args)) => merge(paths, args).await,
         None => {
             create(
                 paths,
@@ -170,6 +176,24 @@ async fn show(paths: &AppPaths, args: PrShowArgs) -> Result<(), RiptskError> {
     Ok(())
 }
 
+async fn merge(paths: &AppPaths, args: PrMergeArgs) -> Result<(), RiptskError> {
+    paths.require_initialized()?;
+    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let (_path, issue) = resolve_issue(paths, &config, &args.scope, args.id.as_deref())?;
+    let backend = resolve_hosted_backend(&config, &issue)?;
+    let provider = build_provider_for_backend(backend)?;
+    let repo_name = backend.repo.as_deref().unwrap_or_default();
+    let pr_number = resolve_pr_number(provider.as_ref(), repo_name, &issue).await?;
+    let opts = MergeOptions {
+        merge_method: args.merge_method.unwrap_or_default(),
+        auto_merge: args.auto_merge,
+        yes: args.yes,
+        timeout: args.timeout,
+    };
+
+    merge_pr_workflow(provider.as_ref(), repo_name, pr_number, &issue, &opts).await
+}
+
 async fn edit(paths: &AppPaths, args: PrEditArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
     let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
@@ -240,6 +264,62 @@ async fn edit(paths: &AppPaths, args: PrEditArgs) -> Result<(), RiptskError> {
 
     sync_issue_pr_metadata(&path, &mut issue, &record)?;
     crate::ui::success(&format!("updated PR #{}", record.number));
+    Ok(())
+}
+
+pub(crate) struct MergeOptions {
+    pub merge_method: MergeMethod,
+    pub auto_merge: bool,
+    pub yes: bool,
+    pub timeout: u64,
+}
+
+pub(crate) async fn merge_pr_workflow(
+    provider: &dyn BackendProvider,
+    repo_name: &str,
+    pr_number: u64,
+    issue: &IssueDocument,
+    opts: &MergeOptions,
+) -> Result<(), RiptskError> {
+    let initial_pr = provider.get_pr(repo_name, pr_number).await?;
+
+    if initial_pr.merged || initial_pr.state == "merged" {
+        crate::ui::info("PR already merged, continuing with cleanup");
+        return Ok(());
+    }
+
+    if !opts.yes
+        && !confirm_merge(
+            &DialoguerPrompts,
+            issue,
+            &initial_pr,
+            opts.merge_method,
+            opts.auto_merge,
+        )?
+    {
+        crate::ui::warn("aborted");
+        return Ok(());
+    }
+
+    if opts.auto_merge {
+        provider
+            .enable_auto_merge(repo_name, pr_number, opts.merge_method)
+            .await?;
+        crate::ui::info("Auto-merge enabled, waiting for checks...");
+        let _ = wait_for_merge(provider, repo_name, pr_number, opts.timeout).await?;
+    } else if let Err(error) = provider
+        .merge_pr(repo_name, pr_number, opts.merge_method, None, None)
+        .await
+    {
+        if looks_like_checks_blocker(&error.to_string()) {
+            return Err(RiptskError::General(format!(
+                "{error}. Try `tsk pr merge {} --auto-merge`.",
+                issue.frontmatter.id
+            )));
+        }
+        return Err(error);
+    }
+
     Ok(())
 }
 
@@ -350,6 +430,85 @@ fn sync_and_commit_pr(
     )
 }
 
+fn confirm_merge(
+    prompts: &dyn PromptBackend,
+    _issue: &IssueDocument,
+    pr: &BackendPrRecord,
+    method: MergeMethod,
+    auto_merge: bool,
+) -> Result<bool, RiptskError> {
+    let mode = if auto_merge {
+        "enable auto-merge for"
+    } else {
+        "merge"
+    };
+    let prompt = format!(
+        "{} '{}' via {}?\n{}",
+        mode,
+        pr.title,
+        merge_method_label(method),
+        pr.url
+    );
+    prompts.confirm(&prompt, false)
+}
+
+pub(crate) async fn wait_for_merge(
+    provider: &dyn BackendProvider,
+    repo: &str,
+    pr_number: u64,
+    timeout_secs: u64,
+) -> Result<BackendPrRecord, RiptskError> {
+    let started = Instant::now();
+    loop {
+        let pr = provider.get_pr(repo, pr_number).await?;
+        if pr.merged || pr.state == "merged" {
+            return Ok(pr);
+        }
+
+        let checks = provider.get_pr_checks_status(repo, pr_number).await?;
+        crate::ui::info(&format!(
+            "checks status: {}",
+            pr_checks_status_label(checks)
+        ));
+        if checks == PrChecksStatus::Failed {
+            return Err(RiptskError::General(format!(
+                "checks failed for PR #{pr_number}"
+            )));
+        }
+        if started.elapsed() >= Duration::from_secs(timeout_secs) {
+            return Err(RiptskError::General(format!(
+                "timed out after {timeout_secs} seconds waiting for PR #{pr_number} to merge"
+            )));
+        }
+        tokio::time::sleep(Duration::from_secs(10)).await;
+    }
+}
+
+pub(crate) fn merge_method_label(method: MergeMethod) -> &'static str {
+    match method {
+        MergeMethod::Merge => "merge",
+        MergeMethod::Squash => "squash",
+        MergeMethod::Rebase => "rebase",
+    }
+}
+
+pub(crate) fn pr_checks_status_label(status: PrChecksStatus) -> &'static str {
+    match status {
+        PrChecksStatus::None => "none",
+        PrChecksStatus::Pending => "pending",
+        PrChecksStatus::Passed => "passed",
+        PrChecksStatus::Failed => "failed",
+    }
+}
+
+pub(crate) fn looks_like_checks_blocker(message: &str) -> bool {
+    let lower = message.to_lowercase();
+    lower.contains("status check")
+        || lower.contains("required check")
+        || lower.contains("check pending")
+        || lower.contains("pipeline")
+}
+
 fn default_title(issue_number: u64, issue_title: &str) -> String {
     format!("Solves issue \"#{issue_number} {issue_title}\"")
 }
@@ -457,8 +616,10 @@ fn parse_pr_number_from_url(url: &str) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::{
-        default_body, default_title, parse_editor_buffer, parse_pr_number_from_url, pr_head_matches,
+        default_body, default_title, looks_like_checks_blocker, merge_method_label,
+        parse_editor_buffer, parse_pr_number_from_url, pr_checks_status_label, pr_head_matches,
     };
+    use crate::adapters::backend::{MergeMethod, PrChecksStatus};
 
     #[test]
     fn parses_github_pr_number_from_url() {
@@ -510,5 +671,31 @@ mod tests {
     fn pr_head_matches_gitlab_format() {
         assert!(pr_head_matches("42-fix-bug", "42-fix-bug"));
         assert!(!pr_head_matches("42-fix-bug", "fix-bug"));
+    }
+
+    #[test]
+    fn labels_merge_method_values() {
+        assert_eq!(merge_method_label(MergeMethod::Merge), "merge");
+        assert_eq!(merge_method_label(MergeMethod::Squash), "squash");
+        assert_eq!(merge_method_label(MergeMethod::Rebase), "rebase");
+    }
+
+    #[test]
+    fn labels_check_status_values() {
+        assert_eq!(pr_checks_status_label(PrChecksStatus::None), "none");
+        assert_eq!(pr_checks_status_label(PrChecksStatus::Pending), "pending");
+        assert_eq!(pr_checks_status_label(PrChecksStatus::Passed), "passed");
+        assert_eq!(pr_checks_status_label(PrChecksStatus::Failed), "failed");
+    }
+
+    #[test]
+    fn detects_check_related_merge_errors() {
+        assert!(looks_like_checks_blocker(
+            "Required status check \"ci\" is expected."
+        ));
+        assert!(looks_like_checks_blocker(
+            "pipeline must succeed before merge"
+        ));
+        assert!(!looks_like_checks_blocker("merge conflict"));
     }
 }
