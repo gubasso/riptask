@@ -151,7 +151,7 @@ pub struct DoneArgs {
     /// Merge method (merge, squash, rebase)
     #[arg(long, value_enum)]
     pub merge_method: Option<MergeMethod>,
-    /// Enable auto-merge and wait for checks to pass
+    /// Skip waiting for CI checks before merging
     #[arg(long)]
     pub auto_merge: bool,
     /// Skip confirmation prompts
@@ -224,7 +224,7 @@ pub struct PrMergeArgs {
     /// Merge method (merge, squash, rebase)
     #[arg(long, value_enum)]
     pub merge_method: Option<MergeMethod>,
-    /// Enable auto-merge and wait for checks to pass
+    /// Skip waiting for CI checks before merging
     #[arg(long)]
     pub auto_merge: bool,
     /// Skip confirmation prompts

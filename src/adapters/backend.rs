@@ -140,12 +140,6 @@ pub trait BackendProvider: Send + Sync {
         commit_title: Option<&str>,
         commit_message: Option<&str>,
     ) -> Result<(), RiptskError>;
-    async fn enable_auto_merge(
-        &self,
-        repo: &str,
-        number: u64,
-        method: MergeMethod,
-    ) -> Result<(), RiptskError>;
     async fn get_pr_checks_status(
         &self,
         repo: &str,

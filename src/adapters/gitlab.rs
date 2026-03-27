@@ -483,56 +483,6 @@ impl BackendProvider for GitlabProvider {
         Ok(())
     }
 
-    async fn enable_auto_merge(
-        &self,
-        repo: &str,
-        number: u64,
-        method: MergeMethod,
-    ) -> Result<(), RiptskError> {
-        if method == MergeMethod::Rebase {
-            self.rebase_and_wait(repo, number).await?;
-            let client = self.client().await?;
-            let mut builder = gitlab::api::projects::merge_requests::MergeMergeRequest::builder();
-            builder
-                .project(repo)
-                .merge_request(number)
-                .merge_when_pipeline_succeeds(true);
-            let endpoint = builder
-                .build()
-                .map_err(|e| RiptskError::General(format!("failed to build merge request: {e}")))?;
-            gitlab::api::ignore(endpoint)
-                .query_async(&client)
-                .await
-                .map_err(|e| {
-                    RiptskError::General(format!(
-                        "failed to enable auto-merge for MR !{number}: {e}"
-                    ))
-                })?;
-            return Ok(());
-        }
-        let client = self.client().await?;
-        let mut builder = gitlab::api::projects::merge_requests::MergeMergeRequest::builder();
-        builder
-            .project(repo)
-            .merge_request(number)
-            .merge_when_pipeline_succeeds(true);
-        if method == MergeMethod::Squash {
-            builder.squash(true);
-        }
-        let endpoint = builder.build().map_err(|error| {
-            RiptskError::General(format!("failed to build merge request: {error}"))
-        })?;
-        gitlab::api::ignore(endpoint)
-            .query_async(&client)
-            .await
-            .map_err(|error| {
-                RiptskError::General(format!(
-                    "failed to enable auto-merge for MR !{number}: {error}"
-                ))
-            })?;
-        Ok(())
-    }
-
     async fn get_pr_checks_status(
         &self,
         repo: &str,
