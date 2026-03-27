@@ -162,6 +162,56 @@ impl GitlabProvider {
             .map_err(|error| RiptskError::Unreachable(error.to_string()))?;
         Ok(())
     }
+
+    async fn rebase_and_wait(&self, repo: &str, number: u64) -> Result<(), RiptskError> {
+        let client = self.client().await?;
+
+        let rebase_endpoint = gitlab::api::projects::merge_requests::RebaseMergeRequest::builder()
+            .project(repo)
+            .merge_request(number)
+            .build()
+            .map_err(|e| RiptskError::Config(e.to_string()))?;
+        gitlab::api::ignore(rebase_endpoint)
+            .query_async(&client)
+            .await
+            .map_err(|e| {
+                RiptskError::General(format!("failed to trigger rebase for MR !{number}: {e}"))
+            })?;
+
+        let started = std::time::Instant::now();
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
+            let poll_endpoint = gitlab::api::projects::merge_requests::MergeRequest::builder()
+                .project(repo)
+                .merge_request(number)
+                .include_rebase_in_progress(true)
+                .build()
+                .map_err(|e| RiptskError::Config(e.to_string()))?;
+            let mr: GitlabMergeRequest = poll_endpoint
+                .query_async(&client)
+                .await
+                .map_err(|e| RiptskError::Unreachable(e.to_string()))?;
+
+            if let Some(ref error) = mr.merge_error
+                && !error.is_empty()
+            {
+                return Err(RiptskError::General(format!(
+                    "rebase failed for MR !{number}: {error}"
+                )));
+            }
+
+            if mr.rebase_in_progress != Some(true) {
+                return Ok(());
+            }
+
+            if started.elapsed() >= std::time::Duration::from_secs(600) {
+                return Err(RiptskError::General(format!(
+                    "timed out waiting for rebase of MR !{number}"
+                )));
+            }
+        }
+    }
 }
 
 #[async_trait]
@@ -394,9 +444,23 @@ impl BackendProvider for GitlabProvider {
         commit_message: Option<&str>,
     ) -> Result<(), RiptskError> {
         if method == MergeMethod::Rebase {
-            return Err(RiptskError::General(
-                "GitLab does not support rebase as a merge method. Use merge or squash.".into(),
-            ));
+            self.rebase_and_wait(repo, number).await?;
+            let client = self.client().await?;
+            let mut builder = gitlab::api::projects::merge_requests::MergeMergeRequest::builder();
+            builder.project(repo).merge_request(number);
+            if let Some(message) = commit_message {
+                builder.merge_commit_message(message);
+            }
+            let endpoint = builder
+                .build()
+                .map_err(|e| RiptskError::General(format!("failed to build merge request: {e}")))?;
+            gitlab::api::ignore(endpoint)
+                .query_async(&client)
+                .await
+                .map_err(|e| {
+                    RiptskError::General(format!("failed to merge MR !{number} after rebase: {e}"))
+                })?;
+            return Ok(());
         }
         let client = self.client().await?;
         let mut builder = gitlab::api::projects::merge_requests::MergeMergeRequest::builder();
@@ -426,9 +490,25 @@ impl BackendProvider for GitlabProvider {
         method: MergeMethod,
     ) -> Result<(), RiptskError> {
         if method == MergeMethod::Rebase {
-            return Err(RiptskError::General(
-                "GitLab does not support rebase as a merge method. Use merge or squash.".into(),
-            ));
+            self.rebase_and_wait(repo, number).await?;
+            let client = self.client().await?;
+            let mut builder = gitlab::api::projects::merge_requests::MergeMergeRequest::builder();
+            builder
+                .project(repo)
+                .merge_request(number)
+                .merge_when_pipeline_succeeds(true);
+            let endpoint = builder
+                .build()
+                .map_err(|e| RiptskError::General(format!("failed to build merge request: {e}")))?;
+            gitlab::api::ignore(endpoint)
+                .query_async(&client)
+                .await
+                .map_err(|e| {
+                    RiptskError::General(format!(
+                        "failed to enable auto-merge for MR !{number}: {e}"
+                    ))
+                })?;
+            return Ok(());
         }
         let client = self.client().await?;
         let mut builder = gitlab::api::projects::merge_requests::MergeMergeRequest::builder();
@@ -609,6 +689,10 @@ struct GitlabMergeRequest {
     sha: Option<String>,
     #[serde(default)]
     head_pipeline: Option<GitlabPipeline>,
+    #[serde(default)]
+    rebase_in_progress: Option<bool>,
+    #[serde(default)]
+    merge_error: Option<String>,
     updated_at: String,
     web_url: String,
 }

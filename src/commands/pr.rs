@@ -98,7 +98,9 @@ async fn create(paths: &AppPaths, args: PrCreateArgs) -> Result<(), RiptskError>
     git.push_with_upstream(repo.as_path(), &branch)?;
 
     let mut skip_ai = false;
-    if git.commits_ahead_of_base(repo.as_path(), &branch, &default_branch)? == 0 {
+    if backend.backend == Backend::Github
+        && git.commits_ahead_of_base(repo.as_path(), &branch, &default_branch)? == 0
+    {
         if git.has_staged_changes(repo.as_path())? {
             return Err(RiptskError::General(
                 "branch has no commits but has staged changes; commit or unstage them first".into(),
@@ -181,6 +183,8 @@ async fn merge(paths: &AppPaths, args: PrMergeArgs) -> Result<(), RiptskError> {
     let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
     let (_path, issue) = resolve_issue(paths, &config, &args.scope, args.id.as_deref())?;
     let backend = resolve_hosted_backend(&config, &issue)?;
+    let git = CliGit::with_auth(resolve_git_auth(backend));
+    let repo_path = current_repo()?;
     let provider = build_provider_for_backend(backend)?;
     let repo_name = backend.repo.as_deref().unwrap_or_default();
     let pr_number = resolve_pr_number(provider.as_ref(), repo_name, &issue).await?;
@@ -189,9 +193,20 @@ async fn merge(paths: &AppPaths, args: PrMergeArgs) -> Result<(), RiptskError> {
         auto_merge: args.auto_merge,
         yes: args.yes,
         timeout: args.timeout,
+        force_push: args.force_push,
     };
 
-    merge_pr_workflow(provider.as_ref(), repo_name, pr_number, &issue, &opts).await
+    merge_pr_workflow(
+        provider.as_ref(),
+        &git,
+        backend.backend.clone(),
+        repo_path.as_path(),
+        repo_name,
+        pr_number,
+        &issue,
+        &opts,
+    )
+    .await
 }
 
 async fn edit(paths: &AppPaths, args: PrEditArgs) -> Result<(), RiptskError> {
@@ -272,10 +287,15 @@ pub(crate) struct MergeOptions {
     pub auto_merge: bool,
     pub yes: bool,
     pub timeout: u64,
+    pub force_push: bool,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn merge_pr_workflow(
     provider: &dyn BackendProvider,
+    git: &dyn GitBackend,
+    backend_kind: Backend,
+    repo_path: &Path,
     repo_name: &str,
     pr_number: u64,
     issue: &IssueDocument,
@@ -299,6 +319,40 @@ pub(crate) async fn merge_pr_workflow(
     {
         crate::ui::warn("aborted");
         return Ok(());
+    }
+
+    // Cleanup empty bootstrap commit for GitHub before merge
+    if backend_kind == Backend::Github
+        && let Some(branch) = issue.frontmatter.branch.as_deref()
+    {
+        let default_branch = provider.default_branch(repo_name).await?;
+        let subject = EMPTY_BRANCH_COMMIT_MESSAGE
+            .lines()
+            .next()
+            .unwrap_or_default();
+        if let Some(sha) =
+            git.find_commit_by_subject(repo_path, branch, &default_branch, subject)?
+        {
+            // Ensure we are on the issue branch before rewriting history
+            let current = git.current_branch(repo_path)?;
+            if current != branch {
+                git.checkout(repo_path, branch)?;
+            }
+            crate::ui::info("dropping empty bootstrap commit...");
+            git.rebase_drop_commit(repo_path, &sha)?;
+
+            if git.commits_ahead_of_base(repo_path, branch, &default_branch)? == 0 {
+                return Err(RiptskError::General(
+                    "branch has no real commits; nothing to merge".into(),
+                ));
+            }
+
+            if opts.force_push {
+                git.force_push(repo_path, branch)?;
+            } else {
+                git.force_push_with_lease(repo_path, branch)?;
+            }
+        }
     }
 
     if opts.auto_merge {
