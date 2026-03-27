@@ -320,53 +320,6 @@ impl BackendProvider for GithubProvider {
         Ok(())
     }
 
-    async fn enable_auto_merge(
-        &self,
-        repo: &str,
-        number: u64,
-        method: MergeMethod,
-    ) -> Result<(), RiptskError> {
-        let pr = self.get_pr(repo, number).await?;
-        let node_id = pr
-            .node_id
-            .ok_or_else(|| RiptskError::General("PR node_id not available".into()))?;
-        let merge_method = match method {
-            MergeMethod::Merge => "MERGE",
-            MergeMethod::Squash => "SQUASH",
-            MergeMethod::Rebase => "REBASE",
-        };
-        let query = r#"mutation($input: EnablePullRequestAutoMergeInput!) {
-            enablePullRequestAutoMerge(input: $input) {
-                pullRequest { number }
-            }
-        }"#;
-        let payload = serde_json::json!({
-            "query": query,
-            "variables": {
-                "input": {
-                    "pullRequestId": node_id,
-                    "mergeMethod": merge_method
-                }
-            }
-        });
-        let response = self
-            .client
-            .graphql::<serde_json::Value>(&payload)
-            .await
-            .map_err(|error| {
-                RiptskError::General(format!("failed to enable auto-merge: {error}"))
-            })?;
-        if let Some(errors) = response.get("errors").and_then(serde_json::Value::as_array)
-            && !errors.is_empty()
-        {
-            return Err(RiptskError::General(format!(
-                "auto-merge failed: {}",
-                serde_json::Value::Array(errors.clone())
-            )));
-        }
-        Ok(())
-    }
-
     async fn get_pr_checks_status(
         &self,
         repo: &str,

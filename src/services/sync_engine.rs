@@ -653,15 +653,6 @@ mod tests {
             Ok(())
         }
 
-        async fn enable_auto_merge(
-            &self,
-            _repo: &str,
-            _number: u64,
-            _method: MergeMethod,
-        ) -> Result<(), RiptskError> {
-            Ok(())
-        }
-
         async fn get_pr_checks_status(
             &self,
             _repo: &str,
