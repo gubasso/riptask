@@ -66,9 +66,9 @@ pub struct BackendPrRecord {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
 pub enum MergeMethod {
-    #[default]
     Merge,
     Squash,
+    #[default]
     Rebase,
 }
 
@@ -160,4 +160,14 @@ pub trait BackendProvider: Send + Sync {
     ) -> Result<(), RiptskError>;
     async fn default_branch(&self, repo: &str) -> Result<String, RiptskError>;
     async fn delete_branch(&self, repo: &str, branch_name: &str) -> Result<(), RiptskError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MergeMethod;
+
+    #[test]
+    fn default_merge_method_is_rebase() {
+        assert_eq!(MergeMethod::default(), MergeMethod::Rebase);
+    }
 }

@@ -36,6 +36,16 @@ pub trait GitBackend {
         base: &str,
     ) -> Result<u64, RiptskError>;
     fn create_empty_commit(&self, repo: &Path, message: &str) -> Result<(), RiptskError>;
+    fn find_commit_by_subject(
+        &self,
+        repo: &Path,
+        branch: &str,
+        base: &str,
+        subject: &str,
+    ) -> Result<Option<String>, RiptskError>;
+    fn rebase_drop_commit(&self, repo: &Path, commit_sha: &str) -> Result<(), RiptskError>;
+    fn force_push_with_lease(&self, repo: &Path, branch: &str) -> Result<(), RiptskError>;
+    fn force_push(&self, repo: &Path, branch: &str) -> Result<(), RiptskError>;
     fn log_between(&self, repo: &Path, base: &str, head: &str) -> Result<String, RiptskError>;
     fn diff_between(&self, repo: &Path, base: &str, head: &str) -> Result<String, RiptskError>;
 }
@@ -270,6 +280,64 @@ impl GitBackend for CliGit {
             args.push(part);
         }
         run_git_dynamic(repo, &args)
+    }
+
+    fn find_commit_by_subject(
+        &self,
+        repo: &Path,
+        branch: &str,
+        base: &str,
+        subject: &str,
+    ) -> Result<Option<String>, RiptskError> {
+        let range = format!("origin/{base}..{branch}");
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["log", "--format=%H%n%s", &range])
+            .output()?;
+        if !output.status.success() {
+            return Err(RiptskError::General(
+                "failed to inspect commit subjects".into(),
+            ));
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut lines = stdout.lines();
+        while let Some(sha) = lines.next() {
+            let Some(commit_subject) = lines.next() else {
+                break;
+            };
+            if commit_subject == subject {
+                return Ok(Some(sha.to_owned()));
+            }
+        }
+
+        Ok(None)
+    }
+
+    fn rebase_drop_commit(&self, repo: &Path, commit_sha: &str) -> Result<(), RiptskError> {
+        let onto = format!("{commit_sha}^");
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["rebase", "--onto", &onto, commit_sha, "HEAD"])
+            .status()?;
+        if status.success() {
+            return Ok(());
+        }
+
+        let _ = run_git_dynamic(repo, &["rebase", "--abort"]);
+        Err(RiptskError::General(format!(
+            "failed to drop commit {commit_sha} via rebase"
+        )))
+    }
+
+    fn force_push_with_lease(&self, repo: &Path, branch: &str) -> Result<(), RiptskError> {
+        self.run_git_remote(repo, &["push", "--force-with-lease", "origin", branch])
+    }
+
+    fn force_push(&self, repo: &Path, branch: &str) -> Result<(), RiptskError> {
+        self.run_git_remote(repo, &["push", "--force", "origin", branch])
     }
 
     fn log_between(&self, repo: &Path, base: &str, head: &str) -> Result<String, RiptskError> {

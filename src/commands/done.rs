@@ -57,8 +57,19 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
         auto_merge: args.auto_merge,
         yes: args.yes,
         timeout: args.timeout,
+        force_push: args.force_push,
     };
-    pr::merge_pr_workflow(provider.as_ref(), repo_name, pr_number, &issue, &merge_opts).await?;
+    pr::merge_pr_workflow(
+        provider.as_ref(),
+        &git,
+        backend.backend.clone(),
+        repo_dir.as_path(),
+        repo_name,
+        pr_number,
+        &issue,
+        &merge_opts,
+    )
+    .await?;
 
     let default_branch = provider.default_branch(repo_name).await?;
     git.checkout(repo_dir.as_path(), &default_branch)?;

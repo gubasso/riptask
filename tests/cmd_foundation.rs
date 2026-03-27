@@ -32,6 +32,7 @@ fn done_help_prints_expected_flags() {
         .success()
         .stdout(predicate::str::contains("--merge-method"))
         .stdout(predicate::str::contains("--auto-merge"))
+        .stdout(predicate::str::contains("--force-push"))
         .stdout(predicate::str::contains("--timeout"))
         .stdout(predicate::str::contains("--yes"));
 }
@@ -45,6 +46,7 @@ fn pr_merge_help_prints_expected_flags() {
         .success()
         .stdout(predicate::str::contains("--merge-method"))
         .stdout(predicate::str::contains("--auto-merge"))
+        .stdout(predicate::str::contains("--force-push"))
         .stdout(predicate::str::contains("--timeout"))
         .stdout(predicate::str::contains("--yes"));
 }
