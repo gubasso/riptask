@@ -160,6 +160,9 @@ pub struct DoneArgs {
     /// Timeout in seconds for waiting (default 600)
     #[arg(long, default_value_t = 600)]
     pub timeout: u64,
+    /// Use --force instead of --force-with-lease when pushing rebased branches
+    #[arg(long)]
+    pub force_push: bool,
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -230,6 +233,9 @@ pub struct PrMergeArgs {
     /// Timeout in seconds for waiting (default 600)
     #[arg(long, default_value_t = 600)]
     pub timeout: u64,
+    /// Use --force instead of --force-with-lease when pushing rebased branches
+    #[arg(long)]
+    pub force_push: bool,
 }
 
 #[derive(Debug, Clone, Args, Default)]
