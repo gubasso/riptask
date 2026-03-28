@@ -347,8 +347,13 @@ pub(crate) async fn merge_pr_workflow(
         }
     }
 
+    // Push to ensure remote has all local commits before checking CI status
+    if issue.frontmatter.branch.is_some() {
+        git.push(repo_path)?;
+    }
+
     if !opts.auto_merge {
-        let checks = wait_for_checks(provider, repo_name, pr_number, opts.timeout).await?;
+        let checks = wait_for_checks(provider, repo_name, pr_number, opts.timeout, 30).await?;
         if checks == PrChecksStatus::Passed {
             crate::ui::success("all checks passed");
         }
@@ -487,6 +492,7 @@ async fn wait_for_checks(
     repo: &str,
     pr_number: u64,
     timeout_secs: u64,
+    grace_secs: u64,
 ) -> Result<PrChecksStatus, RiptskError> {
     let started = Instant::now();
     loop {
@@ -496,7 +502,12 @@ async fn wait_for_checks(
             pr_checks_status_label(checks)
         ));
         match checks {
-            PrChecksStatus::Passed | PrChecksStatus::None => return Ok(checks),
+            PrChecksStatus::Passed => return Ok(checks),
+            PrChecksStatus::None => {
+                if started.elapsed() >= Duration::from_secs(grace_secs) {
+                    return Ok(checks);
+                }
+            }
             PrChecksStatus::Failed => {
                 return Err(RiptskError::General(format!(
                     "checks failed for PR #{pr_number}"
