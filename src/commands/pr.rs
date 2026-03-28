@@ -20,6 +20,7 @@ use crate::services::id_resolution;
 use crate::services::issue_service::now_utc;
 use crate::storage::{frontmatter, issue_store};
 use crate::ui;
+use indicatif::ProgressBar;
 use std::fs;
 use std::io::Write;
 use std::path::Path;
@@ -354,10 +355,7 @@ pub(crate) async fn merge_pr_workflow(
     }
 
     if !opts.auto_merge {
-        let checks = wait_for_checks(provider, repo_name, pr_number, opts.timeout).await?;
-        if checks == PrChecksStatus::Passed {
-            ui::success("all checks passed");
-        }
+        wait_for_checks(provider, repo_name, pr_number, opts.timeout).await?;
     }
     provider
         .merge_pr(repo_name, pr_number, opts.merge_method, None, None)
@@ -491,42 +489,47 @@ async fn wait_for_checks(
     timeout_secs: u64,
 ) -> Result<PrChecksStatus, RiptskError> {
     let started = Instant::now();
+    let spinner = ui::spinner("waiting for checks to register");
     let mut saw_checks = false;
+
     loop {
-        let status = provider.get_pr_checks_status(repo, pr_number).await?;
+        let status = match provider.get_pr_checks_status(repo, pr_number).await {
+            Ok(s) => s,
+            Err(e) => {
+                finish_spinner(&spinner);
+                return Err(e);
+            }
+        };
+
         match status {
             PrChecksStatus::Passed => {
-                ui::info(&format!(
-                    "checks status: {}",
-                    pr_checks_status_label(status)
-                ));
+                finish_spinner(&spinner);
+                let elapsed = ui::format_elapsed(started.elapsed());
+                ui::success(&format!("checks passed ({elapsed})"));
                 return Ok(status);
             }
             PrChecksStatus::Failed => {
-                ui::info(&format!(
-                    "checks status: {}",
-                    pr_checks_status_label(status)
-                ));
+                finish_spinner(&spinner);
+                let elapsed = ui::format_elapsed(started.elapsed());
+                ui::error(&format!("checks failed ({elapsed})"));
                 return Err(RiptskError::General(format!(
                     "checks failed for PR #{pr_number}"
                 )));
             }
             PrChecksStatus::Pending => {
                 saw_checks = true;
-                ui::info(&format!(
-                    "checks status: {}",
-                    pr_checks_status_label(status)
-                ));
+                update_spinner(&spinner, "checks: pending");
             }
             PrChecksStatus::None => {
                 if saw_checks {
-                    ui::info("checks status: waiting for checks to reappear");
+                    update_spinner(&spinner, "checks: waiting for checks to reappear");
                 } else {
-                    ui::info("checks status: waiting for checks to register");
+                    update_spinner(&spinner, "checks: waiting for checks to register");
                 }
             }
         }
         if started.elapsed() >= Duration::from_secs(timeout_secs) {
+            finish_spinner(&spinner);
             if saw_checks {
                 return Err(RiptskError::General(format!(
                     "timed out after {timeout_secs}s waiting for checks on PR #{pr_number}"
@@ -536,6 +539,19 @@ async fn wait_for_checks(
             return Ok(PrChecksStatus::None);
         }
         tokio::time::sleep(Duration::from_secs(10)).await;
+    }
+}
+
+fn update_spinner(spinner: &Option<ProgressBar>, msg: &str) {
+    match spinner {
+        Some(pb) => pb.set_message(msg.to_owned()),
+        None => ui::info(msg),
+    }
+}
+
+fn finish_spinner(spinner: &Option<ProgressBar>) {
+    if let Some(pb) = spinner {
+        pb.finish_and_clear();
     }
 }
 
