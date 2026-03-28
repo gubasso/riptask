@@ -1,7 +1,7 @@
 use crate::adapters::git::{CliGit, GitBackend};
-use crate::cli::DoneArgs;
+use crate::cli::{DoneArgs, SyncArgs};
 use crate::commands::branch::{current_repo, cwd_utf8, find_issue_for_branch};
-use crate::commands::pr;
+use crate::commands::{pr, sync_cmd};
 use crate::config::load_config;
 use crate::error::RiptskError;
 use crate::paths::AppPaths;
@@ -108,6 +108,7 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
         ),
         &[issue_path.as_std_path()],
     )?;
+    sync_cmd::run(paths, SyncArgs::default()).await?;
     Ok(())
 }
 
