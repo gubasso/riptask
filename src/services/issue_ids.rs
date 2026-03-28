@@ -43,7 +43,11 @@ pub fn parse_id(id: &str) -> Option<(&str, u64)> {
 pub fn next_local_sequence(paths: &AppPaths, scope: &str) -> Result<u64> {
     let mut max = 0u64;
     for path in issue_store::list_issues(paths)? {
-        let issue = frontmatter::load_issue(path.as_std_path())?;
+        let issue = match frontmatter::try_load_issue(path.as_std_path()) {
+            frontmatter::IssueLoadResult::Ok(issue) => issue,
+            frontmatter::IssueLoadResult::Conflict { .. } => continue,
+            frontmatter::IssueLoadResult::Err(error) => return Err(error),
+        };
         if let Some((candidate_scope, number)) = parse_id(&issue.frontmatter.id)
             && candidate_scope == scope
         {

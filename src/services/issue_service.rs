@@ -39,6 +39,11 @@ pub struct IssueDraft {
     pub repo: Option<String>,
 }
 
+pub struct ListMatchingResult {
+    pub documents: Vec<IssueDocument>,
+    pub conflict_count: usize,
+}
+
 impl<'a> IssueService<'a> {
     pub fn new(paths: &'a AppPaths, config: &'a Config) -> Self {
         Self { paths, config }
@@ -154,9 +159,6 @@ impl<'a> IssueService<'a> {
                 lock_reason: None,
                 recurring: None,
                 remote_deleted: false,
-                conflict: None,
-                conflict_role: None,
-                conflict_parent: None,
                 id_slug: Some(generate_slug(&id, &draft.title)),
                 branch: None,
                 pr_url: None,
@@ -171,12 +173,20 @@ impl<'a> IssueService<'a> {
         let id = id.ok_or_else(|| RiptskError::General("<ID> required".into()))?;
         let path = issue_store::find_issue(self.paths, &id)?;
         let before = fs::metadata(&path)?.modified()?;
+        let had_conflict = matches!(
+            frontmatter::try_load_issue(path.as_std_path()),
+            frontmatter::IssueLoadResult::Conflict { .. }
+        );
         let status = super::editor::open_in_editor(path.as_std_path())?;
         if !status.success() {
             return Ok(());
         }
         let after = fs::metadata(&path)?.modified()?;
         if after > before {
+            let content = fs::read_to_string(&path)?;
+            if had_conflict || frontmatter::has_conflict_markers(&content) {
+                return Ok(());
+            }
             let mut issue =
                 frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
             issue.frontmatter.local_updated_at = now_utc();
@@ -190,7 +200,15 @@ impl<'a> IssueService<'a> {
 
     pub fn move_issue(&self, id: &str, state: &str) -> Result<(), RiptskError> {
         let path = issue_store::find_issue(self.paths, id)?;
-        let mut issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
+        let mut issue = match frontmatter::try_load_issue(path.as_std_path()) {
+            frontmatter::IssueLoadResult::Ok(issue) => issue,
+            frontmatter::IssueLoadResult::Conflict { .. } => {
+                return Err(RiptskError::Conflict(format!(
+                    "issue {id} has unresolved sync conflicts"
+                )));
+            }
+            frontmatter::IssueLoadResult::Err(error) => return Err(RiptskError::Other(error)),
+        };
         let state = parse_state(state).map_err(RiptskError::Other)?;
         self.validate_state_for_board(&issue.frontmatter.board, &state)
             .map_err(RiptskError::Other)?;
@@ -217,20 +235,32 @@ impl<'a> IssueService<'a> {
         &self,
         args: &LsArgs,
         scope: &crate::scope::ProjectScope,
-    ) -> Result<Vec<IssueDocument>, RiptskError> {
+    ) -> Result<ListMatchingResult, RiptskError> {
         let mut documents = Vec::new();
+        let mut conflict_count = 0usize;
         for path in issue_store::list_issues(self.paths)? {
-            let document =
-                frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
+            let document = match frontmatter::try_load_issue(path.as_std_path()) {
+                frontmatter::IssueLoadResult::Ok(document) => document,
+                frontmatter::IssueLoadResult::Conflict { .. } => {
+                    conflict_count += 1;
+                    continue;
+                }
+                frontmatter::IssueLoadResult::Err(error) => {
+                    return Err(RiptskError::Other(error));
+                }
+            };
             if !scope.matches(&document.frontmatter.project) {
                 continue;
             }
             if !matches_issue(&document, args) {
                 continue;
             }
-            documents.push(document);
+            documents.push(*document);
         }
-        Ok(documents)
+        Ok(ListMatchingResult {
+            documents,
+            conflict_count,
+        })
     }
 
     pub fn next_local_sequence(&self, project: &str) -> Result<u64> {
@@ -245,7 +275,11 @@ impl<'a> IssueService<'a> {
     pub fn next_order_for_lane(&self, board: &str, state: &str) -> Result<u32> {
         let mut max = 0u32;
         for path in issue_store::list_issues(self.paths)? {
-            let issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
+            let issue = match frontmatter::try_load_issue(path.as_std_path()) {
+                frontmatter::IssueLoadResult::Ok(issue) => issue,
+                frontmatter::IssueLoadResult::Conflict { .. } => continue,
+                frontmatter::IssueLoadResult::Err(error) => return Err(error),
+            };
             if issue.frontmatter.board == board && issue.frontmatter.status.as_str() == state {
                 max = max.max(issue.frontmatter.order.unwrap_or(0));
             }
@@ -259,8 +293,15 @@ impl<'a> IssueService<'a> {
         direction: ShiftDirection,
     ) -> Result<(), RiptskError> {
         let target_path = issue_store::find_issue(self.paths, id)?;
-        let target_issue =
-            frontmatter::load_issue(target_path.as_std_path()).map_err(RiptskError::Other)?;
+        let target_issue = match frontmatter::try_load_issue(target_path.as_std_path()) {
+            frontmatter::IssueLoadResult::Ok(issue) => *issue,
+            frontmatter::IssueLoadResult::Conflict { .. } => {
+                return Err(RiptskError::Conflict(format!(
+                    "issue {id} has unresolved sync conflicts"
+                )));
+            }
+            frontmatter::IssueLoadResult::Err(error) => return Err(RiptskError::Other(error)),
+        };
         let mut lane = self.load_lane(
             &target_issue.frontmatter.board,
             &target_issue.frontmatter.status,
@@ -368,18 +409,24 @@ impl<'a> IssueService<'a> {
     ) -> Result<Vec<(String, camino::Utf8PathBuf)>, RiptskError> {
         let mut lane = Vec::new();
         for path in issue_store::list_issues(self.paths)? {
-            let issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
+            let issue = match frontmatter::try_load_issue(path.as_std_path()) {
+                frontmatter::IssueLoadResult::Ok(issue) => issue,
+                frontmatter::IssueLoadResult::Conflict { .. } => continue,
+                frontmatter::IssueLoadResult::Err(error) => return Err(RiptskError::Other(error)),
+            };
             if issue.frontmatter.board == board && issue.frontmatter.status == *state {
                 lane.push((issue.frontmatter.id, path));
             }
         }
         lane.sort_by(|(_, left_path), (_, right_path)| {
-            let left_issue = frontmatter::load_issue(left_path.as_std_path())
-                .map(|issue| issue.frontmatter.order.unwrap_or(0))
-                .unwrap_or(0);
-            let right_issue = frontmatter::load_issue(right_path.as_std_path())
-                .map(|issue| issue.frontmatter.order.unwrap_or(0))
-                .unwrap_or(0);
+            let left_issue = match frontmatter::try_load_issue(left_path.as_std_path()) {
+                frontmatter::IssueLoadResult::Ok(issue) => issue.frontmatter.order.unwrap_or(0),
+                _ => 0,
+            };
+            let right_issue = match frontmatter::try_load_issue(right_path.as_std_path()) {
+                frontmatter::IssueLoadResult::Ok(issue) => issue.frontmatter.order.unwrap_or(0),
+                _ => 0,
+            };
             left_issue
                 .cmp(&right_issue)
                 .then_with(|| left_path.cmp(right_path))
@@ -389,8 +436,15 @@ impl<'a> IssueService<'a> {
 
     fn persist_lane(&self, lane: &[(String, camino::Utf8PathBuf)]) -> Result<(), RiptskError> {
         for (index, (_, path)) in lane.iter().enumerate() {
-            let mut issue =
-                frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
+            let mut issue = match frontmatter::try_load_issue(path.as_std_path()) {
+                frontmatter::IssueLoadResult::Ok(issue) => issue,
+                frontmatter::IssueLoadResult::Conflict { id, .. } => {
+                    return Err(RiptskError::Conflict(format!(
+                        "issue {id} has unresolved sync conflicts"
+                    )));
+                }
+                frontmatter::IssueLoadResult::Err(error) => return Err(RiptskError::Other(error)),
+            };
             issue.frontmatter.order = Some((index + 1) as u32);
             issue.frontmatter.local_updated_at = now_utc();
             frontmatter::save_issue(path.as_std_path(), &issue).map_err(RiptskError::Other)?;
@@ -453,7 +507,7 @@ fn matches_issue(issue: &IssueDocument, args: &LsArgs) -> bool {
     if !args.include_done && issue.frontmatter.status == IssueState::Done {
         return false;
     }
-    if args.conflicts && issue.frontmatter.conflict.is_none() {
+    if args.conflicts {
         return false;
     }
     if let Some(status) = &args.status

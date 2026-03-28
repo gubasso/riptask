@@ -206,6 +206,7 @@ pub fn reorder(paths: &AppPaths, args: ReorderArgs) -> Result<(), RiptskError> {
                 },
                 &scope,
             )?
+            .documents
             .into_iter()
             .filter(|issue| issue.frontmatter.board == board)
             .collect::<Vec<_>>();

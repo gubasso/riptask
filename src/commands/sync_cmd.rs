@@ -1,16 +1,17 @@
 use crate::cli::{
     CommitArgs, ResolveArgs, SessionArgs, SessionStartArgs, SessionSubcommand, SyncArgs,
-    SyncSubcommand,
+    SyncPullPushArgs, SyncSubcommand,
 };
 use crate::config::{Config, load_config};
 use crate::domain::session::SessionState;
 use crate::error::RiptskError;
 use crate::models::{Backend, BackendConfig};
 use crate::paths::AppPaths;
+use crate::services::auto_commit::maybe_auto_commit;
 use crate::services::backend_mapping::build_provider_for_backend;
 use crate::services::id_resolution;
 use crate::services::sync_engine::SyncEngine;
-use crate::storage::session as session_store;
+use crate::storage::{frontmatter, issue_store, session as session_store};
 use crate::{adapters::git::CliGit, adapters::git::GitBackend};
 use anyhow::Context;
 use console::style;
@@ -20,23 +21,36 @@ use std::io::IsTerminal;
 pub async fn run(paths: &AppPaths, args: SyncArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
     match args.subcommand.clone() {
-        Some(SyncSubcommand::Pull) => pull(paths, &args).await,
-        Some(SyncSubcommand::Push) => push(paths, &args).await,
+        Some(SyncSubcommand::Pull(subargs)) => pull(paths, &args, &subargs).await,
+        Some(SyncSubcommand::Push(subargs)) => push(paths, &args, &subargs).await,
         Some(SyncSubcommand::Status) => status(paths, &args),
+        Some(SyncSubcommand::Resolve(resolve_args)) => resolve(paths, resolve_args),
         None => {
             // Bare `tsk sync` = pull then push (matches Bash behavior)
-            pull(paths, &args).await?;
-            push(paths, &args).await
+            pull(paths, &args, &SyncPullPushArgs::default()).await?;
+            push(paths, &args, &SyncPullPushArgs::default()).await
         }
     }
 }
 
-async fn pull(paths: &AppPaths, args: &SyncArgs) -> Result<(), RiptskError> {
+async fn pull(
+    paths: &AppPaths,
+    args: &SyncArgs,
+    subargs: &SyncPullPushArgs,
+) -> Result<(), RiptskError> {
     let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
     let engine = SyncEngine::new(paths, &config);
     for backend in resolve_sync_backends(args, &config)? {
         let provider = build_provider_for_backend(backend)?;
-        let summary = engine.pull(provider.as_ref(), backend, args.force).await?;
+        let pull_ids = resolve_pull_filter_ids(&subargs.ids, backend);
+        let summary = engine
+            .pull(
+                provider.as_ref(),
+                backend,
+                args.force,
+                (!pull_ids.is_empty()).then_some(&pull_ids),
+            )
+            .await?;
         if std::io::stderr().is_terminal() {
             eprintln!(
                 "pull  {} created  {} updated  {} deleted  {} conflicts",
@@ -54,16 +68,45 @@ async fn pull(paths: &AppPaths, args: &SyncArgs) -> Result<(), RiptskError> {
                 summary.conflicts.len()
             );
         }
+        for id in &summary.conflicts {
+            if std::io::stderr().is_terminal() {
+                eprintln!("{} {id}", style("CONFLICT").red().bold());
+            } else {
+                eprintln!("CONFLICT {id}");
+            }
+        }
     }
     Ok(())
 }
 
-async fn push(paths: &AppPaths, args: &SyncArgs) -> Result<(), RiptskError> {
+async fn push(
+    paths: &AppPaths,
+    args: &SyncArgs,
+    subargs: &SyncPullPushArgs,
+) -> Result<(), RiptskError> {
     let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
     let engine = SyncEngine::new(paths, &config);
+    let cwd = camino::Utf8PathBuf::from(
+        std::env::current_dir()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string(),
+    );
+    let resolved_ids = subargs
+        .ids
+        .iter()
+        .map(|id| id_resolution::resolve_id(paths, &config, &cwd, id))
+        .collect::<Result<Vec<_>, _>>()?;
     for backend in resolve_sync_backends(args, &config)? {
         let provider = build_provider_for_backend(backend)?;
-        let summary = engine.push(provider.as_ref(), backend).await?;
+        let issue_paths = collect_push_paths(paths, backend, &resolved_ids)?;
+        let summary = if resolved_ids.is_empty() {
+            engine.push(provider.as_ref(), backend).await?
+        } else {
+            engine
+                .push_issues(provider.as_ref(), backend, &issue_paths)
+                .await?
+        };
         if std::io::stderr().is_terminal() {
             eprintln!(
                 "push  {} created  {} updated  {} deleted  {} skipped",
@@ -81,6 +124,20 @@ async fn push(paths: &AppPaths, args: &SyncArgs) -> Result<(), RiptskError> {
                 summary.skipped.len()
             );
         }
+
+        let mut file_refs = issue_paths
+            .iter()
+            .map(|path| path.as_std_path())
+            .collect::<Vec<_>>();
+        let config_path = paths.config_path();
+        file_refs.push(config_path.as_std_path());
+        maybe_auto_commit(
+            &config,
+            &crate::adapters::git::CliGit::new(),
+            paths.riptsk_repo.as_std_path(),
+            &format!("riptsk: push local issues to {}", backend.name),
+            &file_refs,
+        )?;
     }
     Ok(())
 }
@@ -199,9 +256,28 @@ fn issue_matches_backend_scope(
     backend_names: &HashSet<&str>,
 ) -> Result<bool, RiptskError> {
     let path = crate::storage::issue_store::find_issue(paths, id)?;
-    let issue =
-        crate::storage::frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
-    Ok(backend_names.contains(issue.frontmatter.project.as_str()))
+    match crate::storage::frontmatter::try_load_issue(path.as_std_path()) {
+        crate::storage::frontmatter::IssueLoadResult::Ok(issue) => {
+            Ok(backend_names.contains(issue.frontmatter.project.as_str()))
+        }
+        crate::storage::frontmatter::IssueLoadResult::Conflict { id, .. } => {
+            for backup in [
+                crate::storage::issue_store::local_backup_path(paths, &id),
+                crate::storage::issue_store::remote_backup_path(paths, &id),
+            ] {
+                if !backup.exists() {
+                    continue;
+                }
+                if let crate::storage::frontmatter::IssueLoadResult::Ok(issue) =
+                    crate::storage::frontmatter::try_load_issue(backup.as_std_path())
+                {
+                    return Ok(backend_names.contains(issue.frontmatter.project.as_str()));
+                }
+            }
+            Ok(false)
+        }
+        crate::storage::frontmatter::IssueLoadResult::Err(error) => Err(RiptskError::Other(error)),
+    }
 }
 
 fn hosted_backends(config: &Config) -> Vec<&BackendConfig> {
@@ -210,6 +286,66 @@ fn hosted_backends(config: &Config) -> Vec<&BackendConfig> {
         .iter()
         .filter(|backend| matches!(backend.backend, Backend::Github | Backend::Gitlab))
         .collect()
+}
+
+fn resolve_pull_filter_ids(ids: &[String], backend: &BackendConfig) -> HashSet<String> {
+    ids.iter()
+        .map(|id| {
+            if id.contains("--") {
+                return id.clone();
+            }
+            if id.chars().all(|character| character.is_ascii_digit()) {
+                let number = id.parse::<u64>().unwrap_or_default();
+                return crate::services::issue_ids::format_id(
+                    &crate::services::issue_ids::derive_scope_from_backend(backend),
+                    number,
+                );
+            }
+            id.clone()
+        })
+        .collect()
+}
+
+fn collect_push_paths(
+    paths: &AppPaths,
+    backend: &BackendConfig,
+    ids: &[String],
+) -> Result<Vec<camino::Utf8PathBuf>, RiptskError> {
+    if !ids.is_empty() {
+        let mut paths_to_push = Vec::new();
+        for path in ids
+            .iter()
+            .map(|id| issue_store::find_issue(paths, id))
+            .collect::<Result<Vec<_>, _>>()?
+        {
+            let issue = match frontmatter::try_load_issue(path.as_std_path()) {
+                frontmatter::IssueLoadResult::Ok(issue) => issue,
+                frontmatter::IssueLoadResult::Conflict { id, .. } => {
+                    eprintln!("skipping {id}: unresolved sync conflict (tsk sync resolve {id})");
+                    continue;
+                }
+                frontmatter::IssueLoadResult::Err(error) => return Err(RiptskError::Other(error)),
+            };
+            if issue.frontmatter.project == backend.name {
+                paths_to_push.push(path);
+            }
+        }
+        return Ok(paths_to_push);
+    }
+
+    let mut paths_to_push = Vec::new();
+    for path in issue_store::list_issues(paths)? {
+        let issue = match frontmatter::try_load_issue(path.as_std_path()) {
+            frontmatter::IssueLoadResult::Ok(issue) => issue,
+            frontmatter::IssueLoadResult::Conflict { .. } => continue,
+            frontmatter::IssueLoadResult::Err(error) => return Err(RiptskError::Other(error)),
+        };
+        if issue.frontmatter.project != backend.name {
+            continue;
+        }
+        paths_to_push.push(path);
+    }
+    Ok(paths_to_push)
 }
 
 fn deleted_key_matches_backend_scope(key: &str, backends: &[&BackendConfig]) -> bool {
@@ -236,11 +372,6 @@ fn provider_name(backend: &BackendConfig) -> &'static str {
 }
 
 pub fn resolve(paths: &AppPaths, args: ResolveArgs) -> Result<(), RiptskError> {
-    if !args.take_remote && !args.take_local {
-        return Err(RiptskError::General(
-            "specify --take-remote or --take-local".into(),
-        ));
-    }
     if args.take_remote && args.take_local {
         return Err(RiptskError::General(
             "cannot specify both --take-remote and --take-local".into(),
@@ -255,36 +386,49 @@ pub fn resolve(paths: &AppPaths, args: ResolveArgs) -> Result<(), RiptskError> {
     );
     let id = id_resolution::resolve_id(paths, &config, &cwd, &args.id)?;
     let path = crate::storage::issue_store::find_issue(paths, &id)?;
+    let local_backup = crate::storage::issue_store::local_backup_path(paths, &id);
+    let remote_backup = crate::storage::issue_store::remote_backup_path(paths, &id);
+    if args.take_remote {
+        if !remote_backup.exists() {
+            return Err(RiptskError::Conflict(format!("no remote backup for {id}")));
+        }
+        std::fs::copy(&remote_backup, &path)?;
+        crate::storage::issue_store::delete_conflict_backups(paths, &id)?;
+    } else if args.take_local {
+        if !local_backup.exists() {
+            return Err(RiptskError::Conflict(format!("no local backup for {id}")));
+        }
+        std::fs::copy(&local_backup, &path)?;
+        crate::storage::issue_store::delete_conflict_backups(paths, &id)?;
+        bump_local_updated_at(&path)?;
+    } else {
+        let content = std::fs::read_to_string(&path)?;
+        if crate::storage::frontmatter::has_conflict_markers(&content) {
+            return Err(RiptskError::Conflict(format!(
+                "issue {id} still has unresolved conflict markers"
+            )));
+        }
+        // Validate the file parses before deleting backups
+        crate::storage::frontmatter::load_issue(path.as_std_path()).map_err(|_| {
+            RiptskError::Conflict(format!(
+                "issue {id} has invalid frontmatter after conflict resolution; backups preserved"
+            ))
+        })?;
+        crate::storage::issue_store::delete_conflict_backups(paths, &id)?;
+        bump_local_updated_at(&path)?;
+    }
+    crate::services::view_builder::ViewBuilder::new(paths, &config)
+        .regenerate_all(None)
+        .map_err(RiptskError::Other)?;
+    Ok(())
+}
+
+fn bump_local_updated_at(path: &camino::Utf8PathBuf) -> Result<(), RiptskError> {
     let mut issue =
         crate::storage::frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
-    let remote_file = issue
-        .frontmatter
-        .conflict
-        .as_ref()
-        .map(|conflict| paths.issues_dir().join(&conflict.remote_file))
-        .ok_or_else(|| RiptskError::Conflict(format!("no conflict for {id}")))?;
-
-    if args.take_remote {
-        let mut remote = crate::storage::frontmatter::load_issue(remote_file.as_std_path())
-            .map_err(RiptskError::Other)?;
-        remote.frontmatter.conflict = None;
-        remote.frontmatter.conflict_role = None;
-        remote.frontmatter.conflict_parent = None;
-        remote.frontmatter.local_updated_at = crate::services::issue_service::now_utc();
-        crate::storage::frontmatter::save_issue(path.as_std_path(), &remote)
-            .map_err(RiptskError::Other)?;
-    } else {
-        issue.frontmatter.conflict = None;
-        issue.frontmatter.conflict_role = None;
-        issue.frontmatter.conflict_parent = None;
-        issue.frontmatter.local_updated_at = crate::services::issue_service::now_utc();
-        crate::storage::frontmatter::save_issue(path.as_std_path(), &issue)
-            .map_err(RiptskError::Other)?;
-    }
-
-    if remote_file.exists() {
-        std::fs::remove_file(remote_file)?;
-    }
+    issue.frontmatter.local_updated_at = crate::services::issue_service::now_utc();
+    crate::storage::frontmatter::save_issue(path.as_std_path(), &issue)
+        .map_err(RiptskError::Other)?;
     Ok(())
 }
 
@@ -353,8 +497,8 @@ fn session_start(paths: &AppPaths, args: SessionStartArgs) -> Result<(), RiptskE
     let previous_branch = git.current_branch(repo.as_path())?;
     let session_branch = {
         let path = crate::storage::issue_store::find_issue(paths, &id)?;
-        let mut issue = crate::storage::frontmatter::load_issue(path.as_std_path())
-            .map_err(RiptskError::Other)?;
+        let mut issue =
+            crate::commands::issues::load_issue_or_conflict_error(path.as_std_path(), &id)?;
         let branch = issue.frontmatter.id_slug.clone().unwrap_or_else(|| {
             crate::services::issue_service::generate_slug(
                 &issue.frontmatter.id,

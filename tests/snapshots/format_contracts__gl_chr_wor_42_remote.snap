@@ -24,8 +24,6 @@ gitlab:
 local_updated_at: 2026-03-16T12:00:00Z
 due: 2026-03-20
 remote_deleted: false
-conflict_role: remote
-conflict_parent: GL-CHR-WOR--42
 ---
 
 ## Description
