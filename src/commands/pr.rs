@@ -332,7 +332,7 @@ pub(crate) async fn merge_pr_workflow(
                 git.checkout(repo_path, branch)?;
             }
             ui::info("dropping empty bootstrap commit...");
-            git.rebase_drop_commit(repo_path, &sha)?;
+            git.rebase_drop_commit(repo_path, &sha, branch)?;
 
             if git.commits_ahead_of_base(repo_path, branch, &default_branch)? == 0 {
                 return Err(RiptskError::General(

@@ -43,7 +43,12 @@ pub trait GitBackend {
         base: &str,
         subject: &str,
     ) -> Result<Option<String>, RiptskError>;
-    fn rebase_drop_commit(&self, repo: &Path, commit_sha: &str) -> Result<(), RiptskError>;
+    fn rebase_drop_commit(
+        &self,
+        repo: &Path,
+        commit_sha: &str,
+        branch: &str,
+    ) -> Result<(), RiptskError>;
     fn force_push_with_lease(&self, repo: &Path, branch: &str) -> Result<(), RiptskError>;
     fn force_push(&self, repo: &Path, branch: &str) -> Result<(), RiptskError>;
     fn log_between(&self, repo: &Path, base: &str, head: &str) -> Result<String, RiptskError>;
@@ -315,12 +320,17 @@ impl GitBackend for CliGit {
         Ok(None)
     }
 
-    fn rebase_drop_commit(&self, repo: &Path, commit_sha: &str) -> Result<(), RiptskError> {
+    fn rebase_drop_commit(
+        &self,
+        repo: &Path,
+        commit_sha: &str,
+        branch: &str,
+    ) -> Result<(), RiptskError> {
         let onto = format!("{commit_sha}^");
         let status = Command::new("git")
             .arg("-C")
             .arg(repo)
-            .args(["rebase", "--onto", &onto, commit_sha, "HEAD"])
+            .args(["rebase", "--onto", &onto, commit_sha, branch])
             .status()?;
         if status.success() {
             return Ok(());
