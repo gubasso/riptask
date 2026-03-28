@@ -374,14 +374,22 @@ impl BackendProvider for GithubProvider {
             }
         });
 
-        // Evaluate legacy commit statuses
-        let status_state = status_result.map(|combined| match combined.state {
-            octocrab::models::StatusState::Success => PrChecksStatus::Passed,
-            octocrab::models::StatusState::Failure | octocrab::models::StatusState::Error => {
-                PrChecksStatus::Failed
+        // Evaluate legacy commit statuses.
+        // GitHub returns state:"pending" with an empty statuses array when no
+        // legacy statuses exist. Treat that as None, not Pending, so it does
+        // not override a valid Passed/Failed from check runs.
+        let status_state = status_result.and_then(|combined| {
+            if combined.statuses.is_empty() {
+                return None;
             }
-            octocrab::models::StatusState::Pending => PrChecksStatus::Pending,
-            _ => PrChecksStatus::None,
+            Some(match combined.state {
+                octocrab::models::StatusState::Success => PrChecksStatus::Passed,
+                octocrab::models::StatusState::Failure | octocrab::models::StatusState::Error => {
+                    PrChecksStatus::Failed
+                }
+                octocrab::models::StatusState::Pending => PrChecksStatus::Pending,
+                _ => PrChecksStatus::None,
+            })
         });
 
         // Merge both signals: worst status wins
