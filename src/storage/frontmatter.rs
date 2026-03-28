@@ -80,7 +80,9 @@ pub fn load_issue(path: &Path) -> Result<IssueDocument> {
 }
 
 pub fn has_conflict_markers(content: &str) -> bool {
-    content.contains(CONFLICT_MARKER)
+    content
+        .lines()
+        .any(|line| line.starts_with(CONFLICT_MARKER))
 }
 
 pub enum IssueLoadResult {
@@ -161,6 +163,12 @@ mod tests {
     #[test]
     fn detects_conflict_markers() {
         assert!(has_conflict_markers(CONFLICT_MARKER));
+        assert!(has_conflict_markers(&format!(
+            "line one\n{CONFLICT_MARKER}\nline three"
+        )));
         assert!(!has_conflict_markers("clean content"));
+        assert!(!has_conflict_markers(&format!("# {CONFLICT_MARKER}")));
+        assert!(!has_conflict_markers(&format!("> {CONFLICT_MARKER}")));
+        assert!(!has_conflict_markers(&format!("  {CONFLICT_MARKER}")));
     }
 }
