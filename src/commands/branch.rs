@@ -27,7 +27,7 @@ async fn create_branch(paths: &AppPaths, args: BranchArgs) -> Result<(), RiptskE
         return Ok(());
     };
     let path = issue_store::find_issue(paths, &id)?;
-    let mut issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
+    let mut issue = crate::commands::issues::load_issue_or_conflict_error(path.as_std_path(), &id)?;
 
     let backend = config
         .backends
@@ -176,7 +176,9 @@ async fn delete_branch(paths: &AppPaths, args: BranchArgs) -> Result<(), RiptskE
     }
 
     if let Some(path) = issue_path {
-        let mut issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
+        let id = path.file_stem().unwrap_or_default().to_string();
+        let mut issue =
+            crate::commands::issues::load_issue_or_conflict_error(path.as_std_path(), &id)?;
         issue.frontmatter.branch = None;
         issue.frontmatter.id_slug = None;
         frontmatter::save_issue(path.as_std_path(), &issue).map_err(RiptskError::Other)?;
@@ -204,7 +206,7 @@ fn resolve_delete_target(
     if input.chars().all(|c| c.is_ascii_digit()) || input.contains("--") {
         let id = id_resolution::resolve_id(paths, config, cwd, input)?;
         let path = issue_store::find_issue(paths, &id)?;
-        let issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
+        let issue = crate::commands::issues::load_issue_or_conflict_error(path.as_std_path(), &id)?;
         if let Some(branch) = issue.frontmatter.branch {
             return Ok(branch);
         }
@@ -221,7 +223,8 @@ async fn resolve_backend_and_default(
     issue_path: Option<&camino::Utf8PathBuf>,
 ) -> Result<(BackendConfig, String), RiptskError> {
     if let Some(path) = issue_path {
-        let issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
+        let id = path.file_stem().unwrap_or_default().to_string();
+        let issue = crate::commands::issues::load_issue_or_conflict_error(path.as_std_path(), &id)?;
         let backend = config
             .backends
             .iter()
@@ -292,11 +295,32 @@ pub(crate) fn find_issue_for_branch(
     branch: &str,
 ) -> Result<camino::Utf8PathBuf, RiptskError> {
     for path in issue_store::list_issues(paths)? {
-        let issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
-        if issue.frontmatter.branch.as_deref() == Some(branch)
-            || issue.frontmatter.id_slug.as_deref() == Some(branch)
-        {
-            return Ok(path);
+        match frontmatter::try_load_issue(path.as_std_path()) {
+            frontmatter::IssueLoadResult::Ok(issue) => {
+                if issue.frontmatter.branch.as_deref() == Some(branch)
+                    || issue.frontmatter.id_slug.as_deref() == Some(branch)
+                {
+                    return Ok(path);
+                }
+            }
+            frontmatter::IssueLoadResult::Conflict { id, .. } => {
+                for backup in [
+                    issue_store::local_backup_path(paths, &id),
+                    issue_store::remote_backup_path(paths, &id),
+                ] {
+                    if !backup.exists() {
+                        continue;
+                    }
+                    if let frontmatter::IssueLoadResult::Ok(issue) =
+                        frontmatter::try_load_issue(backup.as_std_path())
+                        && (issue.frontmatter.branch.as_deref() == Some(branch)
+                            || issue.frontmatter.id_slug.as_deref() == Some(branch))
+                    {
+                        return Ok(path.clone());
+                    }
+                }
+            }
+            frontmatter::IssueLoadResult::Err(error) => return Err(RiptskError::Other(error)),
         }
     }
     Err(RiptskError::NotFound(format!(

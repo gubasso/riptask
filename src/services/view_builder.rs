@@ -54,7 +54,11 @@ impl<'a> ViewBuilder<'a> {
             }
         }
         for path in issue_store::list_issues(self.paths)? {
-            let issue = frontmatter::load_issue(path.as_std_path())?;
+            let issue = match frontmatter::try_load_issue(path.as_std_path()) {
+                frontmatter::IssueLoadResult::Ok(issue) => issue,
+                frontmatter::IssueLoadResult::Conflict { .. } => continue,
+                frontmatter::IssueLoadResult::Err(error) => return Err(error),
+            };
             if issue.frontmatter.remote_deleted {
                 continue;
             }
@@ -79,7 +83,11 @@ impl<'a> ViewBuilder<'a> {
 
     fn build_projects(&self) -> Result<()> {
         for path in issue_store::list_issues(self.paths)? {
-            let issue = frontmatter::load_issue(path.as_std_path())?;
+            let issue = match frontmatter::try_load_issue(path.as_std_path()) {
+                frontmatter::IssueLoadResult::Ok(issue) => issue,
+                frontmatter::IssueLoadResult::Conflict { .. } => continue,
+                frontmatter::IssueLoadResult::Err(error) => return Err(error),
+            };
             let target = self
                 .paths
                 .views_root()
@@ -94,7 +102,11 @@ impl<'a> ViewBuilder<'a> {
 
     fn build_orgs(&self) -> Result<()> {
         for path in issue_store::list_issues(self.paths)? {
-            let issue = frontmatter::load_issue(path.as_std_path())?;
+            let issue = match frontmatter::try_load_issue(path.as_std_path()) {
+                frontmatter::IssueLoadResult::Ok(issue) => issue,
+                frontmatter::IssueLoadResult::Conflict { .. } => continue,
+                frontmatter::IssueLoadResult::Err(error) => return Err(error),
+            };
             let Some(org) = issue.frontmatter.org.as_ref() else {
                 continue;
             };
@@ -112,7 +124,11 @@ impl<'a> ViewBuilder<'a> {
 
     fn build_cycles(&self) -> Result<()> {
         for path in issue_store::list_issues(self.paths)? {
-            let issue = frontmatter::load_issue(path.as_std_path())?;
+            let issue = match frontmatter::try_load_issue(path.as_std_path()) {
+                frontmatter::IssueLoadResult::Ok(issue) => issue,
+                frontmatter::IssueLoadResult::Conflict { .. } => continue,
+                frontmatter::IssueLoadResult::Err(error) => return Err(error),
+            };
             let Some(cycle) = issue.frontmatter.cycle.as_ref() else {
                 continue;
             };

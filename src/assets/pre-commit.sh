@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# riptsk-hook-version: 1
+# riptsk-hook-version: 2
 set -euo pipefail
 IFS=$'\n\t'
 
@@ -26,10 +26,18 @@ validate_issue_file() {
     local file="$1"
     local filename state priority remote_deleted title board project id updated
     if [[ "$file" == *.REMOTE.md ]] && [[ "${RIPTSK_HOOK_ALLOW_REMOTE:-0}" != "1" ]]; then
-        report_fail "$file" ".REMOTE.md should not be committed (use: tsk resolve <ID>)"
+        report_fail "$file" ".REMOTE.md should not be committed (use: tsk sync resolve <ID>)"
+        return
+    fi
+    if [[ "$file" == *.LOCAL.md ]] && [[ "${RIPTSK_HOOK_ALLOW_REMOTE:-0}" != "1" ]]; then
+        report_fail "$file" ".LOCAL.md should not be committed (use: tsk sync resolve <ID>)"
         return
     fi
     validate_frontmatter_delimiters "$file" || { report_fail "$file" "missing frontmatter delimiters"; return; }
+    if grep -q '^<<<<<<< LOCAL$' "$file"; then
+        report_fail "$file" "contains unresolved conflict markers (use: tsk edit <ID> then tsk sync resolve <ID>)"
+        return
+    fi
     yq --front-matter=extract '.' "$file" >/dev/null 2>&1 || { report_fail "$file" "invalid YAML in frontmatter"; return; }
     title="$(yq --front-matter=extract -r '.title // ""' "$file")"
     state="$(yq --front-matter=extract -r '.status // ""' "$file")"

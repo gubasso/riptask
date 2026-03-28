@@ -22,7 +22,8 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
             .and_then(|repo| CliGit::new().current_branch(repo.as_path()))
             .and_then(|branch| find_issue_for_branch(paths, &branch))
             .and_then(|path| {
-                frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)
+                let id = path.file_stem().unwrap_or_default().to_string();
+                crate::commands::issues::load_issue_or_conflict_error(path.as_std_path(), &id)
             }) {
             Ok(issue) => issue.frontmatter.id,
             Err(_) => match id_resolution::require_id(paths, &config, &cwd, None, &args.scope)? {
@@ -33,7 +34,7 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
     };
     let issue_path = issue_store::find_issue(paths, &id)?;
     let mut issue =
-        frontmatter::load_issue(issue_path.as_std_path()).map_err(RiptskError::Other)?;
+        crate::commands::issues::load_issue_or_conflict_error(issue_path.as_std_path(), &id)?;
     let branch_name = issue
         .frontmatter
         .branch

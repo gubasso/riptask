@@ -8,6 +8,7 @@ pub trait GitBackend {
     fn init(&self, path: &Path) -> Result<(), RiptskError>;
     fn add(&self, repo: &Path, files: &[&Path]) -> Result<(), RiptskError>;
     fn commit(&self, repo: &Path, message: &str) -> Result<(), RiptskError>;
+    fn merge_file(&self, local: &Path, base: &Path, remote: &Path) -> Result<String, RiptskError>;
     fn has_changes(&self, repo: &Path) -> Result<bool, RiptskError>;
     fn pull(&self, repo: &Path) -> Result<(), RiptskError>;
     fn push(&self, repo: &Path) -> Result<(), RiptskError>;
@@ -117,6 +118,31 @@ impl GitBackend for CliGit {
 
     fn commit(&self, repo: &Path, message: &str) -> Result<(), RiptskError> {
         run_git(repo, ["commit", "-m", message])
+    }
+
+    fn merge_file(&self, local: &Path, base: &Path, remote: &Path) -> Result<String, RiptskError> {
+        let output = Command::new("git")
+            .args([
+                "merge-file",
+                "-p",
+                "-L",
+                "LOCAL",
+                "-L",
+                "BASE",
+                "-L",
+                "REMOTE",
+            ])
+            .arg(local)
+            .arg(base)
+            .arg(remote)
+            .output()?;
+        match output.status.code() {
+            Some(code) if code <= 127 => Ok(String::from_utf8_lossy(&output.stdout).into_owned()),
+            _ => Err(RiptskError::General(format!(
+                "git merge-file failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ))),
+        }
     }
 
     fn has_changes(&self, repo: &Path) -> Result<bool, RiptskError> {

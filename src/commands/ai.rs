@@ -20,7 +20,11 @@ pub fn summarize(paths: &AppPaths, args: SummarizeArgs) -> Result<(), RiptskErro
     };
     let mut context = String::new();
     for path in issue_store::list_issues(paths)? {
-        let issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
+        let issue = match frontmatter::try_load_issue(path.as_std_path()) {
+            frontmatter::IssueLoadResult::Ok(issue) => issue,
+            frontmatter::IssueLoadResult::Conflict { .. } => continue,
+            frontmatter::IssueLoadResult::Err(error) => return Err(RiptskError::Other(error)),
+        };
         if let Some(project) = args.project.as_deref()
             && issue.frontmatter.project != project
         {
@@ -58,7 +62,11 @@ pub fn ask(paths: &AppPaths, args: AskArgs) -> Result<(), RiptskError> {
     };
     let mut context = String::new();
     for path in issue_store::list_issues(paths)? {
-        let issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
+        let issue = match frontmatter::try_load_issue(path.as_std_path()) {
+            frontmatter::IssueLoadResult::Ok(issue) => issue,
+            frontmatter::IssueLoadResult::Conflict { .. } => continue,
+            frontmatter::IssueLoadResult::Err(error) => return Err(RiptskError::Other(error)),
+        };
         context.push_str(&format!(
             "{} {}\n{}\n\n",
             issue.frontmatter.id, issue.frontmatter.title, issue.body

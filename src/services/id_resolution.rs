@@ -71,7 +71,9 @@ pub fn require_id(
 
     let scope =
         crate::scope::resolve_scope(&scope_args.projects, scope_args.all_projects, cwd, config)?;
-    let issues = IssueService::new(paths, config).list_matching(&LsArgs::default(), &scope)?;
+    let issues = IssueService::new(paths, config)
+        .list_matching(&LsArgs::default(), &scope)?
+        .documents;
     let mode = if scope_args.all_projects {
         IssueDisplayMode::AllProjects
     } else {

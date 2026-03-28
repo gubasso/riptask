@@ -74,10 +74,6 @@ pub enum Commands {
     ReorderDown(IdArgs),
     /// Sync issues with a remote backend (GitHub/GitLab)
     Sync(SyncArgs),
-    /// Push local issues to their remote backend
-    Push(PushArgs),
-    /// Resolve a sync conflict on an issue
-    Resolve(ResolveArgs),
     /// Start or end a work session
     Session(SessionArgs),
     /// Commit tsk issue changes to git
@@ -360,21 +356,18 @@ pub struct SyncArgs {
 #[derive(Debug, Clone, Subcommand)]
 pub enum SyncSubcommand {
     /// Pull issues from the remote backend
-    Pull,
+    Pull(SyncPullPushArgs),
     /// Push local changes to the remote backend
-    Push,
+    Push(SyncPullPushArgs),
     /// Show sync status
     Status,
+    /// Resolve a sync conflict
+    Resolve(ResolveArgs),
 }
 
 #[derive(Debug, Clone, Args, Default)]
-pub struct PushArgs {
-    #[command(flatten)]
-    pub scope: ScopeArgs,
-    /// Push all issues
-    #[arg(short = 'A', long)]
-    pub all: bool,
-    /// Issue IDs to push
+pub struct SyncPullPushArgs {
+    /// Issue IDs to sync (omit for all)
     pub ids: Vec<String>,
 }
 
@@ -611,7 +604,7 @@ pub enum HooksSubcommand {
 
 #[cfg(test)]
 mod tests {
-    use super::{Cli, Commands, PrSubcommand, SessionSubcommand};
+    use super::{Cli, Commands, PrSubcommand, SessionSubcommand, SyncSubcommand};
     use clap::Parser;
 
     #[test]
@@ -915,16 +908,34 @@ mod tests {
     }
 
     #[test]
-    fn resolve_short_flags_parse() {
-        let cli = Cli::try_parse_from(["tsk", "resolve", "42", "-r"]).expect("parse");
-        let Commands::Resolve(args) = cli.command.expect("command") else {
-            panic!("expected resolve command");
+    fn sync_pull_ids_parse() {
+        let cli = Cli::try_parse_from(["tsk", "sync", "pull", "42", "43"]).expect("parse");
+        let Commands::Sync(args) = cli.command.expect("command") else {
+            panic!("expected sync command");
+        };
+        let Some(SyncSubcommand::Pull(args)) = args.subcommand else {
+            panic!("expected sync pull subcommand");
+        };
+        assert_eq!(args.ids, vec!["42", "43"]);
+    }
+
+    #[test]
+    fn sync_resolve_short_flags_parse() {
+        let cli = Cli::try_parse_from(["tsk", "sync", "resolve", "42", "-r"]).expect("parse");
+        let Commands::Sync(args) = cli.command.expect("command") else {
+            panic!("expected sync command");
+        };
+        let Some(SyncSubcommand::Resolve(args)) = args.subcommand else {
+            panic!("expected sync resolve subcommand");
         };
         assert!(args.take_remote);
 
-        let cli = Cli::try_parse_from(["tsk", "resolve", "42", "-l"]).expect("parse");
-        let Commands::Resolve(args) = cli.command.expect("command") else {
-            panic!("expected resolve command");
+        let cli = Cli::try_parse_from(["tsk", "sync", "resolve", "42", "-l"]).expect("parse");
+        let Commands::Sync(args) = cli.command.expect("command") else {
+            panic!("expected sync command");
+        };
+        let Some(SyncSubcommand::Resolve(args)) = args.subcommand else {
+            panic!("expected sync resolve subcommand");
         };
         assert!(args.take_local);
     }

@@ -36,7 +36,13 @@ pub fn show(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
         return Ok(());
     };
     let path = issue_store::find_issue(paths, &id)?;
-    print!("{}", std::fs::read_to_string(path)?);
+    let content = std::fs::read_to_string(&path)?;
+    if frontmatter::has_conflict_markers(&content) {
+        crate::ui::warn(&format!(
+            "issue {id} has unresolved sync conflicts\n\n  Resolve in editor:\n    tsk edit {id}\n\n  Then mark resolved:\n    tsk sync resolve {id}"
+        ));
+    }
+    print!("{content}");
     Ok(())
 }
 
@@ -74,21 +80,36 @@ pub fn list(paths: &AppPaths, args: LsArgs) -> Result<(), RiptskError> {
         IssueDisplayMode::PerProject
     };
     let is_tty = std::io::stdout().is_terminal();
+    if args.conflicts {
+        let conflicts = list_conflicted_ids(paths)?;
+        if is_tty {
+            if !conflicts.is_empty() {
+                println!("{}", render_conflict_table(&conflicts, &mode));
+            }
+        } else {
+            for id in conflicts {
+                println!("!\t{id}\t\tCONFLICT\t\tUnresolved conflict");
+            }
+        }
+        return Ok(());
+    }
     let service = IssueService::new(paths, &config);
-    let issues = service.list_matching(&args, &scope)?;
+    let result = service.list_matching(&args, &scope)?;
+    let issues = result.documents;
 
     if is_tty {
         if !issues.is_empty() {
             println!("{}", render_issue_table(&issues, &mode));
         }
+        if result.conflict_count > 0 {
+            println!(
+                "\n{} issues have unresolved conflicts (tsk ls --conflicts)",
+                result.conflict_count
+            );
+        }
     } else {
         for issue in &issues {
-            let marker = if issue.frontmatter.conflict.is_some() {
-                " [CONFLICT]"
-            } else {
-                ""
-            };
-            println!("{}{}", format_issue_plain(issue), marker);
+            println!("{}", format_issue_plain(issue));
         }
     }
     Ok(())
@@ -133,11 +154,7 @@ fn render_issue_table(issues: &[IssueDocument], mode: &IssueDisplayMode) -> Stri
             .map(|(_, n)| format!("#{}", n))
             .unwrap_or_else(|| fm.id.clone());
 
-        let title = if fm.conflict.is_some() {
-            format!("{} [CONFLICT]", truncate_title(&fm.title, 50))
-        } else {
-            truncate_title(&fm.title, 50)
-        };
+        let title = truncate_title(&fm.title, 50);
 
         let priority_str = fm.priority.as_ref().map(Priority::as_str).unwrap_or("-");
 
@@ -153,6 +170,57 @@ fn render_issue_table(issues: &[IssueDocument], mode: &IssueDisplayMode) -> Stri
             Cell::new(fm.status.as_str()).fg(state_color(&fm.status)),
             Cell::new(priority_str).fg(priority_color(fm.priority.as_ref())),
             Cell::new(sanitize_control(&fm.board)).fg(Color::Grey),
+        ]);
+        table.add_row(row);
+    }
+
+    table.to_string()
+}
+
+fn render_conflict_table(conflicts: &[String], mode: &IssueDisplayMode) -> String {
+    let mut table = Table::new();
+    table
+        .load_preset(NOTHING)
+        .set_content_arrangement(ContentArrangement::Dynamic);
+
+    let mut headers: Vec<Cell> = Vec::new();
+    if *mode == IssueDisplayMode::AllProjects {
+        headers.push(
+            Cell::new("Project")
+                .add_attribute(Attribute::Bold)
+                .add_attribute(Attribute::Dim),
+        );
+    }
+    headers.extend([
+        Cell::new("ID")
+            .add_attribute(Attribute::Bold)
+            .add_attribute(Attribute::Dim),
+        Cell::new("Title")
+            .add_attribute(Attribute::Bold)
+            .add_attribute(Attribute::Dim),
+        Cell::new("Status")
+            .add_attribute(Attribute::Bold)
+            .add_attribute(Attribute::Dim),
+        Cell::new("Priority")
+            .add_attribute(Attribute::Bold)
+            .add_attribute(Attribute::Dim),
+        Cell::new("Board")
+            .add_attribute(Attribute::Bold)
+            .add_attribute(Attribute::Dim),
+    ]);
+    table.set_header(headers);
+
+    for id in conflicts {
+        let mut row: Vec<Cell> = Vec::new();
+        if *mode == IssueDisplayMode::AllProjects {
+            row.push(Cell::new("-").fg(Color::Magenta));
+        }
+        row.extend([
+            Cell::new(format!("! #{id}")).fg(Color::Red),
+            Cell::new("Unresolved conflict"),
+            Cell::new("CONFLICT").fg(Color::Red),
+            Cell::new("-").fg(Color::Grey),
+            Cell::new("-").fg(Color::Grey),
         ]);
         table.add_row(row);
     }
@@ -273,15 +341,24 @@ pub fn edit(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
         return Ok(());
     };
     let path = issue_store::find_issue(paths, &id)?;
-    let issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
+    let content = std::fs::read_to_string(&path)?;
+    let has_conflict = frontmatter::has_conflict_markers(&content);
+    if has_conflict {
+        crate::ui::warn(&format!(
+            "issue {id} has unresolved sync conflicts\n\n  Resolve the markers, then run:\n    tsk sync resolve {id}"
+        ));
+    }
     IssueService::new(paths, &config).edit_issue(Some(id.clone()))?;
-    maybe_auto_commit(
-        &config,
-        &CliGit::new(),
-        paths.riptsk_repo.as_std_path(),
-        &format!("riptsk: edit {} - {}", id, issue.frontmatter.title),
-        &[path.as_std_path()],
-    )?;
+    if !has_conflict {
+        let issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
+        maybe_auto_commit(
+            &config,
+            &CliGit::new(),
+            paths.riptsk_repo.as_std_path(),
+            &format!("riptsk: edit {} - {}", id, issue.frontmatter.title),
+            &[path.as_std_path()],
+        )?;
+    }
     Ok(())
 }
 
@@ -300,7 +377,7 @@ pub fn set_status(paths: &AppPaths, args: StatusArgs) -> Result<(), RiptskError>
     };
     let status = status.ok_or_else(|| RiptskError::General("<status> required".into()))?;
     let path = issue_store::find_issue(paths, &id)?;
-    let issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
+    let issue = load_issue_or_conflict_error(path.as_std_path(), &id)?;
     IssueService::new(paths, &config).move_issue(&id, &status)?;
     maybe_auto_commit(
         &config,
@@ -350,7 +427,7 @@ pub fn remove(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
         return Ok(());
     };
     let path = issue_store::find_issue(paths, &id)?;
-    let issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
+    let issue = load_issue_or_conflict_error(path.as_std_path(), &id)?;
     if let Some((provider, repo, issue_id)) = backend_delete_target(&issue) {
         cache::mark_deleted(
             paths,
@@ -446,9 +523,6 @@ async fn create_backend_issue(
             lock_reason: record.lock_reason.clone(),
             recurring: None,
             remote_deleted: false,
-            conflict: None,
-            conflict_role: None,
-            conflict_parent: None,
             id_slug: Some(generate_slug(&id, &draft.title)),
             branch: None,
             pr_url: None,
@@ -492,4 +566,36 @@ fn backend_delete_target(issue: &IssueDocument) -> Option<(&'static str, String,
             .map(|issue_id| ("gitlab", meta.repo.clone(), issue_id));
     }
     None
+}
+
+pub fn load_issue_or_conflict_error(
+    path: &std::path::Path,
+    id: &str,
+) -> Result<IssueDocument, RiptskError> {
+    match frontmatter::try_load_issue(path) {
+        frontmatter::IssueLoadResult::Ok(document) => Ok(*document),
+        frontmatter::IssueLoadResult::Conflict { .. } => Err(RiptskError::Conflict(format!(
+            "issue {id} has unresolved sync conflicts\n\n  \
+             Edit the file to resolve:\n    \
+             tsk edit {id}\n\n  \
+             Then mark resolved:\n    \
+             tsk sync resolve {id}\n\n  \
+             Or take one side:\n    \
+             tsk sync resolve {id} --take-local\n    \
+             tsk sync resolve {id} --take-remote"
+        ))),
+        frontmatter::IssueLoadResult::Err(error) => Err(RiptskError::Other(error)),
+    }
+}
+
+fn list_conflicted_ids(paths: &AppPaths) -> Result<Vec<String>, RiptskError> {
+    let mut conflicts = Vec::new();
+    for path in issue_store::list_issues(paths)? {
+        let content = std::fs::read_to_string(&path)?;
+        if frontmatter::has_conflict_markers(&content) {
+            conflicts.push(path.file_stem().unwrap_or_default().to_string());
+        }
+    }
+    conflicts.sort();
+    Ok(conflicts)
 }

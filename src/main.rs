@@ -87,7 +87,6 @@ fn run() -> Result<(), RiptskError> {
         Commands::Template(args) => commands::templates::run(&paths, args),
         Commands::Register(args) => commands::register::run(&paths, args),
         Commands::Recur(args) => commands::recur::run(&paths, args),
-        Commands::Push(args) => commands::push_cmd::run(&paths, args),
         Commands::Sync(args) => {
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -95,7 +94,6 @@ fn run() -> Result<(), RiptskError> {
                 .context("failed to construct tokio runtime")?;
             runtime.block_on(commands::sync_cmd::run(&paths, args))
         }
-        Commands::Resolve(args) => commands::sync_cmd::resolve(&paths, args),
         Commands::Session(args) => commands::sync_cmd::session(&paths, args),
         Commands::Commit(args) => commands::sync_cmd::commit(&paths, args),
         Commands::Branch(args) => {
