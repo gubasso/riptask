@@ -19,6 +19,7 @@ use crate::services::backend_mapping::{build_provider_for_backend, resolve_git_a
 use crate::services::id_resolution;
 use crate::services::issue_service::now_utc;
 use crate::storage::{frontmatter, issue_store};
+use crate::ui;
 use std::fs;
 use std::io::Write;
 use std::path::Path;
@@ -106,7 +107,7 @@ async fn create(paths: &AppPaths, args: PrCreateArgs) -> Result<(), RiptskError>
                 "branch has no commits but has staged changes; commit or unstage them first".into(),
             ));
         }
-        crate::ui::info("branch has no commits; creating empty commit for PR...");
+        ui::info("branch has no commits; creating empty commit for PR...");
         git.create_empty_commit(repo.as_path(), EMPTY_BRANCH_COMMIT_MESSAGE)?;
         git.push_with_upstream(repo.as_path(), &branch)?;
         skip_ai = true;
@@ -119,16 +120,16 @@ async fn create(paths: &AppPaths, args: PrCreateArgs) -> Result<(), RiptskError>
         if let Some(ai) = optional_backend(&config) {
             let context =
                 build_create_ai_context(&issue, &git, repo.as_path(), &default_branch, &branch)?;
-            crate::ui::info("generating AI PR description...");
+            ui::info("generating AI PR description...");
             match ai.generate_pr_description(&context) {
                 Ok(description) if !description.trim().is_empty() => {
                     body = format!("{body}\n\n{}", description.trim());
                 }
                 Ok(_) => {}
-                Err(error) => crate::ui::warn(&format!("AI PR description unavailable: {error}")),
+                Err(error) => ui::warn(&format!("AI PR description unavailable: {error}")),
             }
         } else if config.ai.enabled {
-            crate::ui::warn(&format!("AI unavailable: {AI_BACKEND_MISSING}"));
+            ui::warn(&format!("AI unavailable: {AI_BACKEND_MISSING}"));
         }
     }
 
@@ -246,18 +247,18 @@ async fn edit(paths: &AppPaths, args: PrEditArgs) -> Result<(), RiptskError> {
         let draft_body = if let Some(context) = ai_context {
             match optional_backend(&config) {
                 Some(ai) => {
-                    crate::ui::info("generating AI PR description update...");
+                    ui::info("generating AI PR description update...");
                     match ai.update_pr_description(&context) {
                         Ok(description) => description,
                         Err(error) => {
-                            crate::ui::warn(&format!("AI PR update unavailable: {error}"));
+                            ui::warn(&format!("AI PR update unavailable: {error}"));
                             String::new()
                         }
                     }
                 }
                 None => {
                     if config.ai.enabled {
-                        crate::ui::warn(&format!("AI unavailable: {AI_BACKEND_MISSING}"));
+                        ui::warn(&format!("AI unavailable: {AI_BACKEND_MISSING}"));
                     }
                     String::new()
                 }
@@ -278,7 +279,7 @@ async fn edit(paths: &AppPaths, args: PrEditArgs) -> Result<(), RiptskError> {
     };
 
     sync_issue_pr_metadata(&path, &mut issue, &record)?;
-    crate::ui::success(&format!("updated PR #{}", record.number));
+    ui::success(&format!("updated PR #{}", record.number));
     Ok(())
 }
 
@@ -304,12 +305,12 @@ pub(crate) async fn merge_pr_workflow(
     let initial_pr = provider.get_pr(repo_name, pr_number).await?;
 
     if initial_pr.merged || initial_pr.state == "merged" {
-        crate::ui::info("PR already merged, continuing with cleanup");
+        ui::info("PR already merged, continuing with cleanup");
         return Ok(());
     }
 
     if !opts.yes && !confirm_merge(&DialoguerPrompts, issue, &initial_pr, opts.merge_method)? {
-        crate::ui::warn("aborted");
+        ui::warn("aborted");
         return Ok(());
     }
 
@@ -330,7 +331,7 @@ pub(crate) async fn merge_pr_workflow(
             if current != branch {
                 git.checkout(repo_path, branch)?;
             }
-            crate::ui::info("dropping empty bootstrap commit...");
+            ui::info("dropping empty bootstrap commit...");
             git.rebase_drop_commit(repo_path, &sha)?;
 
             if git.commits_ahead_of_base(repo_path, branch, &default_branch)? == 0 {
@@ -353,9 +354,9 @@ pub(crate) async fn merge_pr_workflow(
     }
 
     if !opts.auto_merge {
-        let checks = wait_for_checks(provider, repo_name, pr_number, opts.timeout, 30).await?;
+        let checks = wait_for_checks(provider, repo_name, pr_number, opts.timeout).await?;
         if checks == PrChecksStatus::Passed {
-            crate::ui::success("all checks passed");
+            ui::success("all checks passed");
         }
     }
     provider
@@ -478,12 +479,8 @@ fn confirm_merge(
     pr: &BackendPrRecord,
     method: MergeMethod,
 ) -> Result<bool, RiptskError> {
-    let prompt = format!(
-        "merge '{}' via {}?\n{}",
-        pr.title,
-        merge_method_label(method),
-        pr.url
-    );
+    ui::info(&pr.url);
+    let prompt = format!("merge '{}' via {}?", pr.title, merge_method_label(method));
     prompts.confirm(&prompt, false)
 }
 
@@ -492,33 +489,51 @@ async fn wait_for_checks(
     repo: &str,
     pr_number: u64,
     timeout_secs: u64,
-    grace_secs: u64,
 ) -> Result<PrChecksStatus, RiptskError> {
     let started = Instant::now();
+    let mut saw_checks = false;
     loop {
-        let checks = provider.get_pr_checks_status(repo, pr_number).await?;
-        crate::ui::info(&format!(
-            "checks status: {}",
-            pr_checks_status_label(checks)
-        ));
-        match checks {
-            PrChecksStatus::Passed => return Ok(checks),
-            PrChecksStatus::None => {
-                if started.elapsed() >= Duration::from_secs(grace_secs) {
-                    return Ok(checks);
-                }
+        let status = provider.get_pr_checks_status(repo, pr_number).await?;
+        match status {
+            PrChecksStatus::Passed => {
+                ui::info(&format!(
+                    "checks status: {}",
+                    pr_checks_status_label(status)
+                ));
+                return Ok(status);
             }
             PrChecksStatus::Failed => {
+                ui::info(&format!(
+                    "checks status: {}",
+                    pr_checks_status_label(status)
+                ));
                 return Err(RiptskError::General(format!(
                     "checks failed for PR #{pr_number}"
                 )));
             }
-            PrChecksStatus::Pending => {}
+            PrChecksStatus::Pending => {
+                saw_checks = true;
+                ui::info(&format!(
+                    "checks status: {}",
+                    pr_checks_status_label(status)
+                ));
+            }
+            PrChecksStatus::None => {
+                if saw_checks {
+                    ui::info("checks status: waiting for checks to reappear");
+                } else {
+                    ui::info("checks status: waiting for checks to register");
+                }
+            }
         }
         if started.elapsed() >= Duration::from_secs(timeout_secs) {
-            return Err(RiptskError::General(format!(
-                "timed out after {timeout_secs}s waiting for checks on PR #{pr_number}"
-            )));
+            if saw_checks {
+                return Err(RiptskError::General(format!(
+                    "timed out after {timeout_secs}s waiting for checks on PR #{pr_number}"
+                )));
+            }
+            ui::info("no CI checks detected, proceeding");
+            return Ok(PrChecksStatus::None);
         }
         tokio::time::sleep(Duration::from_secs(10)).await;
     }
