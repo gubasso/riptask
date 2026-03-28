@@ -81,7 +81,12 @@ fn run_due(paths: &AppPaths, date: Option<String>) -> Result<(), RiptskError> {
     let existing_issues = issue_store::list_issues(paths)?;
     let existing_docs: Vec<_> = existing_issues
         .iter()
-        .filter_map(|p| crate::storage::frontmatter::load_issue(p.as_std_path()).ok())
+        .filter_map(
+            |p| match crate::storage::frontmatter::try_load_issue(p.as_std_path()) {
+                crate::storage::frontmatter::IssueLoadResult::Ok(doc) => Some(*doc),
+                _ => None,
+            },
+        )
         .collect();
 
     let mut changed_paths = vec![paths.config_path()];

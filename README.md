@@ -193,19 +193,36 @@ Requires a configured remote in `riptsk.yaml` and an API token
 ```bash
 tsk sync                     # pull then push (default)
 tsk sync pull                # fetch remote issues
+tsk sync pull 42             # fetch one issue
 tsk sync push                # push local changes
+tsk sync push 42             # push one issue
 tsk sync status              # show unsynced issues
+tsk sync resolve <ID>        # finish conflict resolution
 tsk sync pull --auto-triage  # AI auto-categorize on pull
 
 tsk ls --conflicts           # list conflicting issues
-tsk sync resolve <ID>        # mark a manually-edited conflict as resolved
 tsk sync resolve <ID> --take-local
 tsk sync resolve <ID> --take-remote
 ```
 
-When both local and remote changed, `tsk sync pull` writes Git-style merge
-markers into the issue file and keeps `.LOCAL.md` / `.REMOTE.md` backups next
-to it. Resolve the markers in your editor, then run `tsk sync resolve <ID>`.
+#### Conflict resolution
+
+When `tsk sync pull` detects a conflict, `tsk` keeps both clean versions as
+`issues/<ID>.LOCAL.md` and `issues/<ID>.REMOTE.md`, then overwrites the main
+`issues/<ID>.md` file with git-style conflict markers. That main file is
+intentionally not parseable until you resolve it.
+
+Use `tsk ls --conflicts` to find unresolved conflicts. `tsk show <ID>` still
+prints the raw file, and `tsk edit <ID>` still opens the file in your editor so
+you can resolve the markers manually.
+
+After editing, run one of:
+
+```bash
+tsk sync resolve <ID>               # accept your manual edit, remove backups
+tsk sync resolve <ID> --take-local  # restore the local backup
+tsk sync resolve <ID> --take-remote # restore the remote backup
+```
 
 ### Templates
 
