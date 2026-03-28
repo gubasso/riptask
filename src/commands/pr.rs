@@ -380,7 +380,8 @@ fn resolve_issue(
         let branch = CliGit::new().current_branch(repo.as_path())?;
         find_issue_for_branch(paths, &branch)?
     };
-    let issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
+    let id = path.file_stem().unwrap_or_default().to_string();
+    let issue = crate::commands::issues::load_issue_or_conflict_error(path.as_std_path(), &id)?;
     Ok((path, issue))
 }
 

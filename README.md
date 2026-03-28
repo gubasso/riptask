@@ -198,10 +198,14 @@ tsk sync status              # show unsynced issues
 tsk sync pull --auto-triage  # AI auto-categorize on pull
 
 tsk ls --conflicts           # list conflicting issues
-tsk resolve <ID>             # resolve in $EDITOR
-tsk resolve <ID> --take-local
-tsk resolve <ID> --take-remote
+tsk sync resolve <ID>        # mark a manually-edited conflict as resolved
+tsk sync resolve <ID> --take-local
+tsk sync resolve <ID> --take-remote
 ```
+
+When both local and remote changed, `tsk sync pull` writes Git-style merge
+markers into the issue file and keeps `.LOCAL.md` / `.REMOTE.md` backups next
+to it. Resolve the markers in your editor, then run `tsk sync resolve <ID>`.
 
 ### Templates
 

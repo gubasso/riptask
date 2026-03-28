@@ -1,11 +1,13 @@
 use crate::domain::issue::{IssueDocument, IssueFrontmatter};
 use crate::error::FrontmatterError;
 use anyhow::{Context, Result};
+use camino::Utf8PathBuf;
 use std::fs;
 use std::io::Write;
 use std::path::Path;
 
 const REMOTE_START: &str = "<!-- TSK:REMOTE:START";
+pub const CONFLICT_MARKER: &str = "<<<<<<< LOCAL";
 
 pub fn split(
     content: &str,
@@ -77,6 +79,39 @@ pub fn load_issue(path: &Path) -> Result<IssueDocument> {
     parse_issue_str(&path.display().to_string(), &content)
 }
 
+pub fn has_conflict_markers(content: &str) -> bool {
+    content.contains(CONFLICT_MARKER)
+}
+
+pub enum IssueLoadResult {
+    Ok(Box<IssueDocument>),
+    Conflict { id: String, path: Utf8PathBuf },
+    Err(anyhow::Error),
+}
+
+pub fn try_load_issue(path: &Path) -> IssueLoadResult {
+    let content = match fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(error) => return IssueLoadResult::Err(error.into()),
+    };
+    if has_conflict_markers(&content) {
+        let id = path
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+        let utf8_path = Utf8PathBuf::from_path_buf(path.to_path_buf()).unwrap_or_default();
+        return IssueLoadResult::Conflict {
+            id,
+            path: utf8_path,
+        };
+    }
+    match parse_issue_str(&path.display().to_string(), &content) {
+        Ok(document) => IssueLoadResult::Ok(Box::new(document)),
+        Err(error) => IssueLoadResult::Err(error),
+    }
+}
+
 pub fn serialize_issue(document: &IssueDocument) -> Result<String> {
     let yaml = serde_yaml_ng::to_string(&document.frontmatter)
         .context("failed to serialize issue frontmatter")?;
@@ -101,7 +136,7 @@ pub fn save_issue(path: &Path, document: &IssueDocument) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{join, parse_issue_str, split};
+    use super::{CONFLICT_MARKER, has_conflict_markers, join, parse_issue_str, split};
 
     #[test]
     fn preserves_yaml_like_body_content() {
@@ -121,5 +156,11 @@ mod tests {
     fn join_always_ends_with_newline() {
         let output = join("id: TEST-001\n", "body", None);
         assert!(output.ends_with('\n'));
+    }
+
+    #[test]
+    fn detects_conflict_markers() {
+        assert!(has_conflict_markers(CONFLICT_MARKER));
+        assert!(!has_conflict_markers("clean content"));
     }
 }

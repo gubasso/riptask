@@ -73,15 +73,6 @@ pub struct GithubIssueMeta {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ConflictMeta {
-    pub detected_at: String,
-    pub remote_file: String,
-    pub remote_updated_at: String,
-    pub local_updated_at: String,
-    pub last_synced_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct IssueFrontmatter {
     pub id: String,
     pub title: String,
@@ -131,12 +122,6 @@ pub struct IssueFrontmatter {
     pub recurring: Option<String>,
     #[serde(default)]
     pub remote_deleted: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub conflict: Option<ConflictMeta>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub conflict_role: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub conflict_parent: Option<String>,
     #[serde(rename = "id-slug")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id_slug: Option<String>,

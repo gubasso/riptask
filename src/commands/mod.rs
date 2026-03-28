@@ -6,7 +6,6 @@ pub mod hooks;
 pub mod init;
 pub mod issues;
 pub mod pr;
-pub mod push_cmd;
 pub mod recur;
 pub mod register;
 pub mod sync_cmd;

@@ -27,6 +27,11 @@ pub fn list_issues(paths: &AppPaths) -> Result<Vec<Utf8PathBuf>, RiptskError> {
             .and_then(|value| value.to_str())
             .unwrap_or_default()
             .ends_with(".REMOTE.md")
+            || path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or_default()
+                .ends_with(".LOCAL.md")
         {
             continue;
         }
@@ -72,6 +77,11 @@ pub fn rename_issue_file(
     if old_remote.exists() {
         fs::rename(old_remote, new_remote)?;
     }
+    let old_local = issue_dir(paths).join(format!("{old_id}.LOCAL.md"));
+    let new_local = issue_dir(paths).join(format!("{new_id}.LOCAL.md"));
+    if old_local.exists() {
+        fs::rename(old_local, new_local)?;
+    }
     Ok(new_path)
 }
 
@@ -83,6 +93,30 @@ pub fn delete_issue_files(paths: &AppPaths, id: &str) -> Result<(), RiptskError>
     let remote_path = issue_dir(paths).join(format!("{id}.REMOTE.md"));
     if remote_path.exists() {
         fs::remove_file(&remote_path)?;
+    }
+    let local_path = issue_dir(paths).join(format!("{id}.LOCAL.md"));
+    if local_path.exists() {
+        fs::remove_file(&local_path)?;
+    }
+    Ok(())
+}
+
+pub fn local_backup_path(paths: &AppPaths, id: &str) -> Utf8PathBuf {
+    issue_dir(paths).join(format!("{id}.LOCAL.md"))
+}
+
+pub fn remote_backup_path(paths: &AppPaths, id: &str) -> Utf8PathBuf {
+    issue_dir(paths).join(format!("{id}.REMOTE.md"))
+}
+
+pub fn delete_conflict_backups(paths: &AppPaths, id: &str) -> Result<(), RiptskError> {
+    let local_path = local_backup_path(paths, id);
+    if local_path.exists() {
+        fs::remove_file(local_path)?;
+    }
+    let remote_path = remote_backup_path(paths, id);
+    if remote_path.exists() {
+        fs::remove_file(remote_path)?;
     }
     Ok(())
 }
