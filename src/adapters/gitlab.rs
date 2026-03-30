@@ -1,6 +1,6 @@
 use crate::adapters::backend::{
-    BackendIssueRecord, BackendIssueUpsert, BackendPrRecord, BackendProvider, DeleteOutcome,
-    MergeMethod, PrChecksStatus,
+    BackendIssueRecord, BackendIssueUpsert, BackendPrRecord, BackendProvider, CiPresence,
+    DeleteOutcome, MergeMethod, PrChecksStatus,
 };
 use crate::error::RiptskError;
 use async_trait::async_trait;
@@ -513,6 +513,27 @@ impl BackendProvider for GitlabProvider {
             },
             None => Ok(PrChecksStatus::None),
         }
+    }
+
+    async fn get_ci_presence(&self, repo: &str) -> Result<CiPresence, RiptskError> {
+        let client = self.client().await?;
+        let endpoint = gitlab::api::projects::pipelines::Pipelines::builder()
+            .project(repo)
+            .build()
+            .map_err(|error| RiptskError::General(error.to_string()))?;
+        let pipelines: Vec<serde_json::Value> =
+            gitlab::api::paged(endpoint, gitlab::api::Pagination::Limit(1))
+                .query_async(&client)
+                .await
+                .map_err(|error| RiptskError::Unreachable(error.to_string()))?;
+        Ok(CiPresence {
+            has_remote_ci: !pipelines.is_empty(),
+            remote_workflow_names: if pipelines.is_empty() {
+                vec![]
+            } else {
+                vec!["pipeline".into()]
+            },
+        })
     }
 
     async fn create_branch(

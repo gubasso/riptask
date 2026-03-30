@@ -465,7 +465,7 @@ fn parse_backend_state_key(key: &str) -> Option<(&str, &str, u64)> {
 mod tests {
     use super::*;
     use crate::adapters::backend::{
-        BackendIssueUpsert, BackendPrRecord, DeleteOutcome, MergeMethod, PrChecksStatus,
+        BackendIssueUpsert, BackendPrRecord, CiPresence, DeleteOutcome, MergeMethod, PrChecksStatus,
     };
     use crate::config::default_config;
     use crate::domain::issue::{GithubIssueMeta, IssueFrontmatter, IssueState, Priority};
@@ -684,6 +684,13 @@ mod tests {
             _number: u64,
         ) -> Result<PrChecksStatus, RiptskError> {
             Ok(PrChecksStatus::None)
+        }
+
+        async fn get_ci_presence(&self, _repo: &str) -> Result<CiPresence, RiptskError> {
+            Ok(CiPresence {
+                has_remote_ci: false,
+                remote_workflow_names: vec![],
+            })
         }
 
         async fn create_branch(

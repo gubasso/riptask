@@ -33,7 +33,7 @@ shell-escape = "0.1"
 tempfile = "3.27.0"
 termtree = "1.0.0"
 thiserror = "2.0.18"
-tokio = { version = "1", features = ["rt", "sync", "time"] }
+tokio = { version = "1", features = ["macros", "rt", "sync", "time"] }
 walkdir = "2.5.0"
 xdg = "3.0.0"
 
