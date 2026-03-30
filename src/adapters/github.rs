@@ -1,6 +1,6 @@
 use crate::adapters::backend::{
-    BackendIssueRecord, BackendIssueUpsert, BackendPrRecord, BackendProvider, DeleteOutcome,
-    MergeMethod, PrChecksStatus,
+    BackendIssueRecord, BackendIssueUpsert, BackendPrRecord, BackendProvider, CiPresence,
+    DeleteOutcome, MergeMethod, PrChecksStatus,
 };
 use crate::error::RiptskError;
 use async_trait::async_trait;
@@ -405,6 +405,88 @@ impl BackendProvider for GithubProvider {
             }
             _ => Ok(PrChecksStatus::None),
         }
+    }
+
+    async fn get_ci_presence(&self, repo: &str) -> Result<CiPresence, RiptskError> {
+        let (owner, repo_name) = self.split_owner_repo(repo)?;
+
+        // Try GitHub Actions workflows API. This may fail with 403 if the token
+        // lacks Actions:read permission — that's fine, we fall back below.
+        let mut names: Vec<String> = Vec::new();
+        if let Ok(response) = self
+            .client
+            .get::<serde_json::Value, _, _>(
+                format!("/repos/{owner}/{repo_name}/actions/workflows"),
+                None::<&()>,
+            )
+            .await
+            && let Some(arr) = response.get("workflows").and_then(|w| w.as_array())
+        {
+            names = arr
+                .iter()
+                .filter_map(|workflow| {
+                    workflow
+                        .get("path")
+                        .and_then(|path| path.as_str())
+                        .map(|path| {
+                            std::path::Path::new(path)
+                                .file_stem()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                                .to_string()
+                        })
+                })
+                .collect();
+        }
+
+        if !names.is_empty() {
+            return Ok(CiPresence {
+                has_remote_ci: true,
+                remote_workflow_names: names,
+            });
+        }
+
+        // Fallback: check if the repo has any check runs OR legacy commit
+        // statuses on the default branch. This covers third-party CI (Jenkins,
+        // CircleCI, etc.) and tokens that lack Actions:read permission.
+        let has_third_party_ci =
+            if let Ok(repo_info) = self.client.repos(owner, repo_name).get().await {
+                let default_branch = repo_info.default_branch.unwrap_or_default();
+                if !default_branch.is_empty() {
+                    let has_check_runs = self
+                        .client
+                        .checks(owner.to_string(), repo_name.to_string())
+                        .list_check_runs_for_git_ref(octocrab::params::repos::Commitish(
+                            default_branch.clone(),
+                        ))
+                        .send()
+                        .await
+                        .ok()
+                        .is_some_and(|page| !page.check_runs.is_empty());
+
+                    let encoded_ref = default_branch.replace('/', "%2F");
+                    let has_commit_statuses = self
+                        .client
+                        .get::<octocrab::models::CombinedStatus, _, _>(
+                            format!("/repos/{owner}/{repo_name}/commits/{encoded_ref}/status"),
+                            None::<&()>,
+                        )
+                        .await
+                        .ok()
+                        .is_some_and(|combined| !combined.statuses.is_empty());
+
+                    has_check_runs || has_commit_statuses
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+        Ok(CiPresence {
+            has_remote_ci: has_third_party_ci,
+            remote_workflow_names: Vec::new(),
+        })
     }
 
     async fn create_branch(

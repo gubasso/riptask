@@ -80,6 +80,12 @@ pub enum PrChecksStatus {
     Failed,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CiPresence {
+    pub has_remote_ci: bool,
+    pub remote_workflow_names: Vec<String>,
+}
+
 #[async_trait]
 pub trait BackendProvider: Send + Sync {
     async fn list_issues(&self, repo: &str) -> Result<Vec<BackendIssueRecord>, RiptskError>;
@@ -145,6 +151,7 @@ pub trait BackendProvider: Send + Sync {
         repo: &str,
         number: u64,
     ) -> Result<PrChecksStatus, RiptskError>;
+    async fn get_ci_presence(&self, repo: &str) -> Result<CiPresence, RiptskError>;
     async fn create_branch(
         &self,
         repo: &str,
