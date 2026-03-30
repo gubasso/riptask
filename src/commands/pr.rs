@@ -27,6 +27,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 const EMPTY_BRANCH_COMMIT_MESSAGE: &str = "chore: initialize branch for PR\n\n\
                                           Empty commit to allow PR creation on a branch with no changes yet.";
+const CHECKS_POLL_INTERVAL: Duration = Duration::from_secs(10);
 
 pub async fn run(paths: &AppPaths, args: PrArgs) -> Result<(), RiptskError> {
     match args.subcommand {
@@ -200,6 +201,7 @@ async fn merge(paths: &AppPaths, args: PrMergeArgs) -> Result<(), RiptskError> {
 
     merge_pr_workflow(
         provider.as_ref(),
+        &DialoguerPrompts,
         &git,
         backend.backend.clone(),
         repo_path.as_path(),
@@ -295,6 +297,7 @@ pub(crate) struct MergeOptions {
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn merge_pr_workflow(
     provider: &dyn BackendProvider,
+    prompts: &dyn PromptBackend,
     git: &dyn GitBackend,
     backend_kind: Backend,
     repo_path: &Path,
@@ -310,7 +313,7 @@ pub(crate) async fn merge_pr_workflow(
         return Ok(());
     }
 
-    if !opts.yes && !confirm_merge(&DialoguerPrompts, issue, &initial_pr, opts.merge_method)? {
+    if !opts.yes && !confirm_merge(prompts, issue, &initial_pr, opts.merge_method)? {
         ui::warn("aborted");
         return Ok(());
     }
@@ -355,7 +358,16 @@ pub(crate) async fn merge_pr_workflow(
     }
 
     if !opts.auto_merge {
-        wait_for_checks(provider, repo_name, pr_number, opts.timeout).await?;
+        handle_ci_checks(
+            provider,
+            prompts,
+            repo_path,
+            repo_name,
+            pr_number,
+            &backend_kind,
+            opts,
+        )
+        .await?;
     }
     provider
         .merge_pr(repo_name, pr_number, opts.merge_method, None, None)
@@ -483,11 +495,102 @@ fn confirm_merge(
     prompts.confirm(&prompt, false)
 }
 
+fn has_local_ci(repo_path: &Path, backend_kind: &Backend) -> bool {
+    match backend_kind {
+        Backend::Github => has_local_github_ci(repo_path),
+        Backend::Gitlab => has_local_gitlab_ci(repo_path),
+        Backend::Local => false,
+    }
+}
+
+fn has_local_github_ci(repo_path: &Path) -> bool {
+    !local_github_workflow_names(repo_path).is_empty()
+}
+
+fn has_local_gitlab_ci(repo_path: &Path) -> bool {
+    repo_path.join(".gitlab-ci.yml").is_file()
+}
+
+fn local_github_workflow_names(repo_path: &Path) -> Vec<String> {
+    let workflow_dir = repo_path.join(".github").join("workflows");
+    let Ok(entries) = fs::read_dir(workflow_dir) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.is_file())
+        .filter(|path| {
+            matches!(
+                path.extension().and_then(|ext| ext.to_str()),
+                Some("yml" | "yaml")
+            )
+        })
+        .filter_map(|path| {
+            path.file_stem()
+                .map(|stem| stem.to_string_lossy().to_string())
+        })
+        .collect();
+    names.sort();
+    names
+}
+
+async fn handle_ci_checks(
+    provider: &dyn BackendProvider,
+    prompts: &dyn PromptBackend,
+    repo_path: &Path,
+    repo_name: &str,
+    pr_number: u64,
+    backend_kind: &Backend,
+    opts: &MergeOptions,
+) -> Result<PrChecksStatus, RiptskError> {
+    let has_local = has_local_ci(repo_path, backend_kind);
+    let presence = provider.get_ci_presence(repo_name).await?;
+    match (has_local, presence.has_remote_ci) {
+        (false, false) => {
+            ui::info("no CI configured, proceeding");
+            Ok(PrChecksStatus::None)
+        }
+        (false, true) => if opts.yes {
+            ui::warn("remote CI detected without local CI config; waiting for checks");
+            wait_for_checks(provider, repo_name, pr_number, opts.timeout).await
+        } else if prompts.confirm(
+            "remote CI detected but no local CI config found. Wait for remote CI before merging?",
+            true,
+        )? {
+            wait_for_checks(provider, repo_name, pr_number, opts.timeout).await
+        } else {
+            ui::warn("bypassing remote CI checks");
+            Ok(PrChecksStatus::None)
+        },
+        (true, false) | (true, true) => {
+            wait_for_checks(provider, repo_name, pr_number, opts.timeout).await
+        }
+    }
+}
+
 async fn wait_for_checks(
     provider: &dyn BackendProvider,
     repo: &str,
     pr_number: u64,
     timeout_secs: u64,
+) -> Result<PrChecksStatus, RiptskError> {
+    wait_for_checks_inner(
+        provider,
+        repo,
+        pr_number,
+        Duration::from_secs(timeout_secs),
+        CHECKS_POLL_INTERVAL,
+    )
+    .await
+}
+
+async fn wait_for_checks_inner(
+    provider: &dyn BackendProvider,
+    repo: &str,
+    pr_number: u64,
+    timeout: Duration,
+    poll_interval: Duration,
 ) -> Result<PrChecksStatus, RiptskError> {
     let started = Instant::now();
     let spinner = ui::spinner("waiting for checks to register");
@@ -529,17 +632,18 @@ async fn wait_for_checks(
                 }
             }
         }
-        if started.elapsed() >= Duration::from_secs(timeout_secs) {
+        if started.elapsed() >= timeout {
             finish_spinner(&spinner);
             if saw_checks {
                 return Err(RiptskError::General(format!(
-                    "timed out after {timeout_secs}s waiting for checks on PR #{pr_number}"
+                    "timed out after {}s waiting for checks on PR #{pr_number}",
+                    timeout.as_secs()
                 )));
             }
             ui::info("no CI checks detected, proceeding");
             return Ok(PrChecksStatus::None);
         }
-        tokio::time::sleep(Duration::from_secs(10)).await;
+        tokio::time::sleep(poll_interval).await;
     }
 }
 
@@ -680,10 +784,248 @@ fn parse_pr_number_from_url(url: &str) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::{
-        default_body, default_title, merge_method_label, parse_editor_buffer,
-        parse_pr_number_from_url, pr_checks_status_label, pr_head_matches,
+        MergeOptions, default_body, default_title, handle_ci_checks, merge_method_label,
+        parse_editor_buffer, parse_pr_number_from_url, pr_checks_status_label, pr_head_matches,
+        wait_for_checks_inner,
     };
-    use crate::adapters::backend::{MergeMethod, PrChecksStatus};
+    use crate::adapters::backend::{
+        BackendIssueRecord, BackendIssueUpsert, BackendPrRecord, BackendProvider, CiPresence,
+        DeleteOutcome, MergeMethod, PrChecksStatus,
+    };
+    use crate::adapters::prompts::PromptBackend;
+    use crate::error::RiptskError;
+    use crate::models::Backend;
+    use async_trait::async_trait;
+    use std::collections::VecDeque;
+    use std::fs;
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+
+    #[derive(Clone)]
+    struct FakeChecksProvider {
+        statuses: Arc<Mutex<VecDeque<PrChecksStatus>>>,
+        ci_presence: CiPresence,
+        polls: Arc<Mutex<usize>>,
+    }
+
+    impl FakeChecksProvider {
+        fn new(statuses: Vec<PrChecksStatus>) -> Self {
+            Self {
+                statuses: Arc::new(Mutex::new(VecDeque::from(statuses))),
+                ci_presence: CiPresence {
+                    has_remote_ci: false,
+                    remote_workflow_names: Vec::new(),
+                },
+                polls: Arc::new(Mutex::new(0)),
+            }
+        }
+
+        fn with_ci_presence(mut self, ci_presence: CiPresence) -> Self {
+            self.ci_presence = ci_presence;
+            self
+        }
+
+        fn poll_count(&self) -> usize {
+            *self.polls.lock().expect("lock")
+        }
+    }
+
+    #[derive(Clone)]
+    struct FakePrompts {
+        confirms: Arc<Mutex<VecDeque<bool>>>,
+        confirm_calls: Arc<Mutex<usize>>,
+    }
+
+    impl FakePrompts {
+        fn new(confirms: Vec<bool>) -> Self {
+            Self {
+                confirms: Arc::new(Mutex::new(VecDeque::from(confirms))),
+                confirm_calls: Arc::new(Mutex::new(0)),
+            }
+        }
+
+        fn confirm_calls(&self) -> usize {
+            *self.confirm_calls.lock().expect("lock")
+        }
+    }
+
+    impl PromptBackend for FakePrompts {
+        fn input(&self, _prompt: &str, _default: Option<&str>) -> Result<String, RiptskError> {
+            unimplemented!()
+        }
+
+        fn confirm(&self, _prompt: &str, _default: bool) -> Result<bool, RiptskError> {
+            *self.confirm_calls.lock().expect("lock") += 1;
+            self.confirms
+                .lock()
+                .expect("lock")
+                .pop_front()
+                .ok_or_else(|| RiptskError::General("missing confirm response".into()))
+        }
+
+        fn select(
+            &self,
+            _prompt: &str,
+            _items: &[String],
+            _default: usize,
+        ) -> Result<String, RiptskError> {
+            unimplemented!()
+        }
+    }
+
+    #[async_trait]
+    impl BackendProvider for FakeChecksProvider {
+        async fn list_issues(&self, _repo: &str) -> Result<Vec<BackendIssueRecord>, RiptskError> {
+            unimplemented!()
+        }
+
+        async fn create_issue(
+            &self,
+            _repo: &str,
+            _issue: &BackendIssueUpsert,
+        ) -> Result<BackendIssueRecord, RiptskError> {
+            unimplemented!()
+        }
+
+        async fn update_issue(
+            &self,
+            _repo: &str,
+            _issue_id: u64,
+            _issue: &BackendIssueUpsert,
+        ) -> Result<BackendIssueRecord, RiptskError> {
+            unimplemented!()
+        }
+
+        async fn close_issue(&self, _repo: &str, _issue_id: u64) -> Result<(), RiptskError> {
+            unimplemented!()
+        }
+
+        async fn reopen_issue(&self, _repo: &str, _issue_id: u64) -> Result<(), RiptskError> {
+            unimplemented!()
+        }
+
+        async fn delete_issue(
+            &self,
+            _repo: &str,
+            _issue_id: u64,
+        ) -> Result<DeleteOutcome, RiptskError> {
+            unimplemented!()
+        }
+
+        async fn lock_issue(
+            &self,
+            _repo: &str,
+            _issue_id: u64,
+            _reason: Option<&str>,
+        ) -> Result<(), RiptskError> {
+            unimplemented!()
+        }
+
+        async fn unlock_issue(&self, _repo: &str, _issue_id: u64) -> Result<(), RiptskError> {
+            unimplemented!()
+        }
+
+        async fn sync_labels(
+            &self,
+            _repo: &str,
+            _issue_id: u64,
+            _labels: &[String],
+        ) -> Result<(), RiptskError> {
+            unimplemented!()
+        }
+
+        async fn create_pr(
+            &self,
+            _repo: &str,
+            _head: &str,
+            _base: &str,
+            _title: &str,
+            _body: &str,
+        ) -> Result<BackendPrRecord, RiptskError> {
+            unimplemented!()
+        }
+
+        async fn get_pr(&self, _repo: &str, _number: u64) -> Result<BackendPrRecord, RiptskError> {
+            unimplemented!()
+        }
+
+        async fn update_pr(
+            &self,
+            _repo: &str,
+            _number: u64,
+            _title: &str,
+            _body: &str,
+        ) -> Result<BackendPrRecord, RiptskError> {
+            unimplemented!()
+        }
+
+        async fn find_pr_by_branch(
+            &self,
+            _repo: &str,
+            _head: &str,
+            _base: &str,
+        ) -> Result<Option<BackendPrRecord>, RiptskError> {
+            unimplemented!()
+        }
+
+        async fn merge_pr(
+            &self,
+            _repo: &str,
+            _number: u64,
+            _method: MergeMethod,
+            _commit_title: Option<&str>,
+            _commit_message: Option<&str>,
+        ) -> Result<(), RiptskError> {
+            unimplemented!()
+        }
+
+        async fn get_pr_checks_status(
+            &self,
+            _repo: &str,
+            _number: u64,
+        ) -> Result<PrChecksStatus, RiptskError> {
+            *self.polls.lock().expect("lock") += 1;
+            let mut statuses = self.statuses.lock().expect("lock");
+            let status = if statuses.len() > 1 {
+                statuses.pop_front().expect("status")
+            } else {
+                statuses.front().copied().expect("status")
+            };
+            Ok(status)
+        }
+
+        async fn get_ci_presence(&self, _repo: &str) -> Result<CiPresence, RiptskError> {
+            Ok(self.ci_presence.clone())
+        }
+
+        async fn create_branch(
+            &self,
+            _repo: &str,
+            _branch_name: &str,
+            _base_ref: &str,
+            _issue_id: u64,
+        ) -> Result<(), RiptskError> {
+            unimplemented!()
+        }
+
+        async fn default_branch(&self, _repo: &str) -> Result<String, RiptskError> {
+            unimplemented!()
+        }
+
+        async fn delete_branch(&self, _repo: &str, _branch_name: &str) -> Result<(), RiptskError> {
+            unimplemented!()
+        }
+    }
+
+    fn merge_options(yes: bool, timeout: u64) -> MergeOptions {
+        MergeOptions {
+            merge_method: MergeMethod::Rebase,
+            auto_merge: false,
+            yes,
+            timeout,
+            force_push: false,
+        }
+    }
 
     #[test]
     fn parses_github_pr_number_from_url() {
@@ -750,5 +1092,258 @@ mod tests {
         assert_eq!(pr_checks_status_label(PrChecksStatus::Pending), "pending");
         assert_eq!(pr_checks_status_label(PrChecksStatus::Passed), "passed");
         assert_eq!(pr_checks_status_label(PrChecksStatus::Failed), "failed");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn no_checks_exits_after_timeout() {
+        let provider = FakeChecksProvider::new(vec![PrChecksStatus::None]);
+        let poll = Duration::from_millis(10);
+        let timeout = Duration::from_millis(50);
+        let started = Instant::now();
+
+        let result = wait_for_checks_inner(&provider, "owner/repo", 42, timeout, poll).await;
+
+        let elapsed = started.elapsed();
+        assert_eq!(result.expect("no checks"), PrChecksStatus::None);
+        assert!(
+            elapsed >= timeout,
+            "elapsed {elapsed:?} should be at least {timeout:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn checks_register_late_then_pass() {
+        let provider = FakeChecksProvider::new(vec![
+            PrChecksStatus::None,
+            PrChecksStatus::None,
+            PrChecksStatus::Pending,
+            PrChecksStatus::Passed,
+        ]);
+        let result = wait_for_checks_inner(
+            &provider,
+            "owner/repo",
+            42,
+            Duration::from_millis(200),
+            Duration::from_millis(10),
+        )
+        .await;
+
+        assert_eq!(result.expect("checks should pass"), PrChecksStatus::Passed);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn checks_disappear_after_seen_times_out() {
+        let provider = FakeChecksProvider::new(vec![PrChecksStatus::Pending, PrChecksStatus::None]);
+        let timeout = Duration::from_millis(200);
+        let started = Instant::now();
+
+        let result = wait_for_checks_inner(
+            &provider,
+            "owner/repo",
+            42,
+            timeout,
+            Duration::from_millis(10),
+        )
+        .await;
+
+        let elapsed = started.elapsed();
+        let error = result.expect_err("checks should time out");
+        assert!(
+            error.to_string().contains("timed out"),
+            "unexpected error: {error}"
+        );
+        assert!(
+            elapsed >= timeout,
+            "elapsed {elapsed:?} should be at least timeout {timeout:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn timeout_without_checks_proceeds() {
+        let provider = FakeChecksProvider::new(vec![PrChecksStatus::None]);
+        let timeout = Duration::from_millis(30);
+        let started = Instant::now();
+
+        let result = wait_for_checks_inner(
+            &provider,
+            "owner/repo",
+            42,
+            timeout,
+            Duration::from_millis(10),
+        )
+        .await;
+
+        let elapsed = started.elapsed();
+        assert_eq!(result.expect("no checks"), PrChecksStatus::None);
+        assert!(
+            elapsed >= timeout,
+            "elapsed {elapsed:?} should be at least timeout {timeout:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn no_ci_skips_immediately() {
+        let provider =
+            FakeChecksProvider::new(vec![PrChecksStatus::Pending]).with_ci_presence(CiPresence {
+                has_remote_ci: false,
+                remote_workflow_names: Vec::new(),
+            });
+        let prompts = FakePrompts::new(vec![]);
+        let repo = tempfile::tempdir().expect("tempdir");
+
+        let result = handle_ci_checks(
+            &provider,
+            &prompts,
+            repo.path(),
+            "owner/repo",
+            42,
+            &Backend::Github,
+            &merge_options(false, 1),
+        )
+        .await;
+
+        assert_eq!(result.expect("skip"), PrChecksStatus::None);
+        assert_eq!(provider.poll_count(), 0);
+        assert_eq!(prompts.confirm_calls(), 0);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn local_ci_no_remote_waits() {
+        let provider =
+            FakeChecksProvider::new(vec![PrChecksStatus::Pending, PrChecksStatus::Passed])
+                .with_ci_presence(CiPresence {
+                    has_remote_ci: false,
+                    remote_workflow_names: Vec::new(),
+                });
+        let prompts = FakePrompts::new(vec![]);
+        let repo = tempfile::tempdir().expect("tempdir");
+        let workflow_dir = repo.path().join(".github").join("workflows");
+        fs::create_dir_all(&workflow_dir).expect("create workflow dir");
+        fs::write(workflow_dir.join("ci.yml"), "name: CI\n").expect("write workflow");
+
+        let result = handle_ci_checks(
+            &provider,
+            &prompts,
+            repo.path(),
+            "owner/repo",
+            42,
+            &Backend::Github,
+            &merge_options(false, 1),
+        )
+        .await;
+
+        assert_eq!(result.expect("checks should pass"), PrChecksStatus::Passed);
+        assert!(provider.poll_count() > 0);
+        assert_eq!(prompts.confirm_calls(), 0);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn remote_ci_no_local_prompts_wait() {
+        let provider =
+            FakeChecksProvider::new(vec![PrChecksStatus::Pending, PrChecksStatus::Passed])
+                .with_ci_presence(CiPresence {
+                    has_remote_ci: true,
+                    remote_workflow_names: vec!["ci".into()],
+                });
+        let prompts = FakePrompts::new(vec![true]);
+        let repo = tempfile::tempdir().expect("tempdir");
+
+        let result = handle_ci_checks(
+            &provider,
+            &prompts,
+            repo.path(),
+            "owner/repo",
+            42,
+            &Backend::Github,
+            &merge_options(false, 1),
+        )
+        .await;
+
+        assert_eq!(result.expect("checks should pass"), PrChecksStatus::Passed);
+        assert!(provider.poll_count() > 0);
+        assert_eq!(prompts.confirm_calls(), 1);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn remote_ci_no_local_prompts_bypass() {
+        let provider =
+            FakeChecksProvider::new(vec![PrChecksStatus::Pending]).with_ci_presence(CiPresence {
+                has_remote_ci: true,
+                remote_workflow_names: vec!["ci".into()],
+            });
+        let prompts = FakePrompts::new(vec![false]);
+        let repo = tempfile::tempdir().expect("tempdir");
+
+        let result = handle_ci_checks(
+            &provider,
+            &prompts,
+            repo.path(),
+            "owner/repo",
+            42,
+            &Backend::Github,
+            &merge_options(false, 1),
+        )
+        .await;
+
+        assert_eq!(result.expect("bypass"), PrChecksStatus::None);
+        assert_eq!(provider.poll_count(), 0);
+        assert_eq!(prompts.confirm_calls(), 1);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn both_ci_waits_normally() {
+        let provider =
+            FakeChecksProvider::new(vec![PrChecksStatus::Pending, PrChecksStatus::Passed])
+                .with_ci_presence(CiPresence {
+                    has_remote_ci: true,
+                    remote_workflow_names: vec!["ci".into()],
+                });
+        let prompts = FakePrompts::new(vec![]);
+        let repo = tempfile::tempdir().expect("tempdir");
+        let workflow_dir = repo.path().join(".github").join("workflows");
+        fs::create_dir_all(&workflow_dir).expect("create workflow dir");
+        fs::write(workflow_dir.join("ci.yml"), "name: CI\n").expect("write workflow");
+
+        let result = handle_ci_checks(
+            &provider,
+            &prompts,
+            repo.path(),
+            "owner/repo",
+            42,
+            &Backend::Github,
+            &merge_options(false, 1),
+        )
+        .await;
+
+        assert_eq!(result.expect("checks should pass"), PrChecksStatus::Passed);
+        assert!(provider.poll_count() > 0);
+        assert_eq!(prompts.confirm_calls(), 0);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn yes_flag_skips_prompt() {
+        let provider =
+            FakeChecksProvider::new(vec![PrChecksStatus::Pending, PrChecksStatus::Passed])
+                .with_ci_presence(CiPresence {
+                    has_remote_ci: true,
+                    remote_workflow_names: vec!["ci".into()],
+                });
+        let prompts = FakePrompts::new(vec![]);
+        let repo = tempfile::tempdir().expect("tempdir");
+
+        let result = handle_ci_checks(
+            &provider,
+            &prompts,
+            repo.path(),
+            "owner/repo",
+            42,
+            &Backend::Github,
+            &merge_options(true, 1),
+        )
+        .await;
+
+        assert_eq!(result.expect("checks should pass"), PrChecksStatus::Passed);
+        assert!(provider.poll_count() > 0);
+        assert_eq!(prompts.confirm_calls(), 0);
     }
 }

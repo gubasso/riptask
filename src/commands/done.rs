@@ -1,4 +1,5 @@
 use crate::adapters::git::{CliGit, GitBackend};
+use crate::adapters::prompts::DialoguerPrompts;
 use crate::cli::{DoneArgs, SyncArgs};
 use crate::commands::branch::{current_repo, cwd_utf8, find_issue_for_branch};
 use crate::commands::{pr, sync_cmd};
@@ -62,6 +63,7 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
     };
     pr::merge_pr_workflow(
         provider.as_ref(),
+        &DialoguerPrompts,
         &git,
         backend.backend.clone(),
         repo_dir.as_path(),
