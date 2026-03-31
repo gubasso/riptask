@@ -236,6 +236,9 @@ pub struct PrMergeArgs {
 
 #[derive(Debug, Clone, Args, Default)]
 pub struct NewArgs {
+    /// Issue title (positional)
+    #[arg(conflicts_with = "title")]
+    pub title_pos: Option<String>,
     /// Issue title (or enter interactively)
     #[arg(short = 't', long)]
     pub title: Option<String>,
@@ -736,6 +739,25 @@ mod tests {
             panic!("expected new command");
         };
         assert_eq!(args.title.as_deref(), Some("hello"));
+        assert!(args.title_pos.is_none());
+    }
+
+    #[test]
+    fn new_positional_title_parses() {
+        let cli = Cli::try_parse_from(["tsk", "new", "hello"]).expect("parse");
+        let Commands::New(args) = cli.command.expect("command") else {
+            panic!("expected new command");
+        };
+        assert_eq!(args.title_pos.as_deref(), Some("hello"));
+        assert!(args.title.is_none());
+    }
+
+    #[test]
+    fn new_positional_and_flag_title_conflict() {
+        let err = Cli::try_parse_from(["tsk", "new", "pos", "-t", "flag"]).expect_err("conflict");
+        let rendered = err.to_string();
+        assert!(rendered.contains("--title"));
+        assert!(rendered.contains("cannot be used"));
     }
 
     #[test]
