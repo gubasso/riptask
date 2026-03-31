@@ -879,6 +879,14 @@ mod tests {
             unimplemented!()
         }
 
+        async fn get_issue(
+            &self,
+            _repo: &str,
+            _issue_id: u64,
+        ) -> Result<BackendIssueRecord, RiptskError> {
+            unimplemented!()
+        }
+
         async fn create_issue(
             &self,
             _repo: &str,

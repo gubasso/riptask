@@ -7,8 +7,8 @@ use crate::error::RiptskError;
 use crate::models::{Backend, BackendConfig};
 use crate::paths::AppPaths;
 use crate::services::backend_mapping::{
-    backend_state_entry, backend_to_local, current_timestamp, issue_to_upsert,
-    update_issue_from_backend,
+    backend_state_entry, backend_to_local, copy_local_only_fields, current_timestamp,
+    issue_to_upsert, update_issue_from_backend,
 };
 use crate::services::issue_ids;
 use crate::storage::{cache, frontmatter, issue_store};
@@ -383,7 +383,8 @@ impl<'a> SyncEngine<'a> {
         let local_path = issue_store::local_backup_path(self.paths, &issue.frontmatter.id);
         fs::copy(issue_path, &local_path)?;
 
-        let remote_doc = backend_to_local(record, backend);
+        let mut remote_doc = backend_to_local(record, backend);
+        copy_local_only_fields(&mut remote_doc.frontmatter, &issue.frontmatter);
         let remote_path = issue_store::remote_backup_path(self.paths, &issue.frontmatter.id);
         frontmatter::save_issue(remote_path.as_std_path(), &remote_doc)
             .map_err(RiptskError::Other)?;
@@ -534,6 +535,14 @@ mod tests {
     impl BackendProvider for FakeBackendProvider {
         async fn list_issues(&self, _repo: &str) -> Result<Vec<BackendIssueRecord>, RiptskError> {
             Ok(self.state.lock().expect("lock").listed.clone())
+        }
+
+        async fn get_issue(
+            &self,
+            _repo: &str,
+            _issue_id: u64,
+        ) -> Result<BackendIssueRecord, RiptskError> {
+            Err(RiptskError::General("unused in test".into()))
         }
 
         async fn create_issue(
@@ -783,7 +792,7 @@ mod tests {
             42,
             "Remote title",
             "open",
-            "2026-03-20T12:00:00Z",
+            "2026-03-20T11:00:00Z",
         )]);
         let engine = SyncEngine::new(&paths, &config);
 
@@ -797,6 +806,142 @@ mod tests {
         let merged = std::fs::read_to_string(paths.issues_dir().join("GH-OWN-REP--42.md"))
             .expect("read merged file");
         assert!(frontmatter::has_conflict_markers(&merged));
+    }
+
+    #[test]
+    fn done_skips_local_close_when_remote_auto_closed() {
+        let runtime = runtime();
+        let (paths, config, backend) = test_context();
+        let original = record(42, "Remote issue", "open", "2026-03-20T10:00:00Z");
+        let mut document = backend_to_local(&original, &backend);
+        document.frontmatter.branch = Some("feature/42".into());
+        save_issue(&paths, &document);
+        seed_backend_state(&paths, &backend, &original);
+
+        document.frontmatter.branch = None;
+        document.frontmatter.id_slug = None;
+        save_issue(&paths, &document);
+
+        let provider = FakeBackendProvider::with_listed(vec![record(
+            42,
+            "Remote issue",
+            "closed",
+            "2026-03-20T12:00:00Z",
+        )]);
+        let engine = SyncEngine::new(&paths, &config);
+
+        let summary = runtime
+            .block_on(engine.pull(&provider, &backend, false, None))
+            .expect("pull");
+
+        assert_eq!(summary.updated, vec!["GH-OWN-REP--42"]);
+        assert!(summary.conflicts.is_empty());
+        let saved = load_issue(&paths, "GH-OWN-REP--42");
+        assert_eq!(saved.frontmatter.status, IssueState::Done);
+        assert_eq!(saved.frontmatter.branch, None);
+    }
+
+    #[test]
+    fn done_closes_locally_when_remote_still_open() {
+        let runtime = runtime();
+        let (paths, config, backend) = test_context();
+        let original = record(42, "Remote issue", "open", "2026-03-20T10:00:00Z");
+        let mut document = backend_to_local(&original, &backend);
+        document.frontmatter.status = IssueState::Done;
+        document.frontmatter.branch = None;
+        document.frontmatter.local_updated_at = "2026-03-20T12:00:00Z".into();
+        save_issue(&paths, &document);
+        seed_backend_state(&paths, &backend, &original);
+
+        let provider = FakeBackendProvider::default().with_update_response(
+            42,
+            record(42, "Remote issue", "open", "2026-03-20T12:30:00Z"),
+        );
+        let engine = SyncEngine::new(&paths, &config);
+
+        let summary = runtime
+            .block_on(engine.push(&provider, &backend))
+            .expect("push");
+
+        assert_eq!(summary.updated, vec!["GH-OWN-REP--42"]);
+        let saved = load_issue(&paths, "GH-OWN-REP--42");
+        assert_eq!(saved.frontmatter.status, IssueState::Done);
+        assert_eq!(saved.frontmatter.branch, None);
+
+        let state = provider.state.lock().expect("lock");
+        assert_eq!(state.updated.len(), 1);
+        assert_eq!(state.updated[0].2.state.as_deref(), Some("closed"));
+    }
+
+    #[test]
+    fn pull_conflict_preserves_local_only_fields() {
+        let (paths, config, backend) = test_context();
+        let original = record(42, "Old title", "open", "2026-03-20T10:00:00Z");
+        let mut document = backend_to_local(&original, &backend);
+        apply_local_only_fields(&mut document);
+        document.body = "local body".into();
+        save_issue(&paths, &document);
+
+        let engine = SyncEngine::new(&paths, &config);
+        let issue_path = paths.issues_dir().join("GH-OWN-REP--42.md");
+        let mut remote = original.clone();
+        remote.body = Some("remote body".into());
+
+        engine
+            .write_conflict(&backend, &remote, &document, &issue_path)
+            .expect("write conflict");
+        let remote = frontmatter::load_issue(
+            paths
+                .issues_dir()
+                .join("GH-OWN-REP--42.REMOTE.md")
+                .as_std_path(),
+        )
+        .expect("load remote backup");
+        assert_local_only_fields(&remote);
+
+        let merged = std::fs::read_to_string(paths.issues_dir().join("GH-OWN-REP--42.md"))
+            .expect("read merged file");
+        assert!(frontmatter::has_conflict_markers(&merged));
+        assert_fields_not_conflicted(
+            &merged,
+            &[
+                "pr_url: https://example.invalid/pulls/42",
+                "pr_number: 42",
+                "branch: feature/42",
+                "order: 7",
+                "recurring: weekly-42",
+                "cycle: 2026-W13",
+            ],
+        );
+    }
+
+    #[test]
+    fn pull_update_preserves_local_only_fields() {
+        let runtime = runtime();
+        let (paths, config, backend) = test_context();
+        let original = record(42, "Old title", "open", "2026-03-20T10:00:00Z");
+        let mut document = backend_to_local(&original, &backend);
+        apply_local_only_fields(&mut document);
+        document.frontmatter.local_updated_at = "2026-03-20T10:00:00Z".into();
+        save_issue(&paths, &document);
+        seed_backend_state(&paths, &backend, &original);
+
+        let provider = FakeBackendProvider::with_listed(vec![record(
+            42,
+            "New title",
+            "open",
+            "2026-03-20T12:00:00Z",
+        )]);
+        let engine = SyncEngine::new(&paths, &config);
+
+        let summary = runtime
+            .block_on(engine.pull(&provider, &backend, false, None))
+            .expect("pull");
+
+        assert_eq!(summary.updated, vec!["GH-OWN-REP--42"]);
+        let saved = load_issue(&paths, "GH-OWN-REP--42");
+        assert_eq!(saved.frontmatter.title, "New title");
+        assert_local_only_fields(&saved);
     }
 
     #[test]
@@ -1148,6 +1293,53 @@ mod tests {
             },
             body: format!("{title} body"),
             remote_section: None,
+        }
+    }
+
+    fn apply_local_only_fields(issue: &mut IssueDocument) {
+        issue.frontmatter.pr_url = Some("https://example.invalid/pulls/42".into());
+        issue.frontmatter.pr_number = Some(42);
+        issue.frontmatter.branch = Some("feature/42".into());
+        issue.frontmatter.order = Some(7);
+        issue.frontmatter.recurring = Some("weekly-42".into());
+        issue.frontmatter.cycle = Some("2026-W13".into());
+        issue.frontmatter.board = "ops".into();
+        issue.frontmatter.org = Some("eng".into());
+        issue.frontmatter.priority = Some(Priority::High);
+    }
+
+    fn assert_local_only_fields(issue: &IssueDocument) {
+        assert_eq!(
+            issue.frontmatter.pr_url.as_deref(),
+            Some("https://example.invalid/pulls/42")
+        );
+        assert_eq!(issue.frontmatter.pr_number, Some(42));
+        assert_eq!(issue.frontmatter.branch.as_deref(), Some("feature/42"));
+        assert_eq!(issue.frontmatter.order, Some(7));
+        assert_eq!(issue.frontmatter.recurring.as_deref(), Some("weekly-42"));
+        assert_eq!(issue.frontmatter.cycle.as_deref(), Some("2026-W13"));
+        assert_eq!(issue.frontmatter.board, "ops");
+        assert_eq!(issue.frontmatter.org.as_deref(), Some("eng"));
+        assert_eq!(issue.frontmatter.priority, Some(Priority::High));
+    }
+
+    fn assert_fields_not_conflicted(content: &str, fields: &[&str]) {
+        let mut in_conflict = false;
+        for line in content.lines() {
+            if line.starts_with("<<<<<<< ") {
+                in_conflict = true;
+                continue;
+            }
+            if line.starts_with(">>>>>>> ") {
+                in_conflict = false;
+                continue;
+            }
+            if fields.contains(&line) {
+                assert!(
+                    !in_conflict,
+                    "field line unexpectedly appeared inside conflict block: {line}"
+                );
+            }
         }
     }
 
