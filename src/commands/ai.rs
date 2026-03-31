@@ -1,4 +1,4 @@
-use crate::adapters::ai::{AiBackend, TemplateAiBackend};
+use crate::adapters::ai::{AiBackend, GeneratedIssueContent, TemplateAiBackend};
 use crate::cli::{AskArgs, SummarizeArgs};
 use crate::config::load_config;
 use crate::error::RiptskError;
@@ -14,9 +14,12 @@ pub fn summarize(paths: &AppPaths, args: SummarizeArgs) -> Result<(), RiptskErro
         println!("AI features disabled");
         return Ok(());
     }
-    let Some(backend) = optional_backend(&config) else {
-        crate::ui::warn(&format!("AI unavailable: {AI_BACKEND_MISSING}"));
-        return Ok(());
+    let backend = match backend(&config) {
+        Ok(backend) => backend,
+        Err(error) => {
+            crate::ui::error(&format!("AI unavailable: {error}"));
+            return Ok(());
+        }
     };
     let mut context = String::new();
     for path in issue_store::list_issues(paths)? {
@@ -56,9 +59,12 @@ pub fn ask(paths: &AppPaths, args: AskArgs) -> Result<(), RiptskError> {
         println!("AI features disabled");
         return Ok(());
     }
-    let Some(backend) = optional_backend(&config) else {
-        crate::ui::warn(&format!("AI unavailable: {AI_BACKEND_MISSING}"));
-        return Ok(());
+    let backend = match backend(&config) {
+        Ok(backend) => backend,
+        Err(error) => {
+            crate::ui::error(&format!("AI unavailable: {error}"));
+            return Ok(());
+        }
     };
     let mut context = String::new();
     for path in issue_store::list_issues(paths)? {
@@ -84,6 +90,19 @@ pub fn generate_body(paths: &AppPaths, title: &str, project: &str) -> Result<Str
     }
     let backend = backend(&config)?;
     backend.generate_body(&format!("Title: {title}\n\nContext:\n{project}"))
+}
+
+pub fn generate_issue_content(
+    paths: &AppPaths,
+    context: &str,
+) -> Result<GeneratedIssueContent, RiptskError> {
+    paths.require_initialized()?;
+    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    if !config.ai.enabled || !config.ai.features.new_body_gen {
+        return Err(RiptskError::General("AI features disabled".into()));
+    }
+    let backend = backend(&config)?;
+    backend.generate_issue_content(context)
 }
 
 fn backend(config: &crate::config::Config) -> Result<TemplateAiBackend, RiptskError> {

@@ -1,8 +1,9 @@
 use crate::adapters::backend::BackendIssueUpsert;
-use crate::adapters::git::CliGit;
+use crate::adapters::git::{CliGit, GitBackend};
 use crate::adapters::picker::{
     IssueDisplayMode, format_issue_plain, sanitize_control, truncate_title,
 };
+use crate::adapters::prompts::{DialoguerPrompts, PromptBackend};
 use crate::cli::{IdArgs, LsArgs, NewArgs, StatusArgs};
 use crate::config::load_config;
 use crate::domain::issue::{
@@ -20,6 +21,7 @@ use crate::storage::{cache, frontmatter, issue_store};
 use comfy_table::{
     Attribute, Cell, CellAlignment, Color, ContentArrangement, Table, presets::NOTHING,
 };
+use console::style;
 use std::io::IsTerminal;
 
 pub fn show(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
@@ -252,35 +254,68 @@ pub async fn new(paths: &AppPaths, args: NewArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
     let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
     let mut args = args;
-    if args.project.is_none() {
-        let cwd = camino::Utf8PathBuf::from(
-            std::env::current_dir()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string(),
-        );
-        if let Some(backend) = crate::services::project_detection::detect_from_cwd(&cwd, &config)? {
-            args.project = Some(backend.name);
+    let cwd = camino::Utf8PathBuf::from(
+        std::env::current_dir()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string(),
+    );
+    if args.project.is_none()
+        && let Some(backend) = crate::services::project_detection::detect_from_cwd(&cwd, &config)?
+    {
+        args.project = Some(backend.name);
+    }
+    let effective_title = args.title_pos.take().or(args.title.take());
+    args.title = effective_title;
+    let explicit_title_provided = args.title.is_some();
+
+    let ai = args.ai;
+    let edit = args.edit;
+    let prompts = DialoguerPrompts;
+    let git = CliGit::new();
+    let mut generated_body = None;
+
+    if ai && args.title.is_none() {
+        let ai_context = match resolve_ai_context(&git, &config, args.project.as_deref(), &cwd) {
+            Ok(Some(diff)) => diff,
+            Ok(None) => prompts.input("Describe the task for AI", None)?,
+            Err(error) => {
+                crate::ui::warn(&format!(
+                    "AI context detection failed, falling back to prompt: {error}"
+                ));
+                prompts.input("Describe the task for AI", None)?
+            }
+        };
+        match crate::commands::ai::generate_issue_content(paths, &ai_context) {
+            Ok(generated) => {
+                args.title = Some(generated.title);
+                generated_body = Some(generated.body);
+            }
+            Err(error) => {
+                crate::ui::warn(&format!("AI issue generation failed: {error}"));
+            }
         }
     }
+
     if args.title.is_none() && std::io::stdin().is_terminal() {
-        let title = dialoguer::Input::<String>::new()
-            .with_prompt("Title")
-            .interact_text()
-            .map_err(|error| RiptskError::General(error.to_string()))?;
+        let title = prompts.input("Title", None)?;
         args.title = Some(title);
     }
     let service = IssueService::new(paths, &config);
-    let ai = args.ai;
-    let edit = args.edit;
     let mut draft = service.prepare_issue_draft(args)?;
     if ai {
-        draft.body = match crate::commands::ai::generate_body(paths, &draft.title, &draft.project) {
-            Ok(body) => body,
-            Err(_) => {
-                crate::ui::warn("AI body generation failed, using template body");
-                draft.body.clone()
+        draft.body = if let Some(body) = generated_body {
+            body
+        } else if explicit_title_provided {
+            match crate::commands::ai::generate_body(paths, &draft.title, &draft.project) {
+                Ok(body) => body,
+                Err(error) => {
+                    crate::ui::warn(&format!("AI body generation failed: {error}"));
+                    draft.body.clone()
+                }
             }
+        } else {
+            draft.body.clone()
         };
     }
     let issue = if draft
@@ -310,7 +345,7 @@ pub async fn new(paths: &AppPaths, args: NewArgs) -> Result<(), RiptskError> {
         ),
         &[issue_path.as_std_path()],
     )?;
-    println!("{}", issue.frontmatter.id);
+    print_issue_created(&issue);
     if edit {
         service.edit_issue(Some(issue.frontmatter.id.clone()))?;
         maybe_auto_commit(
@@ -325,6 +360,112 @@ pub async fn new(paths: &AppPaths, args: NewArgs) -> Result<(), RiptskError> {
         )?;
     }
     Ok(())
+}
+
+fn resolve_ai_context(
+    git: &dyn GitBackend,
+    config: &crate::config::Config,
+    project: Option<&str>,
+    cwd: &camino::Utf8Path,
+) -> Result<Option<String>, RiptskError> {
+    let repo_path = resolve_project_repo_path(config, project, cwd);
+    match git.has_uncommitted_changes(repo_path.as_std_path()) {
+        Ok(true) => {
+            let diff = git.working_tree_diff(repo_path.as_std_path())?;
+            if diff.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(diff))
+            }
+        }
+        Ok(false) => Ok(None),
+        Err(_) => Ok(None),
+    }
+}
+
+fn resolve_project_repo_path(
+    config: &crate::config::Config,
+    project: Option<&str>,
+    cwd: &camino::Utf8Path,
+) -> camino::Utf8PathBuf {
+    if let Some(project) = project
+        && let Some(path) = config
+            .backends
+            .iter()
+            .find(|backend| backend.name == project)
+            .and_then(|backend| backend.path.as_ref())
+    {
+        return camino::Utf8PathBuf::from(path);
+    }
+    cwd.to_path_buf()
+}
+
+fn print_issue_created(issue: &IssueDocument) {
+    if !crate::ui::is_tty() {
+        println!("{}", issue.frontmatter.id);
+        return;
+    }
+
+    let fm = &issue.frontmatter;
+    let issue_label = issue_ids::parse_id(&fm.id)
+        .map(|(_, n)| format!("#{n}"))
+        .unwrap_or_else(|| fm.id.clone());
+    println!(
+        "{} Created issue {}",
+        style("✓").green(),
+        style(issue_label).cyan()
+    );
+    println!("  Title:    {}", fm.title);
+    println!("  Project:  {}", fm.project);
+    println!("  Board:    {}", fm.board);
+    println!(
+        "  Status:   {}",
+        style_with_color(display_label(fm.status.as_str()), state_color(&fm.status))
+    );
+    println!(
+        "  Priority: {}",
+        style_with_color(
+            fm.priority
+                .as_ref()
+                .map(|priority| display_label(priority.as_str()))
+                .unwrap_or_else(|| "-".into()),
+            priority_color(fm.priority.as_ref())
+        )
+    );
+}
+
+fn display_label(value: &str) -> String {
+    value
+        .split('-')
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                Some(first) => {
+                    let mut rendered = first.to_uppercase().to_string();
+                    rendered.push_str(chars.as_str());
+                    rendered
+                }
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn style_with_color(text: String, color: Color) -> console::StyledObject<String> {
+    match color {
+        Color::Black => style(text).black(),
+        Color::Red => style(text).red(),
+        Color::Green => style(text).green(),
+        Color::Yellow => style(text).yellow(),
+        Color::Blue => style(text).blue(),
+        Color::Magenta => style(text).magenta(),
+        Color::Cyan => style(text).cyan(),
+        Color::White => style(text).white(),
+        Color::Grey => style(text).dim(),
+        _ => style(text),
+    }
 }
 
 pub fn edit(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {

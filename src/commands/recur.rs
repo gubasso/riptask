@@ -105,6 +105,7 @@ fn run_due(paths: &AppPaths, date: Option<String>) -> Result<(), RiptskError> {
         // Create the recurring issue
         let service = IssueService::new(paths, &config);
         let new_args = NewArgs {
+            title_pos: None,
             title: Some(expanded_title.clone()),
             project: definition.project.clone(),
             board: definition.board.clone(),

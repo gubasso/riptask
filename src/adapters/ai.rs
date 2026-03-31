@@ -11,7 +11,14 @@ pub struct TriageSuggestion {
     pub labels: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GeneratedIssueContent {
+    pub title: String,
+    pub body: String,
+}
+
 pub trait AiBackend {
+    fn generate_issue_content(&self, context: &str) -> Result<GeneratedIssueContent, RiptskError>;
     fn generate_body(&self, context: &str) -> Result<String, RiptskError>;
     fn generate_pr_description(&self, context: &str) -> Result<String, RiptskError>;
     fn triage(&self, issue_context: &str) -> Result<TriageSuggestion, RiptskError>;
@@ -26,6 +33,15 @@ pub struct TemplateAiBackend {
 }
 
 impl AiBackend for TemplateAiBackend {
+    fn generate_issue_content(&self, context: &str) -> Result<GeneratedIssueContent, RiptskError> {
+        let output = run_ai(
+            &self.command_template,
+            "Generate a concise issue title and body. Return strict JSON with keys \"title\" and \"body\" only.",
+            context,
+        )?;
+        parse_issue_content_output(&output)
+    }
+
     fn generate_body(&self, context: &str) -> Result<String, RiptskError> {
         run_ai(
             &self.command_template,
@@ -98,6 +114,87 @@ impl AiBackend for TemplateAiBackend {
     }
 }
 
+#[derive(serde::Deserialize)]
+struct GeneratedIssueContentResponse {
+    title: String,
+    body: String,
+}
+
+fn parse_issue_content_output(output: &str) -> Result<GeneratedIssueContent, RiptskError> {
+    let trimmed = output.trim();
+    if trimmed.is_empty() {
+        return Err(RiptskError::General(
+            "AI returned empty output for issue generation".into(),
+        ));
+    }
+
+    match serde_json::from_str::<GeneratedIssueContentResponse>(trimmed) {
+        Ok(parsed) => {
+            let title = parsed.title.trim().to_owned();
+            let body = parsed.body.trim().to_owned();
+            if title.is_empty() {
+                return Err(RiptskError::General(
+                    "AI issue generation returned an empty title".into(),
+                ));
+            }
+            if body.is_empty() {
+                return Err(RiptskError::General(
+                    "AI issue generation returned an empty body".into(),
+                ));
+            }
+            Ok(GeneratedIssueContent { title, body })
+        }
+        Err(json_err) => {
+            let stripped = strip_markdown_fences(trimmed);
+            if let Ok(retry) = serde_json::from_str::<GeneratedIssueContentResponse>(&stripped) {
+                let title = retry.title.trim().to_owned();
+                let body = retry.body.trim().to_owned();
+                if title.is_empty() || body.is_empty() {
+                    return Err(RiptskError::General(
+                        "AI issue generation returned empty title or body".into(),
+                    ));
+                }
+                return Ok(GeneratedIssueContent { title, body });
+            }
+            if trimmed.starts_with('{') || stripped.starts_with('{') {
+                return Err(RiptskError::General(format!(
+                    "AI returned malformed JSON for issue generation: {json_err}"
+                )));
+            }
+            fallback_issue_content(trimmed)
+        }
+    }
+}
+
+fn strip_markdown_fences(text: &str) -> String {
+    let trimmed = text.trim();
+    if let Some(rest) = trimmed.strip_prefix("```") {
+        let inner = rest
+            .trim_start_matches(|c: char| c.is_alphanumeric())
+            .trim_start();
+        if let Some(stripped) = inner.strip_suffix("```") {
+            return stripped.trim().to_owned();
+        }
+    }
+    trimmed.to_owned()
+}
+
+fn fallback_issue_content(output: &str) -> Result<GeneratedIssueContent, RiptskError> {
+    let body = output.trim().to_owned();
+    let Some(first_line) = body.lines().find(|line| !line.trim().is_empty()) else {
+        return Err(RiptskError::General(
+            "AI issue generation fallback could not derive a title from empty output".into(),
+        ));
+    };
+    let title = first_line.trim().trim_start_matches('#').trim().to_owned();
+    if title.is_empty() {
+        return Err(RiptskError::General(
+            "AI issue generation fallback derived an empty title".into(),
+        ));
+    }
+    Ok(GeneratedIssueContent { title, body })
+}
+
 fn run_ai(template: &str, system: &str, input: &str) -> Result<String, RiptskError> {
     let mut input_tempfile = tempfile::NamedTempFile::new()
         .map_err(|e| RiptskError::General(format!("failed to create temp file: {e}")))?;
@@ -122,13 +219,15 @@ fn run_ai(template: &str, system: &str, input: &str) -> Result<String, RiptskErr
             input => input_escaped.as_ref(),
             input_file => &input_file_path,
         })
-        .map_err(|e| RiptskError::General(format!("failed to render ai.command: {e}")))?;
+        .map_err(|e| RiptskError::General(format!("failed to render ai.command template: {e}")))?;
 
     let output = Command::new("sh")
         .arg("-c")
         .arg(&rendered)
         .output()
-        .map_err(|e| RiptskError::General(format!("failed to execute ai command: {e}")))?;
+        .map_err(|e| {
+            RiptskError::General(format!("failed to execute ai.command via sh -c: {e}"))
+        })?;
 
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
@@ -139,10 +238,31 @@ fn run_ai(template: &str, system: &str, input: &str) -> Result<String, RiptskErr
             .code()
             .map(|c| c.to_string())
             .unwrap_or_else(|| "unknown".into());
-        Err(RiptskError::General(format!(
-            "ai command exited with status {code}: {stderr}"
-        )))
+        let detail = if stderr.is_empty() {
+            format!("ai.command exited with status {code}")
+        } else {
+            format!("ai.command exited with status {code}\n\nstderr:\n{stderr}")
+        };
+        if is_auth_like_error(&stderr) {
+            Err(RiptskError::Auth(detail))
+        } else {
+            Err(RiptskError::General(detail))
+        }
     }
+}
+
+fn is_auth_like_error(stderr: &str) -> bool {
+    let lowered = stderr.to_ascii_lowercase();
+    [
+        "unauthorized",
+        "authentication",
+        "token",
+        "api key",
+        "401",
+        "403",
+    ]
+    .iter()
+    .any(|pattern| lowered.contains(pattern))
 }
 
 #[cfg(test)]
@@ -173,5 +293,63 @@ mod tests {
     fn undefined_placeholder_fails() {
         let result = run_ai("echo {{unknown}}", "sys", "in");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn generate_issue_content_parses_valid_json() {
+        let backend = TemplateAiBackend {
+            command_template:
+                "printf '%s' '{\"title\":\"Fix login\",\"body\":\"## Description\\n\\nDetails\"}'"
+                    .into(),
+        };
+
+        let result = backend
+            .generate_issue_content("context")
+            .expect("issue content");
+
+        assert_eq!(
+            result,
+            GeneratedIssueContent {
+                title: "Fix login".into(),
+                body: "## Description\n\nDetails".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn generate_issue_content_falls_back_on_malformed_json() {
+        let backend = TemplateAiBackend {
+            command_template:
+                "printf '%s' 'Investigate mobile timeout\n\n## Description\n\nDetails'".into(),
+        };
+
+        let result = backend
+            .generate_issue_content("context")
+            .expect("fallback issue content");
+
+        assert_eq!(result.title, "Investigate mobile timeout");
+        assert!(result.body.contains("## Description"));
+    }
+
+    #[test]
+    fn generate_issue_content_rejects_empty_output() {
+        let backend = TemplateAiBackend {
+            command_template: "printf ''".into(),
+        };
+
+        let err = backend
+            .generate_issue_content("context")
+            .expect_err("empty output");
+        assert!(err.to_string().contains("empty output"));
+    }
+
+    #[test]
+    fn auth_like_ai_errors_map_to_auth() {
+        let result = run_ai(
+            "echo '401 unauthorized token missing' >&2; exit 1",
+            "sys",
+            "in",
+        );
+        assert!(matches!(result, Err(RiptskError::Auth(_))));
     }
 }
