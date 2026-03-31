@@ -54,6 +54,7 @@ pub trait GitBackend {
     fn force_push(&self, repo: &Path, branch: &str) -> Result<(), RiptskError>;
     fn log_between(&self, repo: &Path, base: &str, head: &str) -> Result<String, RiptskError>;
     fn diff_between(&self, repo: &Path, base: &str, head: &str) -> Result<String, RiptskError>;
+    fn head_sha(&self, repo: &Path) -> Result<String, RiptskError>;
 }
 
 #[derive(Debug, Clone, Default)]
@@ -243,6 +244,20 @@ impl GitBackend for CliGit {
             Err(RiptskError::General(format!(
                 "failed to read git remote {remote}"
             )))
+        }
+    }
+
+    fn head_sha(&self, repo: &Path) -> Result<String, RiptskError> {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .arg("rev-parse")
+            .arg("HEAD")
+            .output()?;
+        if output.status.success() {
+            Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        } else {
+            Err(RiptskError::General("failed to determine HEAD SHA".into()))
         }
     }
 

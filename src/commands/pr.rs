@@ -307,6 +307,7 @@ pub(crate) async fn merge_pr_workflow(
     opts: &MergeOptions,
 ) -> Result<(), RiptskError> {
     let initial_pr = provider.get_pr(repo_name, pr_number).await?;
+    let mut expected_head_sha: Option<String> = None;
 
     if initial_pr.merged || initial_pr.state == "merged" {
         ui::info("PR already merged, continuing with cleanup");
@@ -349,12 +350,25 @@ pub(crate) async fn merge_pr_workflow(
             } else {
                 git.force_push_with_lease(repo_path, branch)?;
             }
+            expected_head_sha = Some(git.head_sha(repo_path)?);
         }
     }
 
     // Push to ensure remote has all local commits before checking CI status
     if issue.frontmatter.branch.is_some() {
         git.push(repo_path)?;
+    }
+
+    if let Some(ref sha) = expected_head_sha {
+        wait_for_pr_head_update(
+            provider,
+            repo_name,
+            pr_number,
+            sha,
+            Duration::from_secs(60),
+            CHECKS_POLL_INTERVAL,
+        )
+        .await?;
     }
 
     if !opts.auto_merge {
@@ -647,6 +661,29 @@ async fn wait_for_checks_inner(
     }
 }
 
+async fn wait_for_pr_head_update(
+    provider: &dyn BackendProvider,
+    repo: &str,
+    pr_number: u64,
+    expected_sha: &str,
+    timeout: Duration,
+    poll_interval: Duration,
+) -> Result<(), RiptskError> {
+    let started = Instant::now();
+    loop {
+        let pr = provider.get_pr(repo, pr_number).await?;
+        if pr.head_sha.as_deref() == Some(expected_sha) {
+            return Ok(());
+        }
+        if started.elapsed() >= timeout {
+            return Err(RiptskError::General(format!(
+                "timed out waiting for PR #{pr_number} head to update after force push"
+            )));
+        }
+        tokio::time::sleep(poll_interval).await;
+    }
+}
+
 fn update_spinner(spinner: &Option<ProgressBar>, msg: &str) {
     match spinner {
         Some(pb) => pb.set_message(msg.to_owned()),
@@ -786,7 +823,7 @@ mod tests {
     use super::{
         MergeOptions, default_body, default_title, handle_ci_checks, merge_method_label,
         parse_editor_buffer, parse_pr_number_from_url, pr_checks_status_label, pr_head_matches,
-        wait_for_checks_inner,
+        wait_for_checks_inner, wait_for_pr_head_update,
     };
     use crate::adapters::backend::{
         BackendIssueRecord, BackendIssueUpsert, BackendPrRecord, BackendProvider, CiPresence,
@@ -806,6 +843,7 @@ mod tests {
         statuses: Arc<Mutex<VecDeque<PrChecksStatus>>>,
         ci_presence: CiPresence,
         polls: Arc<Mutex<usize>>,
+        head_shas: Arc<Mutex<VecDeque<String>>>,
     }
 
     impl FakeChecksProvider {
@@ -817,11 +855,17 @@ mod tests {
                     remote_workflow_names: Vec::new(),
                 },
                 polls: Arc::new(Mutex::new(0)),
+                head_shas: Arc::new(Mutex::new(VecDeque::new())),
             }
         }
 
         fn with_ci_presence(mut self, ci_presence: CiPresence) -> Self {
             self.ci_presence = ci_presence;
+            self
+        }
+
+        fn with_head_shas(mut self, shas: Vec<String>) -> Self {
+            self.head_shas = Arc::new(Mutex::new(VecDeque::from(shas)));
             self
         }
 
@@ -953,8 +997,26 @@ mod tests {
             unimplemented!()
         }
 
-        async fn get_pr(&self, _repo: &str, _number: u64) -> Result<BackendPrRecord, RiptskError> {
-            unimplemented!()
+        async fn get_pr(&self, _repo: &str, number: u64) -> Result<BackendPrRecord, RiptskError> {
+            let mut head_shas = self.head_shas.lock().expect("lock");
+            let head_sha = if head_shas.len() > 1 {
+                Some(head_shas.pop_front().expect("head_sha"))
+            } else {
+                head_shas.front().cloned()
+            };
+            Ok(BackendPrRecord {
+                number,
+                title: "Test PR".into(),
+                body: String::new(),
+                url: "https://example.com/pr/42".into(),
+                state: "open".into(),
+                head: "test-branch".into(),
+                head_sha,
+                base: "main".into(),
+                node_id: None,
+                merged: false,
+                updated_at: String::new(),
+            })
         }
 
         async fn update_pr(
@@ -1186,6 +1248,74 @@ mod tests {
         assert!(
             elapsed >= timeout,
             "elapsed {elapsed:?} should be at least timeout {timeout:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pr_head_update_waits_for_matching_sha() {
+        let provider = FakeChecksProvider::new(vec![PrChecksStatus::None]).with_head_shas(vec![
+            "old-sha".into(),
+            "older-sha".into(),
+            "expected-sha".into(),
+        ]);
+
+        let result = wait_for_pr_head_update(
+            &provider,
+            "owner/repo",
+            42,
+            "expected-sha",
+            Duration::from_millis(50),
+            Duration::from_millis(10),
+        )
+        .await;
+
+        assert!(result.is_ok(), "expected success, got {result:?}");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pr_head_update_times_out_on_stale_sha() {
+        let provider = FakeChecksProvider::new(vec![PrChecksStatus::None])
+            .with_head_shas(vec!["old-sha".into()]);
+
+        let result = wait_for_pr_head_update(
+            &provider,
+            "owner/repo",
+            42,
+            "expected-sha",
+            Duration::from_millis(30),
+            Duration::from_millis(10),
+        )
+        .await;
+
+        let error = result.expect_err("expected timeout");
+        assert!(
+            error
+                .to_string()
+                .contains("timed out waiting for PR #42 head to update after force push"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn pr_head_update_passes_immediately_when_sha_matches() {
+        let provider = FakeChecksProvider::new(vec![PrChecksStatus::None])
+            .with_head_shas(vec!["expected-sha".into()]);
+
+        let started = Instant::now();
+        let result = wait_for_pr_head_update(
+            &provider,
+            "owner/repo",
+            42,
+            "expected-sha",
+            Duration::from_millis(50),
+            Duration::from_millis(10),
+        )
+        .await;
+
+        assert!(result.is_ok(), "expected immediate success, got {result:?}");
+        assert!(
+            started.elapsed() < Duration::from_millis(10),
+            "expected immediate return"
         );
     }
 
