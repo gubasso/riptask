@@ -10,6 +10,7 @@ pub trait GitBackend {
     fn commit(&self, repo: &Path, message: &str) -> Result<(), RiptskError>;
     fn merge_file(&self, local: &Path, base: &Path, remote: &Path) -> Result<String, RiptskError>;
     fn has_changes(&self, repo: &Path) -> Result<bool, RiptskError>;
+    fn has_uncommitted_changes(&self, repo: &Path) -> Result<bool, RiptskError>;
     fn pull(&self, repo: &Path) -> Result<(), RiptskError>;
     fn push(&self, repo: &Path) -> Result<(), RiptskError>;
     fn checkout(&self, repo: &Path, branch: &str) -> Result<(), RiptskError>;
@@ -54,6 +55,7 @@ pub trait GitBackend {
     fn force_push(&self, repo: &Path, branch: &str) -> Result<(), RiptskError>;
     fn log_between(&self, repo: &Path, base: &str, head: &str) -> Result<String, RiptskError>;
     fn diff_between(&self, repo: &Path, base: &str, head: &str) -> Result<String, RiptskError>;
+    fn working_tree_diff(&self, repo: &Path) -> Result<String, RiptskError>;
     fn head_sha(&self, repo: &Path) -> Result<String, RiptskError>;
 }
 
@@ -147,6 +149,10 @@ impl GitBackend for CliGit {
     }
 
     fn has_changes(&self, repo: &Path) -> Result<bool, RiptskError> {
+        self.has_uncommitted_changes(repo)
+    }
+
+    fn has_uncommitted_changes(&self, repo: &Path) -> Result<bool, RiptskError> {
         let output = Command::new("git")
             .arg("-C")
             .arg(repo)
@@ -414,12 +420,33 @@ impl GitBackend for CliGit {
         if !output.status.success() {
             return Err(RiptskError::General("failed to read git diff".into()));
         }
-        let mut diff = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-        const MAX_DIFF_CHARS: usize = 8000;
-        if diff.len() > MAX_DIFF_CHARS {
-            diff.truncate(MAX_DIFF_CHARS);
+        Ok(truncate_diff(
+            String::from_utf8_lossy(&output.stdout).trim().to_owned(),
+        ))
+    }
+
+    fn working_tree_diff(&self, repo: &Path) -> Result<String, RiptskError> {
+        let output = if has_head_commit(repo)? {
+            Command::new("git")
+                .arg("-C")
+                .arg(repo)
+                .args(["diff", "HEAD"])
+                .output()?
+        } else {
+            Command::new("git")
+                .arg("-C")
+                .arg(repo)
+                .args(["diff", "--cached"])
+                .output()?
+        };
+        if !output.status.success() {
+            return Err(RiptskError::General(
+                "failed to read working tree git diff".into(),
+            ));
         }
-        Ok(diff)
+        Ok(truncate_diff(
+            String::from_utf8_lossy(&output.stdout).trim().to_owned(),
+        ))
     }
 }
 
@@ -444,6 +471,26 @@ fn status_to_result(status: std::process::ExitStatus) -> Result<(), RiptskError>
     }
 }
 
+fn has_head_commit(repo: &Path) -> Result<bool, RiptskError> {
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["rev-parse", "--verify", "HEAD"])
+        .status()?;
+    Ok(status.success())
+}
+
+fn truncate_diff(mut diff: String) -> String {
+    const MAX_DIFF_CHARS: usize = 8000;
+    if diff.len() > MAX_DIFF_CHARS {
+        // Find the nearest char boundary at or before MAX_DIFF_CHARS to avoid
+        // panicking on multi-byte UTF-8 sequences.
+        let boundary = diff.floor_char_boundary(MAX_DIFF_CHARS);
+        diff.truncate(boundary);
+    }
+    diff
+}
+
 fn build_askpass_script(token: &str) -> String {
     let escaped = shell_escape::escape(token.into());
     format!(
@@ -453,7 +500,10 @@ fn build_askpass_script(token: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::build_askpass_script;
+    use super::{CliGit, GitBackend, build_askpass_script};
+    use std::fs;
+    use std::process::Command;
+    use tempfile::tempdir;
 
     #[test]
     fn builds_askpass_script_with_shell_escaped_token() {
@@ -463,5 +513,54 @@ mod tests {
             script,
             "#!/bin/sh\ncase \"$1\" in\n  Username*) echo \"oauth2\" ;;\n  *) echo 'glpat-token'\\''with-quote' ;;\nesac\n"
         );
+    }
+
+    #[test]
+    fn working_tree_diff_returns_diff_when_changes_exist() {
+        let temp = tempdir().expect("temp dir");
+        run_git(temp.path(), &["init"]);
+        run_git(temp.path(), &["config", "user.name", "Test User"]);
+        run_git(temp.path(), &["config", "user.email", "test@example.com"]);
+
+        fs::write(temp.path().join("note.txt"), "before\n").expect("write file");
+        run_git(temp.path(), &["add", "note.txt"]);
+        run_git(temp.path(), &["commit", "-m", "initial"]);
+
+        fs::write(temp.path().join("note.txt"), "after\n").expect("modify file");
+
+        let diff = CliGit::new()
+            .working_tree_diff(temp.path())
+            .expect("working tree diff");
+
+        assert!(diff.contains("-before"));
+        assert!(diff.contains("+after"));
+    }
+
+    #[test]
+    fn working_tree_diff_returns_empty_when_clean() {
+        let temp = tempdir().expect("temp dir");
+        run_git(temp.path(), &["init"]);
+        run_git(temp.path(), &["config", "user.name", "Test User"]);
+        run_git(temp.path(), &["config", "user.email", "test@example.com"]);
+
+        fs::write(temp.path().join("note.txt"), "stable\n").expect("write file");
+        run_git(temp.path(), &["add", "note.txt"]);
+        run_git(temp.path(), &["commit", "-m", "initial"]);
+
+        let diff = CliGit::new()
+            .working_tree_diff(temp.path())
+            .expect("working tree diff");
+
+        assert!(diff.is_empty());
+    }
+
+    fn run_git(repo: &std::path::Path, args: &[&str]) {
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(args)
+            .status()
+            .expect("git command");
+        assert!(status.success(), "git {:?} failed", args);
     }
 }
