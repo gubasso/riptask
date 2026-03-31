@@ -53,6 +53,21 @@ impl BackendProvider for GithubProvider {
             .collect())
     }
 
+    async fn get_issue(
+        &self,
+        repo: &str,
+        issue_id: u64,
+    ) -> Result<BackendIssueRecord, RiptskError> {
+        let (owner, repo_name) = self.split_owner_repo(repo)?;
+        let issue = self
+            .client
+            .issues(owner, repo_name)
+            .get(issue_id)
+            .await
+            .map_err(|error| RiptskError::Unreachable(error.to_string()))?;
+        Ok(map_issue(issue))
+    }
+
     async fn create_issue(
         &self,
         repo: &str,

@@ -229,6 +229,24 @@ impl BackendProvider for GitlabProvider {
         Ok(issues.into_iter().map(map_issue).collect())
     }
 
+    async fn get_issue(
+        &self,
+        repo: &str,
+        issue_id: u64,
+    ) -> Result<BackendIssueRecord, RiptskError> {
+        let client = self.client().await?;
+        let endpoint = gitlab::api::projects::issues::Issue::builder()
+            .project(repo)
+            .issue(issue_id)
+            .build()
+            .map_err(|error| RiptskError::Config(error.to_string()))?;
+        let issue: GitlabIssue = endpoint
+            .query_async(&client)
+            .await
+            .map_err(|error| RiptskError::Unreachable(error.to_string()))?;
+        Ok(map_issue(issue))
+    }
+
     async fn create_issue(
         &self,
         repo: &str,
