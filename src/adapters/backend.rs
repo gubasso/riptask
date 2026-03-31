@@ -89,6 +89,8 @@ pub struct CiPresence {
 #[async_trait]
 pub trait BackendProvider: Send + Sync {
     async fn list_issues(&self, repo: &str) -> Result<Vec<BackendIssueRecord>, RiptskError>;
+    async fn get_issue(&self, repo: &str, issue_id: u64)
+    -> Result<BackendIssueRecord, RiptskError>;
     async fn create_issue(
         &self,
         repo: &str,

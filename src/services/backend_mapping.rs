@@ -185,6 +185,20 @@ pub fn backend_to_local(record: &BackendIssueRecord, backend: &BackendConfig) ->
     }
 }
 
+/// Copy fields that exist only locally from `source` onto `target`, so they
+/// do not create false diffs when materializing a remote-only document.
+pub fn copy_local_only_fields(target: &mut IssueFrontmatter, source: &IssueFrontmatter) {
+    target.pr_url = source.pr_url.clone();
+    target.pr_number = source.pr_number;
+    target.branch = source.branch.clone();
+    target.order = source.order;
+    target.recurring = source.recurring.clone();
+    target.cycle = source.cycle.clone();
+    target.board = source.board.clone();
+    target.org = source.org.clone();
+    target.priority = source.priority.clone();
+}
+
 pub fn build_state_labels(state: &IssueState, labels: &[String]) -> Vec<String> {
     let mut labels = labels
         .iter()
@@ -421,7 +435,8 @@ fn labels_without_status(labels: &[String]) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{non_empty_env, parse_glab_token, resolve_git_auth};
+    use super::{copy_local_only_fields, non_empty_env, parse_glab_token, resolve_git_auth};
+    use crate::domain::issue::{IssueFrontmatter, IssueState, Priority};
     use crate::models::{Backend, BackendConfig};
     use std::sync::{LazyLock, Mutex};
 
@@ -554,5 +569,75 @@ mod tests {
         };
 
         assert!(resolve_git_auth(&backend).is_none());
+    }
+
+    #[test]
+    fn copy_local_only_fields_copies_all_fields() {
+        let source = frontmatter_fixture("SRC", "Source title");
+        let mut target = frontmatter_fixture("DST", "Target title");
+        target.pr_url = None;
+        target.pr_number = None;
+        target.branch = None;
+        target.order = Some(1);
+        target.recurring = None;
+        target.cycle = None;
+        target.board = "personal".into();
+        target.org = None;
+        target.priority = Some(Priority::Medium);
+        let original_title = target.title.clone();
+        let original_status = target.status.clone();
+        let original_labels = target.labels.clone();
+
+        copy_local_only_fields(&mut target, &source);
+
+        assert_eq!(
+            target.pr_url.as_deref(),
+            Some("https://example.invalid/pulls/42")
+        );
+        assert_eq!(target.pr_number, Some(42));
+        assert_eq!(target.branch.as_deref(), Some("feature/42"));
+        assert_eq!(target.order, Some(7));
+        assert_eq!(target.recurring.as_deref(), Some("weekly-42"));
+        assert_eq!(target.cycle.as_deref(), Some("2026-W13"));
+        assert_eq!(target.board, "ops");
+        assert_eq!(target.org.as_deref(), Some("eng"));
+        assert_eq!(target.priority, Some(Priority::High));
+        assert_eq!(target.title, original_title);
+        assert_eq!(target.status, original_status);
+        assert_eq!(target.labels, original_labels);
+    }
+
+    fn frontmatter_fixture(id: &str, title: &str) -> IssueFrontmatter {
+        IssueFrontmatter {
+            id: id.into(),
+            title: title.into(),
+            status: IssueState::Todo,
+            board: "ops".into(),
+            project: "test-project".into(),
+            org: Some("eng".into()),
+            priority: Some(Priority::High),
+            labels: vec!["bug".into()],
+            assignees: vec!["alice".into()],
+            milestone: Some("M1".into()),
+            state_reason: None,
+            cycle: Some("2026-W13".into()),
+            order: Some(7),
+            gitlab: None,
+            github: None,
+            local_updated_at: "2026-03-20T10:00:00Z".into(),
+            due: None,
+            weight: None,
+            confidential: None,
+            discussion_locked: None,
+            issue_type: None,
+            locked: None,
+            lock_reason: None,
+            recurring: Some("weekly-42".into()),
+            remote_deleted: false,
+            id_slug: Some("slug".into()),
+            branch: Some("feature/42".into()),
+            pr_url: Some("https://example.invalid/pulls/42".into()),
+            pr_number: Some(42),
+        }
     }
 }

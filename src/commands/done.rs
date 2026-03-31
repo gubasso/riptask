@@ -1,7 +1,9 @@
 use crate::adapters::git::{CliGit, GitBackend};
 use crate::adapters::prompts::DialoguerPrompts;
 use crate::cli::{DoneArgs, SyncArgs};
-use crate::commands::branch::{current_repo, cwd_utf8, find_issue_for_branch};
+use crate::commands::branch::{
+    backend_issue_number, current_repo, cwd_utf8, find_issue_for_branch,
+};
 use crate::commands::{pr, sync_cmd};
 use crate::config::load_config;
 use crate::error::RiptskError;
@@ -10,6 +12,7 @@ use crate::services::auto_commit::maybe_auto_commit;
 use crate::services::backend_mapping::{build_provider_for_backend, resolve_git_auth};
 use crate::services::id_resolution;
 use crate::services::issue_service::IssueService;
+use crate::services::view_builder::ViewBuilder;
 use crate::storage::{frontmatter, issue_store};
 
 pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
@@ -74,6 +77,18 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
     )
     .await?;
 
+    let remote_closed = match backend_issue_number(backend, &issue)
+        .ok()
+        .zip(Some(repo_name))
+    {
+        Some((backend_issue_id, repo)) => provider
+            .get_issue(repo, backend_issue_id)
+            .await
+            .map(|record| record.state.eq_ignore_ascii_case("closed"))
+            .unwrap_or(false),
+        None => false,
+    };
+
     let default_branch = provider.default_branch(repo_name).await?;
     git.checkout(repo_dir.as_path(), &default_branch)?;
     git.pull(repo_dir.as_path())?;
@@ -100,7 +115,9 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
     issue.frontmatter.branch = None;
     issue.frontmatter.id_slug = None;
     frontmatter::save_issue(issue_path.as_std_path(), &issue).map_err(RiptskError::Other)?;
-    IssueService::new(paths, &config).move_issue(&id, "done")?;
+    if !remote_closed {
+        IssueService::new(paths, &config).move_issue(&id, "done")?;
+    }
     maybe_auto_commit(
         &config,
         &git,
@@ -112,6 +129,11 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
         &[issue_path.as_std_path()],
     )?;
     sync_cmd::run(paths, SyncArgs::default()).await?;
+    if remote_closed {
+        ViewBuilder::new(paths, &config)
+            .regenerate_all(None)
+            .map_err(RiptskError::Other)?;
+    }
     Ok(())
 }
 
