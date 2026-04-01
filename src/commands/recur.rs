@@ -8,8 +8,8 @@ use crate::services::auto_commit::maybe_auto_commit;
 use crate::services::issue_service::IssueService;
 use crate::services::recurrence::{expand_tokens, instance_exists, is_due, update_last_run};
 use crate::storage::issue_store;
+use chrono::{NaiveDate, Utc};
 use comfy_table::{Attribute, Cell, Color, ContentArrangement, Table, presets::NOTHING};
-use jiff::civil::Date;
 use std::io::IsTerminal;
 
 pub fn run(paths: &AppPaths, args: RecurArgs) -> Result<(), RiptskError> {
@@ -69,14 +69,10 @@ fn run_due(paths: &AppPaths, date: Option<String>) -> Result<(), RiptskError> {
     let mut config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
     let today = date
         .as_deref()
-        .map(str::parse::<Date>)
+        .map(str::parse::<NaiveDate>)
         .transpose()
         .map_err(|error| RiptskError::Other(anyhow::Error::new(error)))?
-        .unwrap_or_else(|| {
-            jiff::Timestamp::now()
-                .to_zoned(jiff::tz::TimeZone::UTC)
-                .date()
-        });
+        .unwrap_or_else(|| Utc::now().date_naive());
 
     let existing_issues = issue_store::list_issues(paths)?;
     let existing_docs: Vec<_> = existing_issues
@@ -171,9 +167,7 @@ fn run_due(paths: &AppPaths, date: Option<String>) -> Result<(), RiptskError> {
 fn skip(paths: &AppPaths, recur_id: Option<String>) -> Result<(), RiptskError> {
     let recur_id = recur_id.ok_or_else(|| RiptskError::General("missing recurrence id".into()))?;
     let mut config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
-    let today = jiff::Timestamp::now()
-        .to_zoned(jiff::tz::TimeZone::UTC)
-        .date();
+    let today = Utc::now().date_naive();
     update_last_run(&mut config, &recur_id, today);
     save_config(paths.config_path().as_std_path(), &config).map_err(RiptskError::Other)
 }
@@ -219,11 +213,11 @@ fn new_recur(paths: &AppPaths, args: RecurNewArgs) -> Result<(), RiptskError> {
 
     if let Some(start) = args.start.as_deref() {
         start
-            .parse::<Date>()
+            .parse::<NaiveDate>()
             .map_err(|error| RiptskError::Config(error.to_string()))?;
     }
     if let Some(end) = args.end.as_deref() {
-        end.parse::<Date>()
+        end.parse::<NaiveDate>()
             .map_err(|error| RiptskError::Config(error.to_string()))?;
     }
     if matches!(frequency, RecurrenceFrequency::Weekly) && args.day_of_week.is_none() {
@@ -274,12 +268,10 @@ fn new_recur(paths: &AppPaths, args: RecurNewArgs) -> Result<(), RiptskError> {
         frequency,
         day_of_week: args.day_of_week.map(|d| d.to_lowercase()),
         day_of_month: args.day_of_month.map(|value| value as u8),
-        start: Some(args.start.unwrap_or_else(|| {
-            jiff::Timestamp::now()
-                .to_zoned(jiff::tz::TimeZone::UTC)
-                .date()
-                .to_string()
-        })),
+        start: Some(
+            args.start
+                .unwrap_or_else(|| Utc::now().date_naive().to_string()),
+        ),
         end: args.end,
         last_run: None,
     };
