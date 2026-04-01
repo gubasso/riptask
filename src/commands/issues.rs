@@ -250,7 +250,10 @@ fn priority_color(priority: Option<&Priority>) -> Color {
     }
 }
 
-pub async fn new(paths: &AppPaths, args: NewArgs) -> Result<(), RiptskError> {
+pub(crate) async fn create_issue_from_args(
+    paths: &AppPaths,
+    args: NewArgs,
+) -> Result<(IssueDocument, camino::Utf8PathBuf), RiptskError> {
     paths.require_initialized()?;
     let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
     let mut args = args;
@@ -345,7 +348,6 @@ pub async fn new(paths: &AppPaths, args: NewArgs) -> Result<(), RiptskError> {
         ),
         &[issue_path.as_std_path()],
     )?;
-    print_issue_created(&issue);
     if edit {
         service.edit_issue(Some(issue.frontmatter.id.clone()))?;
         maybe_auto_commit(
@@ -359,6 +361,12 @@ pub async fn new(paths: &AppPaths, args: NewArgs) -> Result<(), RiptskError> {
             &[issue_path.as_std_path()],
         )?;
     }
+    Ok((issue, issue_path))
+}
+
+pub async fn new(paths: &AppPaths, args: NewArgs) -> Result<(), RiptskError> {
+    let (issue, _path) = create_issue_from_args(paths, args).await?;
+    print_issue_created(&issue);
     Ok(())
 }
 
@@ -400,7 +408,7 @@ fn resolve_project_repo_path(
     cwd.to_path_buf()
 }
 
-fn print_issue_created(issue: &IssueDocument) {
+pub(crate) fn print_issue_created(issue: &IssueDocument) {
     if !crate::ui::is_tty() {
         println!("{}", issue.frontmatter.id);
         return;
