@@ -26,8 +26,19 @@ async fn create_branch(paths: &AppPaths, args: BranchArgs) -> Result<(), RiptskE
     let Some(id) = id_resolution::require_id(paths, &config, &cwd, id, &scope)? else {
         return Ok(());
     };
-    let path = issue_store::find_issue(paths, &id)?;
-    let mut issue = crate::commands::issues::load_issue_or_conflict_error(path.as_std_path(), &id)?;
+    let slug = create_branch_for_issue(paths, &id).await?;
+    println!("{slug}");
+    Ok(())
+}
+
+pub(crate) async fn create_branch_for_issue(
+    paths: &AppPaths,
+    id: &str,
+) -> Result<String, RiptskError> {
+    paths.require_initialized()?;
+    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let path = issue_store::find_issue(paths, id)?;
+    let mut issue = crate::commands::issues::load_issue_or_conflict_error(path.as_std_path(), id)?;
 
     let backend = config
         .backends
@@ -82,8 +93,7 @@ async fn create_branch(paths: &AppPaths, args: BranchArgs) -> Result<(), RiptskE
         ),
         &[path.as_std_path()],
     )?;
-    println!("{slug}");
-    Ok(())
+    Ok(slug)
 }
 
 async fn delete_branch(paths: &AppPaths, args: BranchArgs) -> Result<(), RiptskError> {
