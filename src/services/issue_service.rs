@@ -9,7 +9,7 @@ use crate::services::templates::TemplateService;
 use crate::services::view_builder::ViewBuilder;
 use crate::storage::{frontmatter, issue_store};
 use anyhow::{Context, Result};
-use jiff::Timestamp;
+use chrono::{SecondsFormat, Utc};
 use std::fs;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -457,7 +457,7 @@ impl<'a> IssueService<'a> {
 }
 
 pub fn now_utc() -> String {
-    Timestamp::now().to_string()
+    Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
 pub fn generate_slug(id: &str, title: &str) -> String {

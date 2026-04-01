@@ -4,6 +4,7 @@ use crate::adapters::backend::{
 };
 use crate::error::RiptskError;
 use async_trait::async_trait;
+use chrono::SecondsFormat;
 use octocrab::models;
 use octocrab::params::LockReason;
 
@@ -625,7 +626,7 @@ fn map_issue(issue: models::issues::Issue) -> BackendIssueRecord {
         milestone_id,
         body: issue.body,
         url: issue.html_url.to_string(),
-        updated_at: issue.updated_at.to_string(),
+        updated_at: issue.updated_at.to_rfc3339_opts(SecondsFormat::Secs, true),
         due_date: None,
         weight: None,
         confidential: None,
@@ -668,7 +669,7 @@ fn map_pull_request(
         merged: pull.merged.unwrap_or(false) || pull.merged_at.is_some(),
         updated_at: pull
             .updated_at
-            .map(|updated_at| updated_at.to_string())
+            .map(|updated_at| updated_at.to_rfc3339_opts(SecondsFormat::Secs, true))
             .unwrap_or_default(),
     })
 }

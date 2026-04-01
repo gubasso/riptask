@@ -718,7 +718,7 @@ fn map_issue(issue: GitlabIssue) -> BackendIssueRecord {
         milestone_id,
         body: issue.description,
         url: issue.web_url,
-        updated_at: issue.updated_at,
+        updated_at: normalize_timestamp(&issue.updated_at),
         due_date: issue.due_date,
         weight: issue.weight,
         confidential: issue.confidential,
@@ -744,8 +744,14 @@ fn map_merge_request(merge_request: GitlabMergeRequest) -> BackendPrRecord {
         base: merge_request.target_branch,
         node_id: None,
         merged,
-        updated_at: merge_request.updated_at,
+        updated_at: normalize_timestamp(&merge_request.updated_at),
     }
+}
+
+fn normalize_timestamp(ts: &str) -> String {
+    chrono::DateTime::parse_from_rfc3339(ts)
+        .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+        .unwrap_or_else(|_| ts.to_owned())
 }
 
 fn parse_naive_date_opt(value: Option<&str>) -> Result<Option<NaiveDate>, RiptskError> {
