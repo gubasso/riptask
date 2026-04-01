@@ -8,6 +8,7 @@ pub mod issues;
 pub mod pr;
 pub mod recur;
 pub mod register;
+pub mod start;
 pub mod sync_cmd;
 pub mod templates;
 pub mod views;

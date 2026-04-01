@@ -49,7 +49,7 @@ pub async fn run(paths: &AppPaths, args: PrArgs) -> Result<(), RiptskError> {
     }
 }
 
-async fn create(paths: &AppPaths, args: PrCreateArgs) -> Result<(), RiptskError> {
+pub(crate) async fn create(paths: &AppPaths, args: PrCreateArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
     let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
     let repo = current_repo()?;

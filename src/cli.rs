@@ -58,6 +58,8 @@ pub enum Commands {
     Branch(BranchArgs),
     /// Complete an issue: merge PR, clean up branches, close issue (convenience wrapper — see `tsk pr merge`, `tsk branch -D`, `tsk close`)
     Done(DoneArgs),
+    /// Start working on a new issue: create issue, branch, and PR (convenience wrapper — see `tsk new`, `tsk branch`, `tsk pr`)
+    Start(StartArgs),
     /// Create, edit, or show a pull/merge request
     Pr(PrArgs),
     /// Display or manage board views
@@ -159,6 +161,37 @@ pub struct DoneArgs {
     /// Use --force instead of --force-with-lease when pushing rebased branches
     #[arg(long)]
     pub force_push: bool,
+}
+
+#[derive(Debug, Clone, Args, Default)]
+pub struct StartArgs {
+    /// Issue title (positional)
+    #[arg(conflicts_with = "title")]
+    pub title_pos: Option<String>,
+    /// Issue title (or enter interactively)
+    #[arg(short = 't', long)]
+    pub title: Option<String>,
+    /// Target project
+    #[arg(short = 'p', long)]
+    pub project: Option<String>,
+    /// Board to assign
+    #[arg(short = 'b', long)]
+    pub board: Option<String>,
+    /// Initial status
+    #[arg(short = 's', long)]
+    pub status: Option<String>,
+    /// Priority level
+    #[arg(short = 'P', long)]
+    pub priority: Option<String>,
+    /// Template to use
+    #[arg(short = 'T', long)]
+    pub template: Option<String>,
+    /// Disable AI-assisted content generation (AI is on by default)
+    #[arg(long)]
+    pub no_ai: bool,
+    /// Open in $EDITOR after creation
+    #[arg(short = 'e', long)]
+    pub edit: bool,
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -776,6 +809,45 @@ mod tests {
             panic!("expected new command");
         };
         assert!(args.edit);
+    }
+
+    #[test]
+    fn start_positional_title_parses() {
+        let cli = Cli::try_parse_from(["tsk", "start", "my title"]).expect("parse");
+        let Commands::Start(args) = cli.command.expect("command") else {
+            panic!("expected start command");
+        };
+        assert_eq!(args.title_pos.as_deref(), Some("my title"));
+        assert!(args.title.is_none());
+    }
+
+    #[test]
+    fn start_no_ai_parses() {
+        let cli = Cli::try_parse_from(["tsk", "start", "--no-ai", "my title"]).expect("parse");
+        let Commands::Start(args) = cli.command.expect("command") else {
+            panic!("expected start command");
+        };
+        assert_eq!(args.title_pos.as_deref(), Some("my title"));
+        assert!(args.no_ai);
+    }
+
+    #[test]
+    fn start_edit_flag_parses() {
+        let cli = Cli::try_parse_from(["tsk", "start", "-e", "my title"]).expect("parse");
+        let Commands::Start(args) = cli.command.expect("command") else {
+            panic!("expected start command");
+        };
+        assert_eq!(args.title_pos.as_deref(), Some("my title"));
+        assert!(args.edit);
+    }
+
+    #[test]
+    fn start_project_parses() {
+        let cli = Cli::try_parse_from(["tsk", "start", "-p", "myproject"]).expect("parse");
+        let Commands::Start(args) = cli.command.expect("command") else {
+            panic!("expected start command");
+        };
+        assert_eq!(args.project.as_deref(), Some("myproject"));
     }
 
     #[test]
