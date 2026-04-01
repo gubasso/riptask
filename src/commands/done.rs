@@ -9,11 +9,13 @@ use crate::config::load_config;
 use crate::error::RiptskError;
 use crate::paths::AppPaths;
 use crate::services::auto_commit::maybe_auto_commit;
-use crate::services::backend_mapping::{build_provider_for_backend, resolve_git_auth};
+use crate::services::backend_mapping::{
+    build_provider_for_backend, resolve_git_auth, update_issue_from_backend,
+};
 use crate::services::id_resolution;
 use crate::services::issue_service::IssueService;
 use crate::services::view_builder::ViewBuilder;
-use crate::storage::{frontmatter, issue_store};
+use crate::storage::{cache, frontmatter, issue_store};
 
 pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
@@ -77,16 +79,22 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
     )
     .await?;
 
-    let remote_closed = match backend_issue_number(backend, &issue)
+    let (remote_closed, closed_record) = match backend_issue_number(backend, &issue)
         .ok()
         .zip(Some(repo_name))
     {
-        Some((backend_issue_id, repo)) => provider
-            .get_issue(repo, backend_issue_id)
-            .await
-            .map(|record| record.state.eq_ignore_ascii_case("closed"))
-            .unwrap_or(false),
-        None => false,
+        Some((backend_issue_id, repo)) => match provider.get_issue(repo, backend_issue_id).await {
+            Ok(record) => {
+                let closed = record.state.eq_ignore_ascii_case("closed");
+                if closed {
+                    (true, Some(record))
+                } else {
+                    (false, None)
+                }
+            }
+            Err(_) => (false, None),
+        },
+        None => (false, None),
     };
 
     let default_branch = provider.default_branch(repo_name).await?;
@@ -115,7 +123,16 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
     issue.frontmatter.branch = None;
     issue.frontmatter.id_slug = None;
     frontmatter::save_issue(issue_path.as_std_path(), &issue).map_err(RiptskError::Other)?;
-    if !remote_closed {
+    if let Some(record) = &closed_record {
+        let mut issue =
+            crate::commands::issues::load_issue_or_conflict_error(issue_path.as_std_path(), &id)?;
+        update_issue_from_backend(&mut issue, record, backend);
+        issue.frontmatter.branch = None;
+        issue.frontmatter.id_slug = None;
+        frontmatter::save_issue(issue_path.as_std_path(), &issue).map_err(RiptskError::Other)?;
+        cache::seed_backend_state_entry(paths, backend.backend.as_str(), repo_name, record)
+            .map_err(RiptskError::Other)?;
+    } else {
         IssueService::new(paths, &config).move_issue(&id, "done")?;
     }
     maybe_auto_commit(
