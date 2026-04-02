@@ -387,6 +387,9 @@ pub struct SyncArgs {
     /// Automatically triage new remote issues
     #[arg(short = 'T', long = "auto-triage")]
     pub auto_triage: bool,
+    /// Issue IDs to force-pull (skip conflict detection). Not exposed as CLI flag.
+    #[arg(skip)]
+    pub force_pull_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Subcommand)]

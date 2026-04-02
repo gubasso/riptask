@@ -6,6 +6,7 @@ use crate::commands::branch::{
 };
 use crate::commands::{pr, sync_cmd};
 use crate::config::load_config;
+use crate::domain::issue::IssueState;
 use crate::error::RiptskError;
 use crate::paths::AppPaths;
 use crate::services::auto_commit::maybe_auto_commit;
@@ -13,7 +14,7 @@ use crate::services::backend_mapping::{
     build_provider_for_backend, resolve_git_auth, update_issue_from_backend,
 };
 use crate::services::id_resolution;
-use crate::services::issue_service::IssueService;
+use crate::services::issue_service::now_utc;
 use crate::services::view_builder::ViewBuilder;
 use crate::storage::{cache, frontmatter, issue_store};
 
@@ -79,22 +80,15 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
     )
     .await?;
 
-    let (remote_closed, closed_record) = match backend_issue_number(backend, &issue)
+    let closed_record = match backend_issue_number(backend, &issue)
         .ok()
         .zip(Some(repo_name))
     {
         Some((backend_issue_id, repo)) => match provider.get_issue(repo, backend_issue_id).await {
-            Ok(record) => {
-                let closed = record.state.eq_ignore_ascii_case("closed");
-                if closed {
-                    (true, Some(record))
-                } else {
-                    (false, None)
-                }
-            }
-            Err(_) => (false, None),
+            Ok(record) if record.state.eq_ignore_ascii_case("closed") => Some(record),
+            Ok(_) | Err(_) => None,
         },
-        None => (false, None),
+        None => None,
     };
 
     let default_branch = provider.default_branch(repo_name).await?;
@@ -133,7 +127,14 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
         cache::seed_backend_state_entry(paths, backend.backend.as_str(), repo_name, record)
             .map_err(RiptskError::Other)?;
     } else {
-        IssueService::new(paths, &config).move_issue(&id, "done")?;
+        // Mark done locally so the subsequent push closes it on the remote.
+        let mut issue =
+            frontmatter::load_issue(issue_path.as_std_path()).map_err(RiptskError::Other)?;
+        issue.frontmatter.status = IssueState::Done;
+        issue.frontmatter.local_updated_at = now_utc();
+        issue.frontmatter.branch = None;
+        issue.frontmatter.id_slug = None;
+        frontmatter::save_issue(issue_path.as_std_path(), &issue).map_err(RiptskError::Other)?;
     }
     maybe_auto_commit(
         &config,
@@ -145,12 +146,19 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
         ),
         &[issue_path.as_std_path()],
     )?;
-    sync_cmd::run(paths, SyncArgs::default()).await?;
-    if remote_closed {
-        ViewBuilder::new(paths, &config)
-            .regenerate_all(None)
-            .map_err(RiptskError::Other)?;
-    }
+    // Force-pull the done'd issue during sync to prevent false conflicts from
+    // delayed auto-close webhooks on GitHub.
+    sync_cmd::run(
+        paths,
+        SyncArgs {
+            force_pull_ids: vec![id.clone()],
+            ..SyncArgs::default()
+        },
+    )
+    .await?;
+    ViewBuilder::new(paths, &config)
+        .regenerate_all(None)
+        .map_err(RiptskError::Other)?;
     Ok(())
 }
 
