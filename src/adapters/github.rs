@@ -8,6 +8,20 @@ use chrono::SecondsFormat;
 use octocrab::models;
 use octocrab::params::LockReason;
 
+/// Format an octocrab error with full detail.
+///
+/// `octocrab::Error`'s `Display` for the `GitHub` variant just prints
+/// "GitHub" (snafu default), losing the status code and message. This
+/// helper extracts the inner `GitHubError` which has a proper `Display`.
+fn format_octocrab_error(error: &octocrab::Error) -> String {
+    match error {
+        octocrab::Error::GitHub { source, .. } => {
+            format!("{source} (HTTP {})", source.status_code.as_u16())
+        }
+        other => other.to_string(),
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct GithubProvider {
     pub client: octocrab::Octocrab,
@@ -19,7 +33,7 @@ impl GithubProvider {
         let client = octocrab::Octocrab::builder()
             .personal_token(token.to_owned())
             .build()
-            .map_err(|error| RiptskError::Unreachable(error.to_string()))?;
+            .map_err(|error| RiptskError::Unreachable(format_octocrab_error(&error)))?;
         Ok(Self { client })
     }
 
@@ -41,12 +55,12 @@ impl BackendProvider for GithubProvider {
             .per_page(100)
             .send()
             .await
-            .map_err(|error| RiptskError::Unreachable(error.to_string()))?;
+            .map_err(|error| RiptskError::Unreachable(format_octocrab_error(&error)))?;
         let issues = self
             .client
             .all_pages::<models::issues::Issue>(page)
             .await
-            .map_err(|error| RiptskError::Unreachable(error.to_string()))?;
+            .map_err(|error| RiptskError::Unreachable(format_octocrab_error(&error)))?;
         Ok(issues
             .into_iter()
             .filter(|issue| issue.pull_request.is_none())
@@ -65,7 +79,7 @@ impl BackendProvider for GithubProvider {
             .issues(owner, repo_name)
             .get(issue_id)
             .await
-            .map_err(|error| RiptskError::Unreachable(error.to_string()))?;
+            .map_err(|error| RiptskError::Unreachable(format_octocrab_error(&error)))?;
         Ok(map_issue(issue))
     }
 
@@ -89,7 +103,7 @@ impl BackendProvider for GithubProvider {
         let created = builder
             .send()
             .await
-            .map_err(|error| RiptskError::Unreachable(error.to_string()))?;
+            .map_err(|error| RiptskError::Unreachable(format_octocrab_error(&error)))?;
         Ok(map_issue(created))
     }
 
@@ -119,7 +133,7 @@ impl BackendProvider for GithubProvider {
         let updated = builder
             .send()
             .await
-            .map_err(|error| RiptskError::Unreachable(error.to_string()))?;
+            .map_err(|error| RiptskError::Unreachable(format_octocrab_error(&error)))?;
         Ok(map_issue(updated))
     }
 
@@ -131,7 +145,7 @@ impl BackendProvider for GithubProvider {
             .state(models::IssueState::Closed)
             .send()
             .await
-            .map_err(|error| RiptskError::Unreachable(error.to_string()))?;
+            .map_err(|error| RiptskError::Unreachable(format_octocrab_error(&error)))?;
         Ok(())
     }
 
@@ -143,7 +157,7 @@ impl BackendProvider for GithubProvider {
             .state(models::IssueState::Open)
             .send()
             .await
-            .map_err(|error| RiptskError::Unreachable(error.to_string()))?;
+            .map_err(|error| RiptskError::Unreachable(format_octocrab_error(&error)))?;
         Ok(())
     }
 
@@ -154,7 +168,7 @@ impl BackendProvider for GithubProvider {
             .issues(owner, repo_name)
             .get(issue_id)
             .await
-            .map_err(|e| RiptskError::Unreachable(e.to_string()))?;
+            .map_err(|e| RiptskError::Unreachable(format_octocrab_error(&e)))?;
         let node_id = issue.node_id;
 
         let query = r#"mutation($issueId: ID!) {
@@ -207,7 +221,7 @@ impl BackendProvider for GithubProvider {
             .issues(owner, repo_name)
             .lock(issue_id, lock_reason)
             .await
-            .map_err(|e| RiptskError::Unreachable(e.to_string()))?;
+            .map_err(|e| RiptskError::Unreachable(format_octocrab_error(&e)))?;
         Ok(())
     }
 
@@ -217,7 +231,7 @@ impl BackendProvider for GithubProvider {
             .issues(owner, repo_name)
             .unlock(issue_id)
             .await
-            .map_err(|e| RiptskError::Unreachable(e.to_string()))?;
+            .map_err(|e| RiptskError::Unreachable(format_octocrab_error(&e)))?;
         Ok(())
     }
 
@@ -232,7 +246,7 @@ impl BackendProvider for GithubProvider {
             .issues(owner, repo_name)
             .replace_all_labels(issue_id, labels)
             .await
-            .map_err(|error| RiptskError::Unreachable(error.to_string()))?;
+            .map_err(|error| RiptskError::Unreachable(format_octocrab_error(&error)))?;
         Ok(())
     }
 
@@ -252,7 +266,7 @@ impl BackendProvider for GithubProvider {
             .body(body)
             .send()
             .await
-            .map_err(|error| RiptskError::Unreachable(error.to_string()))?;
+            .map_err(|error| RiptskError::Unreachable(format_octocrab_error(&error)))?;
         map_pull_request(pull, repo)
     }
 
@@ -263,7 +277,7 @@ impl BackendProvider for GithubProvider {
             .pulls(owner, repo_name)
             .get(number)
             .await
-            .map_err(|error| RiptskError::Unreachable(error.to_string()))?;
+            .map_err(|error| RiptskError::Unreachable(format_octocrab_error(&error)))?;
         map_pull_request(pull, repo)
     }
 
@@ -283,7 +297,7 @@ impl BackendProvider for GithubProvider {
             .body(body)
             .send()
             .await
-            .map_err(|error| RiptskError::Unreachable(error.to_string()))?;
+            .map_err(|error| RiptskError::Unreachable(format_octocrab_error(&error)))?;
         map_pull_request(pull, repo)
     }
 
@@ -302,7 +316,7 @@ impl BackendProvider for GithubProvider {
             .base(base)
             .send()
             .await
-            .map_err(|error| RiptskError::Unreachable(error.to_string()))?;
+            .map_err(|error| RiptskError::Unreachable(format_octocrab_error(&error)))?;
         let Some(pull) = page.items.into_iter().next() else {
             return Ok(None);
         };
@@ -522,7 +536,7 @@ impl BackendProvider for GithubProvider {
                 base_ref.to_owned(),
             ))
             .await
-            .map_err(|e| RiptskError::Unreachable(e.to_string()))?;
+            .map_err(|e| RiptskError::Unreachable(format_octocrab_error(&e)))?;
         let sha = match base.object {
             octocrab::models::repos::Object::Commit { sha, .. }
             | octocrab::models::repos::Object::Tag { sha, .. } => sha,
@@ -539,7 +553,7 @@ impl BackendProvider for GithubProvider {
             .issues(owner, repo_name)
             .get(issue_id)
             .await
-            .map_err(|e| RiptskError::Unreachable(e.to_string()))?;
+            .map_err(|e| RiptskError::Unreachable(format_octocrab_error(&e)))?;
         let issue_node_id = issue.node_id;
 
         // Use createLinkedBranch GraphQL mutation to create branch linked to issue
@@ -560,7 +574,7 @@ impl BackendProvider for GithubProvider {
             .client
             .graphql(&payload)
             .await
-            .map_err(|e| RiptskError::Unreachable(e.to_string()))?;
+            .map_err(|e| RiptskError::Unreachable(format_octocrab_error(&e)))?;
 
         if let Some(errors) = response.get("errors") {
             return Err(RiptskError::Unreachable(format!(
@@ -578,7 +592,7 @@ impl BackendProvider for GithubProvider {
             .repos(owner, repo_name)
             .get()
             .await
-            .map_err(|error| RiptskError::Unreachable(error.to_string()))?;
+            .map_err(|error| RiptskError::Unreachable(format_octocrab_error(&error)))?;
         repository
             .default_branch
             .ok_or_else(|| RiptskError::Unreachable(format!("missing default branch for {repo}")))
@@ -592,7 +606,7 @@ impl BackendProvider for GithubProvider {
                 branch_name.to_owned(),
             ))
             .await
-            .map_err(|error| RiptskError::Unreachable(error.to_string()))?;
+            .map_err(|error| RiptskError::Unreachable(format_octocrab_error(&error)))?;
         Ok(())
     }
 }
