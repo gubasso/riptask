@@ -260,17 +260,27 @@ fn run_ai(template: &str, system: &str, input: &str) -> Result<String, RiptskErr
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
         let code = output
             .status
             .code()
             .map(|c| c.to_string())
             .unwrap_or_else(|| "unknown".into());
         let preview = render_command_preview(template);
-        let (kind, hint) = classify_and_hint(&stderr, &code);
-        let detail = format!(
-            "ai.command failed (exit status {code})\n  command: {preview}\n  stderr:\n{}\n  hint: {hint}",
+        let combined = if stderr.is_empty() && !stdout.is_empty() {
+            &stdout
+        } else {
+            &stderr
+        };
+        let (kind, hint) = classify_and_hint(combined, &code);
+        let mut detail = format!(
+            "ai.command failed (exit status {code})\n  command: {preview}\n  stderr:\n{}",
             format_stderr_lines(&stderr)
         );
+        if !stdout.is_empty() {
+            detail.push_str(&format!("\n  stdout:\n{}", format_stderr_lines(&stdout)));
+        }
+        detail.push_str(&format!("\n  hint: {hint}"));
         match kind {
             ErrorKind::Auth => Err(RiptskError::Auth(detail)),
             ErrorKind::Config => Err(RiptskError::Config(detail)),
@@ -507,6 +517,20 @@ mod tests {
         let result = run_ai("false", "sys", "in");
         let err = result.unwrap_err().to_string();
         assert!(err.contains("hint:"));
+    }
+
+    #[test]
+    fn nonzero_exit_includes_stdout_when_stderr_empty() {
+        let result = run_ai("echo 'error on stdout'; exit 1", "sys", "in");
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("stdout:"));
+        assert!(err.contains("error on stdout"));
+    }
+
+    #[test]
+    fn auth_error_on_stdout_maps_to_auth() {
+        let result = run_ai("echo '401 unauthorized' ; exit 1", "sys", "in");
+        assert!(matches!(result, Err(RiptskError::Auth(_))));
     }
 
     #[test]
