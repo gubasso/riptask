@@ -87,7 +87,7 @@ pub struct CiPresence {
 }
 
 #[async_trait]
-pub trait BackendProvider: Send + Sync {
+pub trait IssueTracker: Send + Sync {
     async fn list_issues(&self, repo: &str) -> Result<Vec<BackendIssueRecord>, RiptskError>;
     async fn get_issue(&self, repo: &str, issue_id: u64)
     -> Result<BackendIssueRecord, RiptskError>;
@@ -118,6 +118,10 @@ pub trait BackendProvider: Send + Sync {
         issue_id: u64,
         labels: &[String],
     ) -> Result<(), RiptskError>;
+}
+
+#[async_trait]
+pub trait VersionControl: Send + Sync {
     async fn create_pr(
         &self,
         repo: &str,
@@ -164,6 +168,10 @@ pub trait BackendProvider: Send + Sync {
     async fn default_branch(&self, repo: &str) -> Result<String, RiptskError>;
     async fn delete_branch(&self, repo: &str, branch_name: &str) -> Result<(), RiptskError>;
 }
+
+/// Convenience: backends that provide both issue tracking and version control (GitHub, GitLab).
+pub trait BackendProvider: IssueTracker + VersionControl {}
+impl<T: IssueTracker + VersionControl> BackendProvider for T {}
 
 #[cfg(test)]
 mod tests {

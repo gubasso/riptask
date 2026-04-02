@@ -270,6 +270,11 @@ pub(crate) fn backend_issue_number(
             .gitlab
             .as_ref()
             .and_then(|meta| meta.issue_id),
+        Backend::Jira => issue
+            .frontmatter
+            .jira
+            .as_ref()
+            .and_then(|meta| meta.issue_id),
         Backend::Local => None,
     }
     .ok_or_else(|| {

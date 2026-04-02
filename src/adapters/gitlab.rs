@@ -1,6 +1,6 @@
 use crate::adapters::backend::{
-    BackendIssueRecord, BackendIssueUpsert, BackendPrRecord, BackendProvider, CiPresence,
-    DeleteOutcome, MergeMethod, PrChecksStatus,
+    BackendIssueRecord, BackendIssueUpsert, BackendPrRecord, CiPresence, DeleteOutcome,
+    IssueTracker, MergeMethod, PrChecksStatus, VersionControl,
 };
 use crate::error::RiptskError;
 use async_trait::async_trait;
@@ -215,7 +215,7 @@ impl GitlabProvider {
 }
 
 #[async_trait]
-impl BackendProvider for GitlabProvider {
+impl IssueTracker for GitlabProvider {
     async fn list_issues(&self, repo: &str) -> Result<Vec<BackendIssueRecord>, RiptskError> {
         let client = self.client().await?;
         let endpoint = gitlab::api::issues::ProjectIssues::builder()
@@ -370,7 +370,10 @@ impl BackendProvider for GitlabProvider {
             .map_err(|error| RiptskError::Unreachable(error.to_string()))?;
         Ok(())
     }
+}
 
+#[async_trait]
+impl VersionControl for GitlabProvider {
     async fn create_pr(
         &self,
         repo: &str,

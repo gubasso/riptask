@@ -137,6 +137,7 @@ mod tests {
             default_board: Some("personal".into()),
             default_org: None,
             path: Some(cwd.to_string()),
+            vc: None,
         }]);
 
         let resolved = resolve_id(&paths, &config, &cwd, "61").expect("resolve numeric id");
