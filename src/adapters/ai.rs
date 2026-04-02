@@ -32,6 +32,14 @@ pub struct TemplateAiBackend {
     pub command_template: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ErrorKind {
+    Auth,
+    Config,
+    Network,
+    Execution,
+}
+
 impl AiBackend for TemplateAiBackend {
     fn generate_issue_content(&self, context: &str) -> Result<GeneratedIssueContent, RiptskError> {
         let output = run_ai(
@@ -197,10 +205,18 @@ fn fallback_issue_content(output: &str) -> Result<GeneratedIssueContent, RiptskE
 
 fn run_ai(template: &str, system: &str, input: &str) -> Result<String, RiptskError> {
     let mut input_tempfile = tempfile::NamedTempFile::new()
-        .map_err(|e| RiptskError::General(format!("failed to create temp file: {e}")))?;
+        .map_err(|e| {
+            RiptskError::General(format!(
+                "failed to create AI input temp file: {e}\n  hint: check filesystem permissions and temporary directory availability"
+            ))
+        })?;
     input_tempfile
         .write_all(input.as_bytes())
-        .map_err(|e| RiptskError::General(format!("failed to write temp file: {e}")))?;
+        .map_err(|e| {
+            RiptskError::General(format!(
+                "failed to write AI input temp file: {e}\n  hint: check filesystem permissions and temporary directory availability"
+            ))
+        })?;
     let input_file_path = input_tempfile.path().to_string_lossy().to_string();
 
     let system_escaped = escape(Cow::Borrowed(system));
@@ -208,25 +224,36 @@ fn run_ai(template: &str, system: &str, input: &str) -> Result<String, RiptskErr
 
     let mut env = minijinja::Environment::new();
     env.set_undefined_behavior(minijinja::UndefinedBehavior::Strict);
-    env.add_template("cmd", template)
-        .map_err(|e| RiptskError::General(format!("invalid ai.command template: {e}")))?;
-    let tmpl = env
-        .get_template("cmd")
-        .map_err(|e| RiptskError::General(format!("invalid ai.command template: {e}")))?;
+    env.add_template("cmd", template).map_err(|e| {
+        RiptskError::Config(format!(
+            "invalid ai.command template: {e}\n  hint: check ai.command syntax in riptsk.yaml"
+        ))
+    })?;
+    let tmpl = env.get_template("cmd").map_err(|e| {
+        RiptskError::Config(format!(
+            "invalid ai.command template: {e}\n  hint: check ai.command syntax in riptsk.yaml"
+        ))
+    })?;
     let rendered = tmpl
         .render(minijinja::context! {
             system => system_escaped.as_ref(),
             input => input_escaped.as_ref(),
             input_file => &input_file_path,
         })
-        .map_err(|e| RiptskError::General(format!("failed to render ai.command template: {e}")))?;
+        .map_err(|e| {
+            RiptskError::Config(format!(
+                "failed to render ai.command template: {e}\n  hint: check ai.command syntax in riptsk.yaml"
+            ))
+        })?;
 
     let output = Command::new("sh")
         .arg("-c")
         .arg(&rendered)
         .output()
         .map_err(|e| {
-            RiptskError::General(format!("failed to execute ai.command via sh -c: {e}"))
+            RiptskError::General(format!(
+                "failed to execute ai.command via sh -c: {e}\n  hint: check that your shell environment and ai.command are valid"
+            ))
         })?;
 
     if output.status.success() {
@@ -238,31 +265,129 @@ fn run_ai(template: &str, system: &str, input: &str) -> Result<String, RiptskErr
             .code()
             .map(|c| c.to_string())
             .unwrap_or_else(|| "unknown".into());
-        let detail = if stderr.is_empty() {
-            format!("ai.command exited with status {code}")
-        } else {
-            format!("ai.command exited with status {code}\n\nstderr:\n{stderr}")
-        };
-        if is_auth_like_error(&stderr) {
-            Err(RiptskError::Auth(detail))
-        } else {
-            Err(RiptskError::General(detail))
+        let preview = render_command_preview(template);
+        let (kind, hint) = classify_and_hint(&stderr, &code);
+        let detail = format!(
+            "ai.command failed (exit status {code})\n  command: {preview}\n  stderr:\n{}\n  hint: {hint}",
+            format_stderr_lines(&stderr)
+        );
+        match kind {
+            ErrorKind::Auth => Err(RiptskError::Auth(detail)),
+            ErrorKind::Config => Err(RiptskError::Config(detail)),
+            ErrorKind::Network => Err(RiptskError::Unreachable(detail)),
+            ErrorKind::Execution => Err(RiptskError::General(detail)),
         }
     }
 }
 
-fn is_auth_like_error(stderr: &str) -> bool {
+fn render_command_preview(template: &str) -> String {
+    let mut env = minijinja::Environment::new();
+    env.set_undefined_behavior(minijinja::UndefinedBehavior::Strict);
+    if env.add_template("cmd", template).is_err() {
+        return "<unable to render command preview>".into();
+    }
+
+    let Ok(tmpl) = env.get_template("cmd") else {
+        return "<unable to render command preview>".into();
+    };
+
+    let redacted = escape(Cow::Borrowed("<redacted>")).into_owned();
+    let rendered = tmpl.render(minijinja::context! {
+        system => redacted.as_str(),
+        input => redacted.as_str(),
+        input_file => "<redacted>",
+    });
+
+    match rendered {
+        Ok(preview) => truncate_preview(preview.trim()),
+        Err(_) => "<unable to render command preview>".into(),
+    }
+}
+
+fn truncate_preview(preview: &str) -> String {
+    if preview.chars().count() <= 200 {
+        preview.to_owned()
+    } else {
+        let truncated: String = preview.chars().take(197).collect();
+        format!("{truncated}...")
+    }
+}
+
+fn format_stderr_lines(stderr: &str) -> String {
+    let lines: Vec<&str> = stderr.lines().take(5).collect();
+    if lines.is_empty() {
+        "    <empty>".into()
+    } else {
+        lines
+            .into_iter()
+            .map(|line| format!("    {line}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+fn classify_and_hint(stderr: &str, exit_code: &str) -> (ErrorKind, &'static str) {
     let lowered = stderr.to_ascii_lowercase();
-    [
+
+    if [
         "unauthorized",
-        "authentication",
-        "token",
+        "authentication failed",
+        "invalid token",
+        "invalid api key",
+        "invalid api token",
         "api key",
-        "401",
-        "403",
+        "api_key",
+        "invalid key",
+        "token expired",
+        "credentials",
+        "401 ",
+        "http 401",
+        "403 forbidden",
+        "http 403",
     ]
     .iter()
     .any(|pattern| lowered.contains(pattern))
+    {
+        return (
+            ErrorKind::Auth,
+            "check the API token or key used by ai.command",
+        );
+    }
+
+    if lowered.contains("command not found")
+        || lowered.contains("no such file or directory")
+        || lowered.contains("permission denied")
+        || (exit_code == "127" && lowered.contains("not found"))
+    {
+        return (
+            ErrorKind::Config,
+            "check the ai.command executable path and any referenced files or directories",
+        );
+    }
+
+    if [
+        "timeout",
+        "timed out",
+        "connection refused",
+        "could not resolve",
+        "dns",
+        "rate limit",
+        "429",
+        "503",
+    ]
+    .iter()
+    .any(|pattern| lowered.contains(pattern))
+    {
+        return (
+            ErrorKind::Network,
+            "check network connectivity, provider availability, and retry",
+        );
+    }
+
+    (
+        ErrorKind::Execution,
+        "run the rendered command directly to inspect the full failure",
+    )
 }
 
 #[cfg(test)]
@@ -286,7 +411,9 @@ mod tests {
         let result = run_ai("echo 'fail' >&2; exit 1", "sys", "in");
         let err = result.unwrap_err().to_string();
         assert!(err.contains("fail"));
-        assert!(err.contains("status 1"));
+        assert!(err.contains("ai.command failed (exit status 1)"));
+        assert!(err.contains("command:"));
+        assert!(err.contains("stderr:"));
     }
 
     #[test]
@@ -350,6 +477,44 @@ mod tests {
             "sys",
             "in",
         );
-        assert!(matches!(result, Err(RiptskError::Auth(_))));
+        match result {
+            Err(RiptskError::Auth(message)) => assert!(message.contains("hint:")),
+            other => panic!("expected auth error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn nonexistent_ai_command_maps_to_config() {
+        let result = run_ai("nonexistent_command_xyz_12345 {{input}}", "sys", "in");
+        assert!(matches!(result, Err(RiptskError::Config(_))));
+    }
+
+    #[test]
+    fn command_preview_redacts_system_and_input() {
+        let result = run_ai(
+            "false {{system}} {{input}}",
+            "super secret system prompt",
+            "super secret input body",
+        );
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("<redacted>"));
+        assert!(!err.contains("super secret system prompt"));
+        assert!(!err.contains("super secret input body"));
+    }
+
+    #[test]
+    fn ai_command_errors_include_hint() {
+        let result = run_ai("false", "sys", "in");
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("hint:"));
+    }
+
+    #[test]
+    fn token_limit_errors_are_not_auth() {
+        let result = run_ai("echo 'max tokens exceeded' >&2; exit 1", "sys", "in");
+        assert!(
+            !matches!(result, Err(RiptskError::Auth(_))),
+            "token limit error should not be classified as auth"
+        );
     }
 }
