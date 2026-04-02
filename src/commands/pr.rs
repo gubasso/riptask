@@ -1,5 +1,5 @@
 use crate::adapters::ai::AiBackend;
-use crate::adapters::backend::{BackendPrRecord, BackendProvider, MergeMethod, PrChecksStatus};
+use crate::adapters::backend::{BackendPrRecord, MergeMethod, PrChecksStatus, VersionControl};
 use crate::adapters::git::{CliGit, GitBackend};
 use crate::adapters::prompts::{DialoguerPrompts, PromptBackend};
 use crate::cli::{
@@ -296,7 +296,7 @@ pub(crate) struct MergeOptions {
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn merge_pr_workflow(
-    provider: &dyn BackendProvider,
+    provider: &dyn VersionControl,
     prompts: &dyn PromptBackend,
     git: &dyn GitBackend,
     backend_kind: Backend,
@@ -420,17 +420,37 @@ pub(crate) fn resolve_hosted_backend<'a>(
         .iter()
         .find(|backend| backend.name == issue.frontmatter.project)
         .ok_or_else(|| RiptskError::Unregistered(issue.frontmatter.project.clone()))?;
-    if !matches!(backend.backend, Backend::Github | Backend::Gitlab) {
-        return Err(RiptskError::Config(format!(
+    match backend.backend {
+        Backend::Github | Backend::Gitlab => Ok(backend),
+        Backend::Jira => {
+            // For Jira, resolve through the vc field
+            let vc_name = backend.vc.as_deref().ok_or_else(|| {
+                RiptskError::Config(format!(
+                    "No version control backend configured for project '{}'. \
+                     Add 'vc: <github-or-gitlab-backend>' to the backend config.",
+                    backend.name
+                ))
+            })?;
+            config
+                .backends
+                .iter()
+                .find(|b| b.name == vc_name)
+                .ok_or_else(|| {
+                    RiptskError::Config(format!(
+                        "vc backend '{}' referenced by '{}' not found",
+                        vc_name, backend.name
+                    ))
+                })
+        }
+        Backend::Local => Err(RiptskError::Config(format!(
             "project {} does not have a hosted backend",
             backend.name
-        )));
+        ))),
     }
-    Ok(backend)
 }
 
 pub(crate) async fn resolve_pr_number(
-    provider: &dyn crate::adapters::backend::BackendProvider,
+    provider: &dyn crate::adapters::backend::VersionControl,
     repo_name: &str,
     issue: &IssueDocument,
 ) -> Result<u64, RiptskError> {
@@ -513,6 +533,7 @@ fn has_local_ci(repo_path: &Path, backend_kind: &Backend) -> bool {
     match backend_kind {
         Backend::Github => has_local_github_ci(repo_path),
         Backend::Gitlab => has_local_gitlab_ci(repo_path),
+        Backend::Jira => false,
         Backend::Local => false,
     }
 }
@@ -550,7 +571,7 @@ fn local_github_workflow_names(repo_path: &Path) -> Vec<String> {
 }
 
 async fn handle_ci_checks(
-    provider: &dyn BackendProvider,
+    provider: &dyn VersionControl,
     prompts: &dyn PromptBackend,
     repo_path: &Path,
     repo_name: &str,
@@ -584,7 +605,7 @@ async fn handle_ci_checks(
 }
 
 async fn wait_for_checks(
-    provider: &dyn BackendProvider,
+    provider: &dyn VersionControl,
     repo: &str,
     pr_number: u64,
     timeout_secs: u64,
@@ -600,7 +621,7 @@ async fn wait_for_checks(
 }
 
 async fn wait_for_checks_inner(
-    provider: &dyn BackendProvider,
+    provider: &dyn VersionControl,
     repo: &str,
     pr_number: u64,
     timeout: Duration,
@@ -662,7 +683,7 @@ async fn wait_for_checks_inner(
 }
 
 async fn wait_for_pr_head_update(
-    provider: &dyn BackendProvider,
+    provider: &dyn VersionControl,
     repo: &str,
     pr_number: u64,
     expected_sha: &str,
@@ -826,8 +847,7 @@ mod tests {
         wait_for_checks_inner, wait_for_pr_head_update,
     };
     use crate::adapters::backend::{
-        BackendIssueRecord, BackendIssueUpsert, BackendPrRecord, BackendProvider, CiPresence,
-        DeleteOutcome, MergeMethod, PrChecksStatus,
+        BackendPrRecord, CiPresence, MergeMethod, PrChecksStatus, VersionControl,
     };
     use crate::adapters::prompts::PromptBackend;
     use crate::error::RiptskError;
@@ -918,74 +938,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl BackendProvider for FakeChecksProvider {
-        async fn list_issues(&self, _repo: &str) -> Result<Vec<BackendIssueRecord>, RiptskError> {
-            unimplemented!()
-        }
-
-        async fn get_issue(
-            &self,
-            _repo: &str,
-            _issue_id: u64,
-        ) -> Result<BackendIssueRecord, RiptskError> {
-            unimplemented!()
-        }
-
-        async fn create_issue(
-            &self,
-            _repo: &str,
-            _issue: &BackendIssueUpsert,
-        ) -> Result<BackendIssueRecord, RiptskError> {
-            unimplemented!()
-        }
-
-        async fn update_issue(
-            &self,
-            _repo: &str,
-            _issue_id: u64,
-            _issue: &BackendIssueUpsert,
-        ) -> Result<BackendIssueRecord, RiptskError> {
-            unimplemented!()
-        }
-
-        async fn close_issue(&self, _repo: &str, _issue_id: u64) -> Result<(), RiptskError> {
-            unimplemented!()
-        }
-
-        async fn reopen_issue(&self, _repo: &str, _issue_id: u64) -> Result<(), RiptskError> {
-            unimplemented!()
-        }
-
-        async fn delete_issue(
-            &self,
-            _repo: &str,
-            _issue_id: u64,
-        ) -> Result<DeleteOutcome, RiptskError> {
-            unimplemented!()
-        }
-
-        async fn lock_issue(
-            &self,
-            _repo: &str,
-            _issue_id: u64,
-            _reason: Option<&str>,
-        ) -> Result<(), RiptskError> {
-            unimplemented!()
-        }
-
-        async fn unlock_issue(&self, _repo: &str, _issue_id: u64) -> Result<(), RiptskError> {
-            unimplemented!()
-        }
-
-        async fn sync_labels(
-            &self,
-            _repo: &str,
-            _issue_id: u64,
-            _labels: &[String],
-        ) -> Result<(), RiptskError> {
-            unimplemented!()
-        }
-
+    impl VersionControl for FakeChecksProvider {
         async fn create_pr(
             &self,
             _repo: &str,

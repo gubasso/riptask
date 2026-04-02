@@ -1,4 +1,4 @@
-use crate::adapters::backend::{BackendIssueRecord, BackendProvider, DeleteOutcome};
+use crate::adapters::backend::{BackendIssueRecord, DeleteOutcome, IssueTracker};
 use crate::adapters::git::{CliGit, GitBackend};
 use crate::config::Config;
 use crate::domain::backend_state::backend_state_key;
@@ -49,7 +49,7 @@ impl<'a> SyncEngine<'a> {
         Self { paths, config }
     }
 
-    pub async fn pull<P: BackendProvider + ?Sized>(
+    pub async fn pull<P: IssueTracker + ?Sized>(
         &self,
         provider: &P,
         backend: &BackendConfig,
@@ -146,6 +146,11 @@ impl<'a> SyncEngine<'a> {
                         Backend::Gitlab => issue.frontmatter.gitlab.as_ref().and_then(|meta| {
                             (meta.repo == repo).then_some(meta.issue_id).flatten()
                         }),
+                        Backend::Jira => issue
+                            .frontmatter
+                            .jira
+                            .as_ref()
+                            .and_then(|meta| meta.issue_id),
                         Backend::Local => None,
                     };
                 let Some(issue_id) = meta else {
@@ -164,7 +169,7 @@ impl<'a> SyncEngine<'a> {
         Ok(summary)
     }
 
-    pub async fn push<P: BackendProvider + ?Sized>(
+    pub async fn push<P: IssueTracker + ?Sized>(
         &self,
         provider: &P,
         backend: &BackendConfig,
@@ -173,7 +178,7 @@ impl<'a> SyncEngine<'a> {
         self.push_inner(provider, backend, &issue_paths, true).await
     }
 
-    pub async fn push_issues<P: BackendProvider + ?Sized>(
+    pub async fn push_issues<P: IssueTracker + ?Sized>(
         &self,
         provider: &P,
         backend: &BackendConfig,
@@ -223,7 +228,7 @@ impl<'a> SyncEngine<'a> {
         Ok(summary)
     }
 
-    async fn push_inner<P: BackendProvider + ?Sized>(
+    async fn push_inner<P: IssueTracker + ?Sized>(
         &self,
         provider: &P,
         backend: &BackendConfig,
@@ -267,6 +272,16 @@ impl<'a> SyncEngine<'a> {
                 let mut record = provider.update_issue(repo, issue_id, &upsert).await?;
                 provider.sync_labels(repo, issue_id, &upsert.labels).await?;
                 sync_lock_state(provider, repo, issue_id, &issue, &record).await?;
+                // Trigger state transitions (close/reopen) if the desired state
+                // differs from what the backend returned.
+                if let Some(ref desired_state) = upsert.state {
+                    let is_closed = record.state.eq_ignore_ascii_case("closed");
+                    if desired_state == "closed" && !is_closed {
+                        provider.close_issue(repo, issue_id).await?;
+                    } else if desired_state == "open" && is_closed {
+                        provider.reopen_issue(repo, issue_id).await?;
+                    }
+                }
                 if let Some(state) = upsert.state.clone() {
                     record.state = state;
                 }
@@ -363,6 +378,11 @@ impl<'a> SyncEngine<'a> {
                     meta.repo == backend.repo.clone().unwrap_or_default()
                         && meta.issue_id == Some(issue_id)
                 }),
+                Backend::Jira => issue
+                    .frontmatter
+                    .jira
+                    .as_ref()
+                    .is_some_and(|meta| meta.issue_id == Some(issue_id)),
                 Backend::Local => false,
             };
             if matches {
@@ -374,7 +394,11 @@ impl<'a> SyncEngine<'a> {
 
     fn backend_for_project(&self, project: &str) -> Option<&BackendConfig> {
         self.config.backends.iter().find(|backend| {
-            backend.name == project && matches!(backend.backend, Backend::Github | Backend::Gitlab)
+            backend.name == project
+                && matches!(
+                    backend.backend,
+                    Backend::Github | Backend::Gitlab | Backend::Jira
+                )
         })
     }
 
@@ -406,7 +430,7 @@ impl<'a> SyncEngine<'a> {
     }
 }
 
-async fn sync_lock_state<P: BackendProvider + ?Sized>(
+async fn sync_lock_state<P: IssueTracker + ?Sized>(
     provider: &P,
     repo: &str,
     issue_id: u64,
@@ -435,6 +459,7 @@ fn provider_name(backend: &BackendConfig) -> &'static str {
     match backend.backend {
         Backend::Github => "github",
         Backend::Gitlab => "gitlab",
+        Backend::Jira => "jira",
         Backend::Local => "local",
     }
 }
@@ -449,6 +474,11 @@ fn issue_backend_issue_id(issue: &IssueDocument, backend: &BackendConfig) -> Opt
         Backend::Gitlab => issue
             .frontmatter
             .gitlab
+            .as_ref()
+            .and_then(|meta| meta.issue_id),
+        Backend::Jira => issue
+            .frontmatter
+            .jira
             .as_ref()
             .and_then(|meta| meta.issue_id),
         Backend::Local => None,
@@ -470,9 +500,7 @@ fn parse_backend_state_key(key: &str) -> Option<(&str, &str, u64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adapters::backend::{
-        BackendIssueUpsert, BackendPrRecord, CiPresence, DeleteOutcome, MergeMethod, PrChecksStatus,
-    };
+    use crate::adapters::backend::{BackendIssueUpsert, DeleteOutcome};
     use crate::config::default_config;
     use crate::domain::issue::{GithubIssueMeta, IssueFrontmatter, IssueState, Priority};
     use async_trait::async_trait;
@@ -497,11 +525,11 @@ mod tests {
     }
 
     #[derive(Clone, Default)]
-    struct FakeBackendProvider {
+    struct FakeIssueTracker {
         state: Arc<Mutex<FakeState>>,
     }
 
-    impl FakeBackendProvider {
+    impl FakeIssueTracker {
         fn with_listed(records: Vec<BackendIssueRecord>) -> Self {
             Self {
                 state: Arc::new(Mutex::new(FakeState {
@@ -537,7 +565,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl BackendProvider for FakeBackendProvider {
+    impl crate::adapters::backend::IssueTracker for FakeIssueTracker {
         async fn list_issues(&self, _repo: &str) -> Result<Vec<BackendIssueRecord>, RiptskError> {
             Ok(self.state.lock().expect("lock").listed.clone())
         }
@@ -646,91 +674,13 @@ mod tests {
             ));
             Ok(())
         }
-
-        async fn create_pr(
-            &self,
-            _repo: &str,
-            _head: &str,
-            _base: &str,
-            _title: &str,
-            _body: &str,
-        ) -> Result<BackendPrRecord, RiptskError> {
-            Err(RiptskError::General("unused in test".into()))
-        }
-
-        async fn get_pr(&self, _repo: &str, _number: u64) -> Result<BackendPrRecord, RiptskError> {
-            Err(RiptskError::General("unused in test".into()))
-        }
-
-        async fn update_pr(
-            &self,
-            _repo: &str,
-            _number: u64,
-            _title: &str,
-            _body: &str,
-        ) -> Result<BackendPrRecord, RiptskError> {
-            Err(RiptskError::General("unused in test".into()))
-        }
-
-        async fn find_pr_by_branch(
-            &self,
-            _repo: &str,
-            _head: &str,
-            _base: &str,
-        ) -> Result<Option<BackendPrRecord>, RiptskError> {
-            Err(RiptskError::General("unused in test".into()))
-        }
-
-        async fn merge_pr(
-            &self,
-            _repo: &str,
-            _number: u64,
-            _method: MergeMethod,
-            _commit_title: Option<&str>,
-            _commit_message: Option<&str>,
-        ) -> Result<(), RiptskError> {
-            Ok(())
-        }
-
-        async fn get_pr_checks_status(
-            &self,
-            _repo: &str,
-            _number: u64,
-        ) -> Result<PrChecksStatus, RiptskError> {
-            Ok(PrChecksStatus::None)
-        }
-
-        async fn get_ci_presence(&self, _repo: &str) -> Result<CiPresence, RiptskError> {
-            Ok(CiPresence {
-                has_remote_ci: false,
-                remote_workflow_names: vec![],
-            })
-        }
-
-        async fn create_branch(
-            &self,
-            _repo: &str,
-            _branch_name: &str,
-            _base_ref: &str,
-            _issue_id: u64,
-        ) -> Result<(), RiptskError> {
-            Err(RiptskError::General("unused in test".into()))
-        }
-
-        async fn default_branch(&self, _repo: &str) -> Result<String, RiptskError> {
-            Err(RiptskError::General("unused in test".into()))
-        }
-
-        async fn delete_branch(&self, _repo: &str, _branch_name: &str) -> Result<(), RiptskError> {
-            Err(RiptskError::General("unused in test".into()))
-        }
     }
 
     #[test]
     fn pull_creates_local_issues_from_remote() {
         let runtime = runtime();
         let (paths, config, backend) = test_context();
-        let provider = FakeBackendProvider::with_listed(vec![record(
+        let provider = FakeIssueTracker::with_listed(vec![record(
             42,
             "Remote issue",
             "open",
@@ -764,7 +714,7 @@ mod tests {
         save_issue(&paths, &document);
         seed_backend_state(&paths, &backend, &original);
 
-        let provider = FakeBackendProvider::with_listed(vec![record(
+        let provider = FakeIssueTracker::with_listed(vec![record(
             42,
             "New title",
             "open",
@@ -793,7 +743,7 @@ mod tests {
         save_issue(&paths, &document);
         seed_backend_state(&paths, &backend, &original);
 
-        let provider = FakeBackendProvider::with_listed(vec![record(
+        let provider = FakeIssueTracker::with_listed(vec![record(
             42,
             "Remote title",
             "open",
@@ -827,7 +777,7 @@ mod tests {
         document.frontmatter.id_slug = None;
         save_issue(&paths, &document);
 
-        let provider = FakeBackendProvider::with_listed(vec![record(
+        let provider = FakeIssueTracker::with_listed(vec![record(
             42,
             "Remote issue",
             "closed",
@@ -860,7 +810,7 @@ mod tests {
         document.frontmatter.id_slug = None;
         save_issue(&paths, &document);
 
-        let provider = FakeBackendProvider::with_listed(vec![record(
+        let provider = FakeIssueTracker::with_listed(vec![record(
             42,
             "Remote issue",
             "closed",
@@ -903,7 +853,7 @@ mod tests {
         document.frontmatter.id_slug = None;
         save_issue(&paths, &document);
 
-        let provider = FakeBackendProvider::with_listed(vec![record(
+        let provider = FakeIssueTracker::with_listed(vec![record(
             42,
             "Remote issue",
             "open",
@@ -955,7 +905,7 @@ mod tests {
         save_issue(&paths, &document);
 
         // Remote auto-closed after the get_issue check
-        let provider = FakeBackendProvider::with_listed(vec![record(
+        let provider = FakeIssueTracker::with_listed(vec![record(
             42,
             "Remote issue",
             "closed",
@@ -990,7 +940,7 @@ mod tests {
         save_issue(&paths, &document);
         seed_backend_state(&paths, &backend, &original);
 
-        let provider = FakeBackendProvider::default().with_update_response(
+        let provider = FakeIssueTracker::default().with_update_response(
             42,
             record(42, "Remote issue", "open", "2026-03-20T12:30:00Z"),
         );
@@ -1063,7 +1013,7 @@ mod tests {
         save_issue(&paths, &document);
         seed_backend_state(&paths, &backend, &original);
 
-        let provider = FakeBackendProvider::with_listed(vec![record(
+        let provider = FakeIssueTracker::with_listed(vec![record(
             42,
             "New title",
             "open",
@@ -1091,7 +1041,7 @@ mod tests {
         save_remote_issue(&paths, "GH-OWN-REP--42");
         seed_backend_state(&paths, &backend, &original);
 
-        let provider = FakeBackendProvider::with_listed(Vec::new());
+        let provider = FakeIssueTracker::with_listed(Vec::new());
         let engine = SyncEngine::new(&paths, &config);
 
         let summary = runtime
@@ -1110,7 +1060,7 @@ mod tests {
         let (paths, config, backend) = test_context();
         let key = backend_state_key("github", "owner/repo", 42);
         cache::mark_deleted(&paths, &key).expect("mark deleted");
-        let provider = FakeBackendProvider::with_listed(vec![record(
+        let provider = FakeIssueTracker::with_listed(vec![record(
             42,
             "Remote issue",
             "open",
@@ -1137,7 +1087,7 @@ mod tests {
         save_issue(&paths, &document);
         seed_backend_state(&paths, &backend, &original);
 
-        let provider = FakeBackendProvider::default().with_update_response(
+        let provider = FakeIssueTracker::default().with_update_response(
             42,
             record(42, "Local title", "open", "2026-03-20T12:30:00Z"),
         );
@@ -1158,7 +1108,7 @@ mod tests {
         let document = local_issue("LO-LOC--1", &backend.name, "Local only");
         save_issue(&paths, &document);
 
-        let provider = FakeBackendProvider::default().with_create_response(record(
+        let provider = FakeIssueTracker::default().with_create_response(record(
             9,
             "Local only",
             "open",
@@ -1196,7 +1146,7 @@ mod tests {
         );
         cache::save_backend_state(&paths, &state).expect("save state");
 
-        let provider = FakeBackendProvider::default();
+        let provider = FakeIssueTracker::default();
         let engine = SyncEngine::new(&paths, &config);
 
         let summary = runtime
@@ -1226,8 +1176,7 @@ mod tests {
         );
         cache::save_backend_state(&paths, &state).expect("save state");
 
-        let provider =
-            FakeBackendProvider::default().with_delete_outcome(DeleteOutcome::SoftClosed);
+        let provider = FakeIssueTracker::default().with_delete_outcome(DeleteOutcome::SoftClosed);
         let engine = SyncEngine::new(&paths, &config);
 
         let summary = runtime
@@ -1245,7 +1194,7 @@ mod tests {
         let (paths, config, backend) = test_context();
         save_conflicted_issue(&paths, "LO-LOC--1");
 
-        let provider = FakeBackendProvider::default();
+        let provider = FakeIssueTracker::default();
         let engine = SyncEngine::new(&paths, &config);
 
         let summary = runtime
@@ -1268,7 +1217,7 @@ mod tests {
         save_issue(&paths, &document);
         seed_backend_state(&paths, &backend, &original);
 
-        let provider = FakeBackendProvider::default().with_update_response(
+        let provider = FakeIssueTracker::default().with_update_response(
             42,
             record(42, "Remote issue", "open", "2026-03-20T12:30:00Z"),
         );
@@ -1299,7 +1248,7 @@ mod tests {
 
         let mut update_response = record(42, "Remote issue", "open", "2026-03-20T12:30:00Z");
         update_response.locked = Some(true);
-        let provider = FakeBackendProvider::default().with_update_response(42, update_response);
+        let provider = FakeIssueTracker::default().with_update_response(42, update_response);
         let engine = SyncEngine::new(&paths, &config);
 
         let summary = runtime
@@ -1363,6 +1312,7 @@ mod tests {
             default_board: Some("personal".into()),
             default_org: None,
             path: None,
+            vc: None,
         };
         let mut config = default_config();
         config.backends = vec![backend.clone()];
@@ -1413,6 +1363,7 @@ mod tests {
                 order: Some(1),
                 gitlab: None,
                 github: None,
+                jira: None,
                 local_updated_at: "2026-03-20T12:00:00Z".into(),
                 due: None,
                 weight: None,
@@ -1517,6 +1468,7 @@ mod tests {
                     updated_at: "2026-03-20T10:00:00Z".into(),
                     last_pushed_state: Some(IssueState::Todo),
                 }),
+                jira: None,
                 local_updated_at: "2026-03-20T10:00:00Z".into(),
                 due: None,
                 weight: None,

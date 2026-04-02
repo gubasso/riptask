@@ -8,11 +8,12 @@ pub fn derive_scope(backend: &Backend, repo: Option<&str>, name: &str) -> String
     let server = match backend {
         Backend::Github => "GH",
         Backend::Gitlab => "GL",
+        Backend::Jira => "JR",
         Backend::Local => "LO",
     };
 
     let (parent, project) = match backend {
-        Backend::Github | Backend::Gitlab => {
+        Backend::Github | Backend::Gitlab | Backend::Jira => {
             let repo_str = repo.unwrap_or(name);
             let owner = repo_str.split('/').next().unwrap_or(name);
             let project_name = repo_str.rsplit('/').next().unwrap_or(name);

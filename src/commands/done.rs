@@ -8,6 +8,7 @@ use crate::commands::{pr, sync_cmd};
 use crate::config::load_config;
 use crate::domain::issue::IssueState;
 use crate::error::RiptskError;
+use crate::models::Backend;
 use crate::paths::AppPaths;
 use crate::services::auto_commit::maybe_auto_commit;
 use crate::services::backend_mapping::{
@@ -40,13 +41,58 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
         }
     };
     let issue_path = issue_store::find_issue(paths, &id)?;
-    let mut issue =
+    let issue =
         crate::commands::issues::load_issue_or_conflict_error(issue_path.as_std_path(), &id)?;
-    let branch_name = issue
-        .frontmatter
-        .branch
-        .clone()
-        .ok_or_else(|| RiptskError::General("issue has no associated branch".into()))?;
+
+    // Check if this is a Jira-only (no VC) project
+    let issue_backend = config
+        .backends
+        .iter()
+        .find(|b| b.name == issue.frontmatter.project)
+        .ok_or_else(|| RiptskError::Unregistered(issue.frontmatter.project.clone()))?;
+
+    let has_vc = match issue_backend.backend {
+        Backend::Github | Backend::Gitlab => true,
+        Backend::Jira => issue_backend.vc.is_some(),
+        Backend::Local => false,
+    };
+
+    if !has_vc || issue.frontmatter.branch.is_none() {
+        // Issue-only workflow: just mark done locally and sync
+        crate::ui::info("No version control backend configured — skipping PR merge.");
+        let mut issue =
+            frontmatter::load_issue(issue_path.as_std_path()).map_err(RiptskError::Other)?;
+        issue.frontmatter.status = IssueState::Done;
+        issue.frontmatter.local_updated_at = now_utc();
+        issue.frontmatter.branch = None;
+        issue.frontmatter.id_slug = None;
+        frontmatter::save_issue(issue_path.as_std_path(), &issue).map_err(RiptskError::Other)?;
+        maybe_auto_commit(
+            &config,
+            &CliGit::new(),
+            paths.riptsk_repo.as_std_path(),
+            &format!(
+                "riptsk: done {} - {}",
+                issue.frontmatter.id, issue.frontmatter.title
+            ),
+            &[issue_path.as_std_path()],
+        )?;
+        sync_cmd::run(
+            paths,
+            SyncArgs {
+                force_pull_ids: vec![id.clone()],
+                ..SyncArgs::default()
+            },
+        )
+        .await?;
+        ViewBuilder::new(paths, &config)
+            .regenerate_all(None)
+            .map_err(RiptskError::Other)?;
+        return Ok(());
+    }
+
+    // Full VC workflow: merge PR, delete branch, close issue
+    let branch_name = issue.frontmatter.branch.clone().unwrap();
     let backend = pr::resolve_hosted_backend(&config, &issue)?;
     let provider = build_provider_for_backend(backend)?;
     let repo_name = backend.repo.as_deref().unwrap_or_default();
@@ -104,8 +150,6 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
     }
 
     if git.branch_exists(repo_dir.as_path(), &branch_name)? {
-        // Force-delete because squash/rebase merges leave the branch tip
-        // unreachable from HEAD, which causes `git branch -d` to fail.
         match git.delete_local_branch(repo_dir.as_path(), &branch_name, true) {
             Ok(()) => crate::ui::success(&format!("deleted local branch: {branch_name}")),
             Err(error) => crate::ui::warn(&format!(
@@ -114,6 +158,8 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
         }
     }
 
+    let mut issue =
+        crate::commands::issues::load_issue_or_conflict_error(issue_path.as_std_path(), &id)?;
     issue.frontmatter.branch = None;
     issue.frontmatter.id_slug = None;
     frontmatter::save_issue(issue_path.as_std_path(), &issue).map_err(RiptskError::Other)?;
@@ -127,7 +173,6 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
         cache::seed_backend_state_entry(paths, backend.backend.as_str(), repo_name, record)
             .map_err(RiptskError::Other)?;
     } else {
-        // Mark done locally so the subsequent push closes it on the remote.
         let mut issue =
             frontmatter::load_issue(issue_path.as_std_path()).map_err(RiptskError::Other)?;
         issue.frontmatter.status = IssueState::Done;
@@ -146,8 +191,6 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
         ),
         &[issue_path.as_std_path()],
     )?;
-    // Force-pull the done'd issue during sync to prevent false conflicts from
-    // delayed auto-close webhooks on GitHub.
     sync_cmd::run(
         paths,
         SyncArgs {

@@ -1,8 +1,12 @@
-use crate::adapters::backend::{BackendIssueRecord, BackendIssueUpsert, BackendProvider};
+use crate::adapters::backend::{
+    BackendIssueRecord, BackendIssueUpsert, BackendProvider, IssueTracker, VersionControl,
+};
 use crate::adapters::github::GithubProvider;
 use crate::adapters::gitlab::GitlabProvider;
+use crate::config::Config;
 use crate::domain::issue::{
-    GithubIssueMeta, GitlabIssueMeta, IssueDocument, IssueFrontmatter, IssueState, Priority,
+    GithubIssueMeta, GitlabIssueMeta, IssueDocument, IssueFrontmatter, IssueState, JiraIssueMeta,
+    Priority,
 };
 use crate::error::RiptskError;
 use crate::models::{Backend, BackendConfig};
@@ -10,6 +14,7 @@ use crate::services::issue_ids;
 use crate::services::issue_service::{generate_slug, now_utc};
 use std::process::Command;
 
+#[derive(Debug)]
 enum CredentialSource {
     EnvVar(&'static str),
     CliTool(&'static str),
@@ -56,10 +61,140 @@ pub fn build_provider_for_backend(
             ));
             Ok(Box::new(GitlabProvider::new(&host, &token)?))
         }
+        Backend::Jira => Err(RiptskError::Config(
+            "Jira backend uses build_issue_tracker() — see resolve_vc_for_backend()".into(),
+        )),
         Backend::Local => Err(RiptskError::Config(format!(
             "backend {} is local-only",
             backend.name
         ))),
+    }
+}
+
+/// Build an issue tracker for a backend config.
+/// Works for Github, Gitlab, Jira. Errors for Local.
+pub fn build_issue_tracker(backend: &BackendConfig) -> Result<Box<dyn IssueTracker>, RiptskError> {
+    match backend.backend {
+        Backend::Github => {
+            let (token, source) = resolve_github_token(&backend.name)?;
+            crate::ui::info(&format!(
+                "auth: github backend '{}' using {}",
+                backend.name, source
+            ));
+            Ok(Box::new(GithubProvider::new(&token)?))
+        }
+        Backend::Gitlab => {
+            let host = backend
+                .host
+                .as_deref()
+                .unwrap_or("https://gitlab.com")
+                .trim_start_matches("https://")
+                .trim_start_matches("http://")
+                .to_owned();
+            let (token, source) = resolve_gitlab_token(&backend.name, &host)?;
+            crate::ui::info(&format!(
+                "auth: gitlab backend '{}' using {}",
+                backend.name, source
+            ));
+            Ok(Box::new(GitlabProvider::new(&host, &token)?))
+        }
+        Backend::Jira => {
+            let host = backend
+                .host
+                .as_deref()
+                .ok_or_else(|| RiptskError::Config("Jira backend requires 'host'".into()))?;
+            let (auth, source) = resolve_jira_credentials(&backend.name, host)?;
+            crate::ui::info(&format!(
+                "auth: jira backend '{}' using {}",
+                backend.name, source
+            ));
+            Ok(Box::new(crate::adapters::jira::JiraProvider::new(
+                host, auth,
+            )?))
+        }
+        Backend::Local => Err(RiptskError::Config(format!(
+            "backend {} is local-only",
+            backend.name
+        ))),
+    }
+}
+
+/// Build a version control provider for a backend config.
+/// Works for Github, Gitlab. Errors for Local.
+pub fn build_version_control(
+    backend: &BackendConfig,
+) -> Result<Box<dyn VersionControl>, RiptskError> {
+    match backend.backend {
+        Backend::Github => {
+            let (token, source) = resolve_github_token(&backend.name)?;
+            crate::ui::info(&format!(
+                "auth: github backend '{}' using {}",
+                backend.name, source
+            ));
+            Ok(Box::new(GithubProvider::new(&token)?))
+        }
+        Backend::Gitlab => {
+            let host = backend
+                .host
+                .as_deref()
+                .unwrap_or("https://gitlab.com")
+                .trim_start_matches("https://")
+                .trim_start_matches("http://")
+                .to_owned();
+            let (token, source) = resolve_gitlab_token(&backend.name, &host)?;
+            crate::ui::info(&format!(
+                "auth: gitlab backend '{}' using {}",
+                backend.name, source
+            ));
+            Ok(Box::new(GitlabProvider::new(&host, &token)?))
+        }
+        Backend::Jira => Err(RiptskError::Config(
+            "Jira is an issue tracker — use the 'vc' config field to link a GitHub/GitLab backend for PRs and branches".into(),
+        )),
+        Backend::Local => Err(RiptskError::Config(format!(
+            "backend {} is local-only — no version control",
+            backend.name
+        ))),
+    }
+}
+
+pub type VcResolution<'a> = Option<(Box<dyn VersionControl>, &'a BackendConfig)>;
+
+/// Resolve the VC provider for a given issue backend.
+/// If backend has `vc` field, look up that backend and build its VC provider.
+/// If backend itself supports VC (Github/Gitlab), use itself.
+/// If neither, return None (issue-only project).
+pub fn resolve_vc_for_backend<'a>(
+    backend: &'a BackendConfig,
+    config: &'a Config,
+) -> Result<VcResolution<'a>, RiptskError> {
+    if let Some(vc_name) = &backend.vc {
+        let vc_backend = config
+            .backends
+            .iter()
+            .find(|b| &b.name == vc_name)
+            .ok_or_else(|| {
+                RiptskError::Config(format!(
+                    "backend '{}' references vc '{}' which does not exist",
+                    backend.name, vc_name
+                ))
+            })?;
+        if !matches!(vc_backend.backend, Backend::Github | Backend::Gitlab) {
+            return Err(RiptskError::Config(format!(
+                "vc '{}' must be a github or gitlab backend",
+                vc_name
+            )));
+        }
+        let provider = build_version_control(vc_backend)?;
+        return Ok(Some((provider, vc_backend)));
+    }
+    // If backend itself supports VC (Github/Gitlab), use itself
+    match backend.backend {
+        Backend::Github | Backend::Gitlab => {
+            let provider = build_version_control(backend)?;
+            Ok(Some((provider, backend)))
+        }
+        _ => Ok(None),
     }
 }
 
@@ -83,6 +218,7 @@ pub fn resolve_git_auth(backend: &BackendConfig) -> Option<GitHttpAuth> {
                 token,
             })
         }
+        Backend::Jira => None,
         Backend::Local => None,
     }
 }
@@ -163,6 +299,25 @@ pub fn backend_to_local(record: &BackendIssueRecord, backend: &BackendConfig) ->
                     url: Some(record.url.clone()),
                     updated_at: record.updated_at.clone(),
                     last_pushed_state: Some(state.clone()),
+                })
+            } else {
+                None
+            },
+            jira: if backend.backend == Backend::Jira {
+                let issue_key = extract_jira_key_from_url(&record.url);
+                Some(JiraIssueMeta {
+                    project_key: crate::adapters::jira::JiraProvider::project_key(
+                        backend.repo.as_deref().unwrap_or_default(),
+                    )
+                    .to_owned(),
+                    issue_key,
+                    issue_id: Some(record.issue_id),
+                    url: Some(record.url.clone()),
+                    updated_at: record.updated_at.clone(),
+                    last_pushed_state: Some(state.clone()),
+                    issue_type: record.issue_type.clone(),
+                    assignee_account_id: None,
+                    assignee_name: None,
                 })
             } else {
                 None
@@ -253,6 +408,23 @@ pub fn update_issue_from_backend(
                 url: Some(record.url.clone()),
                 updated_at: record.updated_at.clone(),
                 last_pushed_state: Some(state),
+            });
+        }
+        Backend::Jira => {
+            let issue_key = extract_jira_key_from_url(&record.url);
+            issue.frontmatter.jira = Some(JiraIssueMeta {
+                project_key: crate::adapters::jira::JiraProvider::project_key(
+                    backend.repo.as_deref().unwrap_or_default(),
+                )
+                .to_owned(),
+                issue_key,
+                issue_id: Some(record.issue_id),
+                url: Some(record.url.clone()),
+                updated_at: record.updated_at.clone(),
+                last_pushed_state: Some(state),
+                issue_type: record.issue_type.clone(),
+                assignee_account_id: None,
+                assignee_name: None,
             });
         }
         Backend::Local => {}
@@ -408,6 +580,99 @@ To fix, do one of:\n\
     }
 }
 
+fn resolve_jira_credentials(
+    backend_name: &str,
+    host: &str,
+) -> Result<(crate::adapters::jira::JiraAuth, CredentialSource), RiptskError> {
+    use crate::adapters::jira::JiraAuth;
+
+    // 1. Check JIRA_API_TOKEN + JIRA_EMAIL (Cloud basic auth)
+    if let Some(token) = non_empty_env("JIRA_API_TOKEN") {
+        if let Some(email) = non_empty_env("JIRA_EMAIL") {
+            return Ok((
+                JiraAuth::Basic { email, token },
+                CredentialSource::EnvVar("JIRA_API_TOKEN+JIRA_EMAIL"),
+            ));
+        }
+        // Token without email = PAT auth (Server/DC)
+        return Ok((
+            JiraAuth::Pat(token),
+            CredentialSource::EnvVar("JIRA_API_TOKEN"),
+        ));
+    }
+
+    // 2. Try jira-cli-go config + system keychain
+    match run_jira_cli_go_auth(host) {
+        Ok((email, token)) => {
+            return Ok((
+                JiraAuth::Basic { email, token },
+                CredentialSource::CliTool("jira-cli-go keychain"),
+            ));
+        }
+        Err(_reason) => {}
+    }
+
+    // 3. All failed
+    Err(RiptskError::Auth(format!(
+        "Jira authentication failed for backend '{backend_name}' (host: {host})\n\n\
+Tried: JIRA_API_TOKEN, jira-cli-go keychain\n\n\
+To fix, do one of:\n\
+  • export JIRA_API_TOKEN=<token> JIRA_EMAIL=<email>\n\
+  • brew install ankitpokhrel/jira-cli/jira-cli && jira init"
+    )))
+}
+
+fn run_jira_cli_go_auth(host: &str) -> Result<(String, String), String> {
+    // Parse ~/.config/.jira/.config.yml
+    let config_path = dirs_jira_cli_config();
+    let content = std::fs::read_to_string(&config_path)
+        .map_err(|e| format!("cannot read jira-cli config at {config_path}: {e}"))?;
+
+    #[derive(serde::Deserialize)]
+    struct JiraCliGoConfig {
+        server: Option<String>,
+        login: Option<String>,
+    }
+
+    let config: JiraCliGoConfig =
+        serde_yaml_ng::from_str(&content).map_err(|e| format!("invalid jira-cli config: {e}"))?;
+
+    let server = config
+        .server
+        .ok_or_else(|| "jira-cli config missing 'server' field".to_string())?;
+    let login = config
+        .login
+        .ok_or_else(|| "jira-cli config missing 'login' field".to_string())?;
+
+    // Validate the server matches the expected host
+    let server_trimmed = server.trim_end_matches('/');
+    let host_trimmed = host.trim_end_matches('/');
+    if !server_trimmed.eq_ignore_ascii_case(host_trimmed) {
+        return Err(format!(
+            "jira-cli config server '{server}' does not match expected host '{host}'"
+        ));
+    }
+
+    // Read API token from system keychain
+    let entry =
+        keyring::Entry::new("jira-cli", &login).map_err(|e| format!("keyring error: {e}"))?;
+    let token = entry
+        .get_password()
+        .map_err(|e| format!("cannot read jira-cli token from keychain: {e}"))?;
+
+    Ok((login, token))
+}
+
+fn dirs_jira_cli_config() -> String {
+    if let Ok(config_dir) = std::env::var("XDG_CONFIG_HOME") {
+        return format!("{config_dir}/.jira/.config.yml");
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        return format!("{home}/.config/.jira/.config.yml");
+    }
+    "~/.config/.jira/.config.yml".into()
+}
+
 fn state_from_backend(record: &BackendIssueRecord) -> IssueState {
     if record.state.eq_ignore_ascii_case("closed") || record.state.eq_ignore_ascii_case("done") {
         return IssueState::Done;
@@ -440,6 +705,11 @@ fn sanitize_state_reason(state: &str, reason: Option<&str>) -> Option<String> {
         _ => true,
     };
     if valid { Some(reason.to_owned()) } else { None }
+}
+
+/// Extract the Jira issue key from a browse URL like `https://host/browse/PROJ-123`.
+fn extract_jira_key_from_url(url: &str) -> Option<String> {
+    url.rsplit('/').next().map(|s| s.to_owned())
 }
 
 fn labels_without_status(labels: &[String]) -> Vec<String> {
@@ -586,6 +856,7 @@ mod tests {
             default_board: None,
             default_org: None,
             path: None,
+            vc: None,
         };
 
         assert!(resolve_git_auth(&backend).is_none());
@@ -644,6 +915,7 @@ mod tests {
             order: Some(7),
             gitlab: None,
             github: None,
+            jira: None,
             local_updated_at: "2026-03-20T10:00:00Z".into(),
             due: None,
             weight: None,
@@ -706,5 +978,166 @@ mod tests {
     #[test]
     fn sanitize_state_reason_passes_through_none() {
         assert_eq!(sanitize_state_reason("closed", None), None);
+    }
+
+    #[test]
+    fn resolve_git_auth_returns_none_for_jira_backend() {
+        let backend = BackendConfig {
+            name: "jira-test".into(),
+            backend: Backend::Jira,
+            host: Some("https://test.atlassian.net".into()),
+            repo: Some("org/PROJ".into()),
+            default_board: None,
+            default_org: None,
+            path: None,
+            vc: None,
+        };
+
+        assert!(resolve_git_auth(&backend).is_none());
+    }
+
+    #[test]
+    fn resolve_jira_credentials_with_env_vars() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+        let _token = EnvGuard::set("JIRA_API_TOKEN", "test-token");
+        let _email = EnvGuard::set("JIRA_EMAIL", "test@example.com");
+
+        let result = super::resolve_jira_credentials("test-backend", "https://test.atlassian.net");
+        assert!(result.is_ok());
+        let (auth, source) = result.unwrap();
+        match auth {
+            crate::adapters::jira::JiraAuth::Basic { email, token } => {
+                assert_eq!(email, "test@example.com");
+                assert_eq!(token, "test-token");
+            }
+            _ => panic!("expected Basic auth"),
+        }
+        assert_eq!(source.to_string(), "JIRA_API_TOKEN+JIRA_EMAIL");
+    }
+
+    #[test]
+    fn resolve_jira_credentials_pat_without_email() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+        let _token = EnvGuard::set("JIRA_API_TOKEN", "pat-token");
+        let _email = EnvGuard::unset("JIRA_EMAIL");
+
+        let result = super::resolve_jira_credentials("test-backend", "https://test.atlassian.net");
+        assert!(result.is_ok());
+        let (auth, source) = result.unwrap();
+        match auth {
+            crate::adapters::jira::JiraAuth::Pat(token) => {
+                assert_eq!(token, "pat-token");
+            }
+            _ => panic!("expected PAT auth"),
+        }
+        assert_eq!(source.to_string(), "JIRA_API_TOKEN");
+    }
+
+    #[test]
+    fn resolve_jira_credentials_fails_without_any() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+        let _token = EnvGuard::unset("JIRA_API_TOKEN");
+        let _email = EnvGuard::unset("JIRA_EMAIL");
+
+        let result = super::resolve_jira_credentials("test-backend", "https://test.atlassian.net");
+        assert!(result.is_err());
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains("Jira authentication failed"));
+        assert!(error.contains("JIRA_API_TOKEN"));
+    }
+
+    #[test]
+    fn resolve_vc_for_jira_without_vc_returns_none() {
+        let backend = BackendConfig {
+            name: "jira-test".into(),
+            backend: Backend::Jira,
+            host: Some("https://test.atlassian.net".into()),
+            repo: Some("org/PROJ".into()),
+            default_board: None,
+            default_org: None,
+            path: None,
+            vc: None,
+        };
+        let config = crate::config::Config {
+            backends: vec![backend.clone()],
+            ..crate::config::default_config()
+        };
+
+        let result = super::resolve_vc_for_backend(&backend, &config);
+        // Will fail at auth (no credentials), but that's expected in tests.
+        // The important thing is the logic path.
+        // For a test with no credentials available, the resolve will error.
+        // Let's just test the None case with a Jira backend that has no vc field.
+        // resolve_vc_for_backend checks backend.vc first, then falls through to
+        // backend.backend match. For Jira, the _ arm returns None.
+        // But it calls build_version_control first for Github/Gitlab...
+        // Actually for Jira without vc, it hits the _ => Ok(None) arm directly.
+        // No credential resolution happens.
+        match result {
+            Ok(None) => {} // Expected: Jira without vc returns None
+            Ok(Some(_)) => panic!("expected None for Jira without vc"),
+            Err(e) => panic!("unexpected error: {e}"),
+        }
+    }
+
+    #[test]
+    fn resolve_vc_with_invalid_reference_errors() {
+        let backend = BackendConfig {
+            name: "jira-test".into(),
+            backend: Backend::Jira,
+            host: Some("https://test.atlassian.net".into()),
+            repo: Some("org/PROJ".into()),
+            default_board: None,
+            default_org: None,
+            path: None,
+            vc: Some("nonexistent".into()),
+        };
+        let config = crate::config::Config {
+            backends: vec![backend.clone()],
+            ..crate::config::default_config()
+        };
+
+        let result = super::resolve_vc_for_backend(&backend, &config);
+        match result {
+            Err(e) => assert!(e.to_string().contains("does not exist"), "got: {e}"),
+            Ok(_) => panic!("expected error for nonexistent vc reference"),
+        }
+    }
+
+    #[test]
+    fn resolve_vc_rejects_jira_as_vc_target() {
+        let jira_backend = BackendConfig {
+            name: "jira-issues".into(),
+            backend: Backend::Jira,
+            host: Some("https://test.atlassian.net".into()),
+            repo: Some("org/PROJ".into()),
+            default_board: None,
+            default_org: None,
+            path: None,
+            vc: Some("jira-other".into()),
+        };
+        let jira_other = BackendConfig {
+            name: "jira-other".into(),
+            backend: Backend::Jira,
+            host: Some("https://other.atlassian.net".into()),
+            repo: Some("org/OTHER".into()),
+            default_board: None,
+            default_org: None,
+            path: None,
+            vc: None,
+        };
+        let config = crate::config::Config {
+            backends: vec![jira_backend.clone(), jira_other],
+            ..crate::config::default_config()
+        };
+
+        let result = super::resolve_vc_for_backend(&jira_backend, &config);
+        match result {
+            Err(e) => assert!(
+                e.to_string().contains("must be a github or gitlab backend"),
+                "got: {e}"
+            ),
+            Ok(_) => panic!("expected error for Jira as vc target"),
+        }
     }
 }
