@@ -106,7 +106,7 @@ pub fn generate_issue_content(
 }
 
 fn backend(config: &crate::config::Config) -> Result<TemplateAiBackend, RiptskError> {
-    optional_backend(config).ok_or_else(|| RiptskError::General(AI_BACKEND_MISSING.into()))
+    optional_backend(config).ok_or_else(|| RiptskError::Config(AI_BACKEND_MISSING.into()))
 }
 
 pub(crate) fn optional_backend(config: &crate::config::Config) -> Option<TemplateAiBackend> {

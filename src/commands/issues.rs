@@ -295,7 +295,9 @@ pub(crate) async fn create_issue_from_args(
                 generated_body = Some(generated.body);
             }
             Err(error) => {
-                crate::ui::warn(&format!("AI issue generation failed: {error}"));
+                crate::ui::warn(&format!(
+                    "AI issue generation failed, falling back to manual input\n{error}"
+                ));
             }
         }
     }
@@ -313,7 +315,9 @@ pub(crate) async fn create_issue_from_args(
             match crate::commands::ai::generate_body(paths, &draft.title, &draft.project) {
                 Ok(body) => body,
                 Err(error) => {
-                    crate::ui::warn(&format!("AI body generation failed: {error}"));
+                    crate::ui::warn(&format!(
+                        "AI body generation failed, using template body\n{error}"
+                    ));
                     draft.body.clone()
                 }
             }
