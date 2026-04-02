@@ -55,6 +55,7 @@ impl<'a> SyncEngine<'a> {
         backend: &BackendConfig,
         force: bool,
         filter_ids: Option<&HashSet<String>>,
+        force_ids: Option<&HashSet<String>>,
     ) -> Result<PullSummary, RiptskError> {
         let repo = backend.repo.as_deref().ok_or_else(|| {
             RiptskError::Config(format!("backend {} is missing repo", backend.name))
@@ -100,7 +101,11 @@ impl<'a> SyncEngine<'a> {
                     .as_ref()
                     .is_none_or(|entry| record.updated_at > entry.updated_at);
 
-                if !force && self.config.sync.conflict_detection && local_changed && remote_changed
+                let force_this = force || force_ids.is_some_and(|ids| ids.contains(&record_id));
+                if !force_this
+                    && self.config.sync.conflict_detection
+                    && local_changed
+                    && remote_changed
                 {
                     self.write_conflict(backend, &record, &issue, &path)?;
                     summary.conflicts.push(issue.frontmatter.id.clone());
@@ -471,7 +476,7 @@ mod tests {
     use crate::config::default_config;
     use crate::domain::issue::{GithubIssueMeta, IssueFrontmatter, IssueState, Priority};
     use async_trait::async_trait;
-    use std::collections::{HashMap, VecDeque};
+    use std::collections::{HashMap, HashSet, VecDeque};
     use std::sync::{Arc, Mutex};
     use tempfile::tempdir;
 
@@ -734,7 +739,7 @@ mod tests {
         let engine = SyncEngine::new(&paths, &config);
 
         let summary = runtime
-            .block_on(engine.pull(&provider, &backend, false, None))
+            .block_on(engine.pull(&provider, &backend, false, None, None))
             .expect("pull");
 
         assert_eq!(summary.created, vec!["GH-OWN-REP--42"]);
@@ -768,7 +773,7 @@ mod tests {
         let engine = SyncEngine::new(&paths, &config);
 
         let summary = runtime
-            .block_on(engine.pull(&provider, &backend, false, None))
+            .block_on(engine.pull(&provider, &backend, false, None, None))
             .expect("pull");
 
         assert_eq!(summary.updated, vec!["GH-OWN-REP--42"]);
@@ -797,7 +802,7 @@ mod tests {
         let engine = SyncEngine::new(&paths, &config);
 
         let summary = runtime
-            .block_on(engine.pull(&provider, &backend, false, None))
+            .block_on(engine.pull(&provider, &backend, false, None, None))
             .expect("pull");
 
         assert_eq!(summary.conflicts, vec!["GH-OWN-REP--42"]);
@@ -831,7 +836,7 @@ mod tests {
         let engine = SyncEngine::new(&paths, &config);
 
         let summary = runtime
-            .block_on(engine.pull(&provider, &backend, false, None))
+            .block_on(engine.pull(&provider, &backend, false, None, None))
             .expect("pull");
 
         assert_eq!(summary.updated, vec!["GH-OWN-REP--42"]);
@@ -839,6 +844,138 @@ mod tests {
         let saved = load_issue(&paths, "GH-OWN-REP--42");
         assert_eq!(saved.frontmatter.status, IssueState::Done);
         assert_eq!(saved.frontmatter.branch, None);
+    }
+
+    #[test]
+    fn force_pull_after_done_prevents_conflict_when_auto_closed() {
+        let runtime = runtime();
+        let (paths, config, backend) = test_context();
+        let original = record(42, "Remote issue", "open", "2026-03-20T10:00:00Z");
+        let mut document = backend_to_local(&original, &backend);
+        document.frontmatter.branch = Some("feature/42".into());
+        save_issue(&paths, &document);
+        seed_backend_state(&paths, &backend, &original);
+
+        document.frontmatter.branch = None;
+        document.frontmatter.id_slug = None;
+        save_issue(&paths, &document);
+
+        let provider = FakeBackendProvider::with_listed(vec![record(
+            42,
+            "Remote issue",
+            "closed",
+            "2026-03-20T12:00:00Z",
+        )]);
+        let engine = SyncEngine::new(&paths, &config);
+        let mut force_ids = HashSet::new();
+        force_ids.insert("GH-OWN-REP--42".to_string());
+
+        let summary = runtime
+            .block_on(engine.pull(&provider, &backend, true, Some(&force_ids), None))
+            .expect("force pull");
+
+        assert_eq!(summary.updated, vec!["GH-OWN-REP--42"]);
+        assert!(summary.conflicts.is_empty());
+        assert_eq!(
+            load_issue(&paths, "GH-OWN-REP--42").frontmatter.status,
+            IssueState::Done
+        );
+
+        let summary = runtime
+            .block_on(engine.pull(&provider, &backend, false, None, None))
+            .expect("normal pull");
+
+        assert!(summary.updated.is_empty());
+        assert!(summary.conflicts.is_empty());
+    }
+
+    #[test]
+    fn force_pull_after_done_no_conflict_when_remote_still_open() {
+        let runtime = runtime();
+        let (paths, config, backend) = test_context();
+        let original = record(42, "Remote issue", "open", "2026-03-20T10:00:00Z");
+        let mut document = backend_to_local(&original, &backend);
+        document.frontmatter.branch = Some("feature/42".into());
+        save_issue(&paths, &document);
+        seed_backend_state(&paths, &backend, &original);
+
+        document.frontmatter.branch = None;
+        document.frontmatter.id_slug = None;
+        save_issue(&paths, &document);
+
+        let provider = FakeBackendProvider::with_listed(vec![record(
+            42,
+            "Remote issue",
+            "open",
+            "2026-03-20T12:00:00Z",
+        )]);
+        let engine = SyncEngine::new(&paths, &config);
+        let mut force_ids = HashSet::new();
+        force_ids.insert("GH-OWN-REP--42".to_string());
+
+        let summary = runtime
+            .block_on(engine.pull(&provider, &backend, true, Some(&force_ids), None))
+            .expect("force pull");
+
+        assert_eq!(summary.updated, vec!["GH-OWN-REP--42"]);
+        assert!(summary.conflicts.is_empty());
+
+        let mut issue = load_issue(&paths, "GH-OWN-REP--42");
+        issue.frontmatter.status = IssueState::Done;
+        issue.frontmatter.local_updated_at = "2026-03-20T13:00:00Z".into();
+        issue.frontmatter.branch = None;
+        issue.frontmatter.id_slug = None;
+        save_issue(&paths, &issue);
+
+        let summary = runtime
+            .block_on(engine.pull(&provider, &backend, false, None, None))
+            .expect("normal pull");
+
+        assert!(summary.conflicts.is_empty());
+    }
+
+    #[test]
+    fn force_ids_prevents_conflict_when_auto_close_races_normal_pull() {
+        // Simulates: done sets local to "done", then normal pull sees the
+        // auto-close that arrived after the get_issue check. With force_ids
+        // the pull must not conflict.
+        let runtime = runtime();
+        let (paths, config, backend) = test_context();
+        let original = record(42, "Remote issue", "open", "2026-03-20T10:00:00Z");
+        let mut document = backend_to_local(&original, &backend);
+        document.frontmatter.branch = Some("feature/42".into());
+        save_issue(&paths, &document);
+        seed_backend_state(&paths, &backend, &original);
+
+        // done clears branch and sets status to Done
+        document.frontmatter.branch = None;
+        document.frontmatter.id_slug = None;
+        document.frontmatter.status = IssueState::Done;
+        document.frontmatter.local_updated_at = "2026-03-20T13:00:00Z".into();
+        save_issue(&paths, &document);
+
+        // Remote auto-closed after the get_issue check
+        let provider = FakeBackendProvider::with_listed(vec![record(
+            42,
+            "Remote issue",
+            "closed",
+            "2026-03-20T12:00:00Z",
+        )]);
+        let engine = SyncEngine::new(&paths, &config);
+        let mut force_ids = HashSet::new();
+        force_ids.insert("GH-OWN-REP--42".to_string());
+
+        // Normal pull with force_ids — must not conflict
+        let summary = runtime
+            .block_on(engine.pull(&provider, &backend, false, None, Some(&force_ids)))
+            .expect("pull with force_ids");
+
+        assert!(summary.conflicts.is_empty());
+        assert_eq!(summary.updated, vec!["GH-OWN-REP--42"]);
+        assert_eq!(
+            load_issue(&paths, "GH-OWN-REP--42").frontmatter.status,
+            IssueState::Done
+        );
     }
 
     #[test]
@@ -935,7 +1072,7 @@ mod tests {
         let engine = SyncEngine::new(&paths, &config);
 
         let summary = runtime
-            .block_on(engine.pull(&provider, &backend, false, None))
+            .block_on(engine.pull(&provider, &backend, false, None, None))
             .expect("pull");
 
         assert_eq!(summary.updated, vec!["GH-OWN-REP--42"]);
@@ -958,7 +1095,7 @@ mod tests {
         let engine = SyncEngine::new(&paths, &config);
 
         let summary = runtime
-            .block_on(engine.pull(&provider, &backend, false, None))
+            .block_on(engine.pull(&provider, &backend, false, None, None))
             .expect("pull");
 
         assert_eq!(summary.deleted, vec!["GH-OWN-REP--42"]);
@@ -982,7 +1119,7 @@ mod tests {
         let engine = SyncEngine::new(&paths, &config);
 
         let summary = runtime
-            .block_on(engine.pull(&provider, &backend, false, None))
+            .block_on(engine.pull(&provider, &backend, false, None, None))
             .expect("pull");
 
         assert!(summary.created.is_empty());
