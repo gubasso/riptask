@@ -88,14 +88,16 @@ pub fn resolve_git_auth(backend: &BackendConfig) -> Option<GitHttpAuth> {
 }
 
 pub fn issue_to_upsert(doc: &IssueDocument) -> BackendIssueUpsert {
+    let state = match doc.frontmatter.status {
+        IssueState::Done => "closed",
+        _ => "open",
+    };
+    let state_reason = sanitize_state_reason(state, doc.frontmatter.state_reason.as_deref());
     BackendIssueUpsert {
         title: doc.frontmatter.title.clone(),
         body: doc.body.clone(),
-        state: Some(match doc.frontmatter.status {
-            IssueState::Done => "closed".into(),
-            _ => "open".into(),
-        }),
-        state_reason: doc.frontmatter.state_reason.clone(),
+        state: Some(state.into()),
+        state_reason,
         labels: build_state_labels(&doc.frontmatter.status, &doc.frontmatter.labels),
         assignees: doc.frontmatter.assignees.clone(),
         milestone_id: doc
@@ -425,6 +427,21 @@ fn state_from_backend(record: &BackendIssueRecord) -> IssueState {
     IssueState::Backlog
 }
 
+/// Drop `state_reason` values that are invalid for the target state.
+///
+/// GitHub allows `completed` / `not_planned` / `duplicate` when closing
+/// and `reopened` when opening. Sending a mismatched reason triggers a
+/// 422 validation error.
+fn sanitize_state_reason(state: &str, reason: Option<&str>) -> Option<String> {
+    let reason = reason?;
+    let valid = match state {
+        "closed" => matches!(reason, "completed" | "not_planned" | "duplicate"),
+        "open" => matches!(reason, "reopened"),
+        _ => true,
+    };
+    if valid { Some(reason.to_owned()) } else { None }
+}
+
 fn labels_without_status(labels: &[String]) -> Vec<String> {
     labels
         .iter()
@@ -435,7 +452,10 @@ fn labels_without_status(labels: &[String]) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{copy_local_only_fields, non_empty_env, parse_glab_token, resolve_git_auth};
+    use super::{
+        copy_local_only_fields, non_empty_env, parse_glab_token, resolve_git_auth,
+        sanitize_state_reason,
+    };
     use crate::domain::issue::{IssueFrontmatter, IssueState, Priority};
     use crate::models::{Backend, BackendConfig};
     use std::sync::{LazyLock, Mutex};
@@ -639,5 +659,52 @@ mod tests {
             pr_url: Some("https://example.invalid/pulls/42".into()),
             pr_number: Some(42),
         }
+    }
+
+    #[test]
+    fn sanitize_state_reason_drops_reopened_when_closing() {
+        assert_eq!(sanitize_state_reason("closed", Some("reopened")), None);
+    }
+
+    #[test]
+    fn sanitize_state_reason_allows_completed_when_closing() {
+        assert_eq!(
+            sanitize_state_reason("closed", Some("completed")),
+            Some("completed".into())
+        );
+    }
+
+    #[test]
+    fn sanitize_state_reason_allows_not_planned_when_closing() {
+        assert_eq!(
+            sanitize_state_reason("closed", Some("not_planned")),
+            Some("not_planned".into())
+        );
+    }
+
+    #[test]
+    fn sanitize_state_reason_allows_duplicate_when_closing() {
+        assert_eq!(
+            sanitize_state_reason("closed", Some("duplicate")),
+            Some("duplicate".into())
+        );
+    }
+
+    #[test]
+    fn sanitize_state_reason_drops_completed_when_opening() {
+        assert_eq!(sanitize_state_reason("open", Some("completed")), None);
+    }
+
+    #[test]
+    fn sanitize_state_reason_allows_reopened_when_opening() {
+        assert_eq!(
+            sanitize_state_reason("open", Some("reopened")),
+            Some("reopened".into())
+        );
+    }
+
+    #[test]
+    fn sanitize_state_reason_passes_through_none() {
+        assert_eq!(sanitize_state_reason("closed", None), None);
     }
 }
