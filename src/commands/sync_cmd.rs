@@ -43,12 +43,14 @@ async fn pull(
     for backend in resolve_sync_backends(args, &config)? {
         let provider = build_provider_for_backend(backend)?;
         let pull_ids = resolve_pull_filter_ids(&subargs.ids, backend);
+        let force_ids = resolve_pull_filter_ids(&args.force_pull_ids, backend);
         let summary = engine
             .pull(
                 provider.as_ref(),
                 backend,
                 args.force,
                 (!pull_ids.is_empty()).then_some(&pull_ids),
+                (!force_ids.is_empty()).then_some(&force_ids),
             )
             .await?;
         if std::io::stderr().is_terminal() {
