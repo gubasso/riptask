@@ -85,7 +85,7 @@ backends:
   - name: jira-myteam
     backend: jira
     host: https://myteam.atlassian.net
-    repo: PROJ
+    repo: myteam/PROJ
     default_board: sprint
     vc: github-myrepo          # ← links to the VC backend for PRs/branches
 
@@ -746,11 +746,23 @@ This will trigger compiler errors everywhere `Backend` is matched exhaustively �
 
 In `derive_scope()`, add `Backend::Jira => "JR"` to the server match.
 
-In the `(parent, project)` match, Jira follows the same `owner/repo` pattern but `repo` is the project key (e.g., `"myteam/PROJ"` or just `"PROJ"`). Decide:
-- If `repo` = `"PROJ"` (no slash), use backend `name` as parent
-- If `repo` = `"org/PROJ"`, split normally
+**Decision**: The `repo` field for Jira uses `"org/PROJECT_KEY"` format — the user provides the org explicitly, same pattern as GitHub (`owner/repo`) and GitLab (`group/project`). Jira project keys are flat (e.g., `MBT`), so the org is a user-chosen grouping (team name, department, etc.).
 
-Result: IDs like `JR-myteam-PROJ--42`.
+In the `(parent, project)` match, `Backend::Jira` joins the existing `Github | Gitlab` arm — the split logic works as-is since the user always provides a slash.
+
+Example config and resulting IDs:
+```yaml
+- name: jira-myteam
+  backend: jira
+  host: https://myteam.atlassian.net
+  repo: myteam/MBT          # org/PROJECT_KEY
+```
+```
+scope  = "JR-myteam-MBT"
+issue  = "JR-myteam-MBT--42"
+```
+
+Config validation (§2.3) must enforce that `repo` contains a `/` for Jira backends.
 
 ### 2.3 — Config validation for Jira backends
 
@@ -758,7 +770,8 @@ Result: IDs like `JR-myteam-PROJ--42`.
 
 Add validation in `validate_config`:
 - `host` is **required** for Jira backends (unlike GitHub which defaults to github.com)
-- `repo` is **required** and should be a valid Jira project key (uppercase alphanumeric)
+- `repo` is **required** and must use `"org/PROJECT_KEY"` format (must contain a `/`)
+- The project key part (after `/`) should be uppercase alphanumeric (Jira convention)
 - Validate host URL format (must start with `https://`)
 - If `vc` is set, validate the referenced backend exists and is GitHub or GitLab
 
@@ -1072,7 +1085,7 @@ backends:
   - name: jira-myteam
     backend: jira
     host: https://myteam.atlassian.net
-    repo: PROJ
+    repo: myteam/PROJ
     default_board: sprint
 ```
 
@@ -1086,7 +1099,7 @@ backends:
   - name: jira-myteam
     backend: jira
     host: https://myteam.atlassian.net
-    repo: PROJ
+    repo: myteam/PROJ
     default_board: sprint
     vc: github-repo
 ```
@@ -1102,7 +1115,7 @@ backends:
   - name: jira-myteam
     backend: jira
     host: https://myteam.atlassian.net
-    repo: PROJ
+    repo: myteam/PROJ
     vc: gitlab-project
 ```
 
