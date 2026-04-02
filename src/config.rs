@@ -108,6 +108,68 @@ pub fn validate_config(config: &Config) -> Result<()> {
         "duplicate board name in riptsk.yaml",
     )?;
     validate_ai_command(config)?;
+    validate_jira_backends(config)?;
+    validate_vc_references(config)?;
+    Ok(())
+}
+
+fn validate_jira_backends(config: &Config) -> Result<()> {
+    use crate::models::Backend;
+    for backend in &config.backends {
+        if backend.backend != Backend::Jira {
+            continue;
+        }
+        let host = backend.host.as_deref().unwrap_or_default();
+        if host.is_empty() {
+            return Err(anyhow::anyhow!(
+                "Jira backend '{}' requires a 'host' field (e.g., https://myteam.atlassian.net)",
+                backend.name
+            ));
+        }
+        if !host.starts_with("https://") {
+            return Err(anyhow::anyhow!(
+                "Jira backend '{}' host must start with https:// (got: {})",
+                backend.name,
+                host
+            ));
+        }
+        let repo = backend.repo.as_deref().unwrap_or_default();
+        if repo.is_empty() || !repo.contains('/') {
+            return Err(anyhow::anyhow!(
+                "Jira backend '{}' requires 'repo' in org/PROJECT_KEY format (got: {:?})",
+                backend.name,
+                backend.repo
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_vc_references(config: &Config) -> Result<()> {
+    use crate::models::Backend;
+    for backend in &config.backends {
+        if let Some(ref vc_name) = backend.vc {
+            let vc_backend = config
+                .backends
+                .iter()
+                .find(|b| &b.name == vc_name)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "backend '{}' references vc '{}' which does not exist",
+                        backend.name,
+                        vc_name
+                    )
+                })?;
+            if !matches!(vc_backend.backend, Backend::Github | Backend::Gitlab) {
+                return Err(anyhow::anyhow!(
+                    "vc '{}' referenced by backend '{}' must be a github or gitlab backend (got: {})",
+                    vc_name,
+                    backend.name,
+                    vc_backend.backend.as_str()
+                ));
+            }
+        }
+    }
     Ok(())
 }
 

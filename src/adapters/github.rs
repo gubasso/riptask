@@ -1,6 +1,6 @@
 use crate::adapters::backend::{
-    BackendIssueRecord, BackendIssueUpsert, BackendPrRecord, BackendProvider, CiPresence,
-    DeleteOutcome, MergeMethod, PrChecksStatus,
+    BackendIssueRecord, BackendIssueUpsert, BackendPrRecord, CiPresence, DeleteOutcome,
+    IssueTracker, MergeMethod, PrChecksStatus, VersionControl,
 };
 use crate::error::RiptskError;
 use async_trait::async_trait;
@@ -44,7 +44,7 @@ impl GithubProvider {
 }
 
 #[async_trait]
-impl BackendProvider for GithubProvider {
+impl IssueTracker for GithubProvider {
     async fn list_issues(&self, repo: &str) -> Result<Vec<BackendIssueRecord>, RiptskError> {
         let (owner, repo_name) = self.split_owner_repo(repo)?;
         let page = self
@@ -249,7 +249,10 @@ impl BackendProvider for GithubProvider {
             .map_err(|error| RiptskError::Unreachable(format_octocrab_error(&error)))?;
         Ok(())
     }
+}
 
+#[async_trait]
+impl VersionControl for GithubProvider {
     async fn create_pr(
         &self,
         repo: &str,

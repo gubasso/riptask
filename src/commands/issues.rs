@@ -7,13 +7,14 @@ use crate::adapters::prompts::{DialoguerPrompts, PromptBackend};
 use crate::cli::{IdArgs, LsArgs, NewArgs, StatusArgs};
 use crate::config::load_config;
 use crate::domain::issue::{
-    GithubIssueMeta, GitlabIssueMeta, IssueDocument, IssueFrontmatter, IssueState, Priority,
+    GithubIssueMeta, GitlabIssueMeta, IssueDocument, IssueFrontmatter, IssueState, JiraIssueMeta,
+    Priority,
 };
 use crate::error::RiptskError;
 use crate::models::{Backend, BackendConfig};
 use crate::paths::AppPaths;
 use crate::services::auto_commit::maybe_auto_commit;
-use crate::services::backend_mapping::{build_provider_for_backend, build_state_labels};
+use crate::services::backend_mapping::build_state_labels;
 use crate::services::id_resolution;
 use crate::services::issue_ids;
 use crate::services::issue_service::{IssueDraft, IssueService, generate_slug};
@@ -605,7 +606,7 @@ async fn create_backend_issue(
     draft: &IssueDraft,
     backend: &BackendConfig,
 ) -> Result<IssueDocument, RiptskError> {
-    let provider = build_provider_for_backend(backend)?;
+    let provider = crate::services::backend_mapping::build_issue_tracker(backend)?;
     let repo = backend
         .repo
         .as_deref()
@@ -666,6 +667,22 @@ async fn create_backend_issue(
             } else {
                 None
             },
+            jira: if backend.backend == Backend::Jira {
+                let issue_key = record.url.rsplit('/').next().map(|s| s.to_owned());
+                Some(JiraIssueMeta {
+                    project_key: crate::adapters::jira::JiraProvider::project_key(repo).to_owned(),
+                    issue_key,
+                    issue_id: Some(record.issue_id),
+                    url: Some(record.url.clone()),
+                    updated_at: record.updated_at.clone(),
+                    last_pushed_state: Some(draft.status.clone()),
+                    issue_type: record.issue_type.clone(),
+                    assignee_account_id: None,
+                    assignee_name: None,
+                })
+            } else {
+                None
+            },
             local_updated_at: record.updated_at.clone(),
             due: record.due_date.clone(),
             weight: record.weight,
@@ -703,6 +720,7 @@ fn provider_name(backend: &BackendConfig) -> &'static str {
     match backend.backend {
         Backend::Github => "github",
         Backend::Gitlab => "gitlab",
+        Backend::Jira => "jira",
         Backend::Local => "local",
     }
 }

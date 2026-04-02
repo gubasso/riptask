@@ -184,6 +184,7 @@ pub fn register_project_auto(
                 default_board: Some("personal".into()),
                 default_org: None,
                 path: None,
+                vc: None,
             };
             config.backends.push(backend.clone());
             return Ok(Some(backend));
@@ -206,6 +207,7 @@ pub fn register_project_auto(
                 default_board: Some("personal".into()),
                 default_org: None,
                 path: Some(path),
+                vc: None,
             };
             config.backends.push(backend.clone());
             return Ok(Some(backend));
@@ -227,6 +229,7 @@ pub fn register_project_auto(
         default_board: Some("personal".into()),
         default_org: None,
         path: Some(path),
+        vc: None,
     };
     config.backends.push(backend.clone());
     Ok(Some(backend))
@@ -322,6 +325,7 @@ pub fn register_project_interactive(
             match default_type {
                 Backend::Github => 0,
                 Backend::Gitlab => 1,
+                Backend::Jira => 0,
                 Backend::Local => 2,
             },
         )?
@@ -337,6 +341,7 @@ pub fn register_project_interactive(
         let default_host = default_host.as_deref().unwrap_or(match backend {
             Backend::Github => "github.com",
             Backend::Gitlab => "gitlab.com",
+            Backend::Jira => "",
             Backend::Local => "",
         });
         let host = prompts.input("Host", Some(default_host))?;
@@ -371,6 +376,7 @@ pub fn register_project_interactive(
         default_board,
         default_org: None,
         path,
+        vc: None,
     };
     validate_new_backend(config, &backend_config)?;
     config.backends.push(backend_config.clone());
@@ -586,6 +592,7 @@ mod tests {
             default_board: Some("personal".into()),
             default_org: None,
             path: Some(canon),
+            vc: None,
         });
 
         let detected = detect_from_cwd(&cwd, &config).expect("detect");
@@ -637,6 +644,7 @@ mod tests {
             default_board: Some("personal".into()),
             default_org: None,
             path: Some(parent_canon),
+            vc: None,
         });
         // Remote backend registered by URL — should win over parent path
         config.backends.push(BackendConfig {
@@ -647,6 +655,7 @@ mod tests {
             default_board: Some("personal".into()),
             default_org: None,
             path: None,
+            vc: None,
         });
 
         let cwd = Utf8PathBuf::from_path_buf(child_dir).expect("utf8");
@@ -672,6 +681,7 @@ mod tests {
             default_board: None,
             default_org: None,
             path: Some("/some/other/myapp".into()),
+            vc: None,
         });
 
         let name = deduplicate_name("myapp", &cwd, &config);
@@ -694,6 +704,7 @@ mod tests {
             default_board: None,
             default_org: None,
             path: Some("/some/other/myapp".into()),
+            vc: None,
         });
         config.backends.push(BackendConfig {
             name: "parent-myapp".into(),
@@ -703,6 +714,7 @@ mod tests {
             default_board: None,
             default_org: None,
             path: Some("/some/other/parent-myapp".into()),
+            vc: None,
         });
 
         let name = deduplicate_name("myapp", &cwd, &config);

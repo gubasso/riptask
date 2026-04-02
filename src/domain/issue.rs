@@ -57,6 +57,26 @@ pub struct GitlabIssueMeta {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct JiraIssueMeta {
+    pub project_key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issue_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issue_id: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    pub updated_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_pushed_state: Option<IssueState>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issue_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assignee_account_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assignee_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct GithubIssueMeta {
     pub repo: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -103,6 +123,8 @@ pub struct IssueFrontmatter {
     pub gitlab: Option<GitlabIssueMeta>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub github: Option<GithubIssueMeta>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jira: Option<JiraIssueMeta>,
     pub local_updated_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub due: Option<String>,

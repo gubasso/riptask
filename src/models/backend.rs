@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 pub enum Backend {
     Github,
     Gitlab,
+    Jira,
     Local,
 }
 
@@ -13,6 +14,7 @@ impl Backend {
         match self {
             Self::Github => "github",
             Self::Gitlab => "gitlab",
+            Self::Jira => "jira",
             Self::Local => "local",
         }
     }
@@ -33,4 +35,6 @@ pub struct BackendConfig {
     pub default_org: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vc: Option<String>,
 }

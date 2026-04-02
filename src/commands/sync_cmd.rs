@@ -8,7 +8,7 @@ use crate::error::RiptskError;
 use crate::models::{Backend, BackendConfig};
 use crate::paths::AppPaths;
 use crate::services::auto_commit::maybe_auto_commit;
-use crate::services::backend_mapping::build_provider_for_backend;
+use crate::services::backend_mapping::build_issue_tracker;
 use crate::services::id_resolution;
 use crate::services::sync_engine::SyncEngine;
 use crate::storage::{frontmatter, issue_store, session as session_store};
@@ -41,7 +41,7 @@ async fn pull(
     let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
     let engine = SyncEngine::new(paths, &config);
     for backend in resolve_sync_backends(args, &config)? {
-        let provider = build_provider_for_backend(backend)?;
+        let provider = build_issue_tracker(backend)?;
         let pull_ids = resolve_pull_filter_ids(&subargs.ids, backend);
         let force_ids = resolve_pull_filter_ids(&args.force_pull_ids, backend);
         let summary = engine
@@ -100,7 +100,7 @@ async fn push(
         .map(|id| id_resolution::resolve_id(paths, &config, &cwd, id))
         .collect::<Result<Vec<_>, _>>()?;
     for backend in resolve_sync_backends(args, &config)? {
-        let provider = build_provider_for_backend(backend)?;
+        let provider = build_issue_tracker(backend)?;
         let issue_paths = collect_push_paths(paths, backend, &resolved_ids)?;
         let summary = if resolved_ids.is_empty() {
             engine.push(provider.as_ref(), backend).await?
@@ -219,11 +219,14 @@ fn resolve_sync_backends<'a>(
             })
             .map(|result| {
                 result.and_then(|backend| {
-                    if matches!(backend.backend, Backend::Github | Backend::Gitlab) {
+                    if matches!(
+                        backend.backend,
+                        Backend::Github | Backend::Gitlab | Backend::Jira
+                    ) {
                         Ok(backend)
                     } else {
                         Err(RiptskError::Config(format!(
-                            "sync target must be github or gitlab: {}",
+                            "sync target must be github, gitlab, or jira: {}",
                             backend.name
                         )))
                     }
@@ -241,7 +244,10 @@ fn resolve_sync_backends<'a>(
     if let Ok(Some(backend)) = crate::services::project_detection::detect_from_cwd(&cwd, config)
         && let Some(candidate) = config.backends.iter().find(|candidate| {
             candidate.name == backend.name
-                && matches!(candidate.backend, Backend::Github | Backend::Gitlab)
+                && matches!(
+                    candidate.backend,
+                    Backend::Github | Backend::Gitlab | Backend::Jira
+                )
         })
     {
         return Ok(vec![candidate]);
@@ -286,7 +292,12 @@ fn hosted_backends(config: &Config) -> Vec<&BackendConfig> {
     config
         .backends
         .iter()
-        .filter(|backend| matches!(backend.backend, Backend::Github | Backend::Gitlab))
+        .filter(|backend| {
+            matches!(
+                backend.backend,
+                Backend::Github | Backend::Gitlab | Backend::Jira
+            )
+        })
         .collect()
 }
 
@@ -369,6 +380,7 @@ fn provider_name(backend: &BackendConfig) -> &'static str {
     match backend.backend {
         Backend::Github => "github",
         Backend::Gitlab => "gitlab",
+        Backend::Jira => "jira",
         Backend::Local => "local",
     }
 }

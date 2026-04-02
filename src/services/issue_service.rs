@@ -149,6 +149,7 @@ impl<'a> IssueService<'a> {
                 order: Some(draft.order),
                 gitlab: None,
                 github: None,
+                jira: None,
                 local_updated_at: now_utc(),
                 due: None,
                 weight: None,
