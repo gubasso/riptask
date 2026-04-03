@@ -623,6 +623,8 @@ async fn create_backend_issue(
         weight: None,
         confidential: None,
         discussion_locked: None,
+        assignee_account_id: None,
+        assignee_name: None,
     };
     let record = provider.create_issue(repo, &upsert).await?;
     let scope = issue_ids::derive_scope_from_backend(backend);
@@ -677,8 +679,8 @@ async fn create_backend_issue(
                     updated_at: record.updated_at.clone(),
                     last_pushed_state: Some(draft.status.clone()),
                     issue_type: record.issue_type.clone(),
-                    assignee_account_id: None,
-                    assignee_name: None,
+                    assignee_account_id: record.assignee_account_id.clone(),
+                    assignee_name: record.assignee_name.clone(),
                 })
             } else {
                 None

@@ -30,6 +30,14 @@ pub struct JiraIssue {
     pub fields: JiraFields,
 }
 
+/// Lightweight struct for API responses where only `id` and `key` are needed
+/// (e.g., when fetching with `?fields=status` which omits most fields).
+#[derive(Debug, Deserialize)]
+struct JiraIssueKey {
+    pub id: String,
+    pub key: String,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct JiraFields {
     pub summary: String,
@@ -281,12 +289,14 @@ pub fn jira_issue_to_record(issue: &JiraIssue, host: &str) -> BackendIssueRecord
     labels.retain(|l| !l.starts_with("status::"));
     labels.push(status_label);
 
-    let assignees = issue
-        .fields
-        .assignee
-        .as_ref()
-        .map(|u| vec![u.display_name.clone()])
-        .unwrap_or_default();
+    let (assignees, assignee_account_id, assignee_name) = match &issue.fields.assignee {
+        Some(u) => (
+            vec![u.display_name.clone()],
+            u.account_id.clone(),
+            u.name.clone(),
+        ),
+        None => (Vec::new(), None, None),
+    };
 
     let milestone = issue.fields.fix_versions.first().map(|v| v.name.clone());
     let milestone_id = issue
@@ -328,6 +338,8 @@ pub fn jira_issue_to_record(issue: &JiraIssue, host: &str) -> BackendIssueRecord
         lock_reason: None,
         comments,
         linked_mrs: vec![],
+        assignee_account_id,
+        assignee_name,
     }
 }
 
@@ -562,6 +574,87 @@ impl JiraProvider {
         Self::check_response(self.post(&path, &body).await?).await?;
         Ok(())
     }
+
+    /// Search for users assignable to issues in a project.
+    pub async fn search_assignable_users(
+        &self,
+        project_key: &str,
+        query: &str,
+    ) -> Result<Vec<JiraUser>, RiptskError> {
+        let path = format!(
+            "/user/assignable/search?project={}&query={}",
+            urlencoding::encode(project_key),
+            urlencoding::encode(query)
+        );
+        let response = Self::check_response(self.get(&path).await?).await?;
+        response
+            .json::<Vec<JiraUser>>()
+            .await
+            .map_err(|e| RiptskError::General(format!("failed to parse assignable users: {e}")))
+    }
+
+    /// Set the assignee on a Jira issue.
+    /// Uses `accountId` for Cloud or `name` for Server/DC.
+    async fn set_assignee(
+        &self,
+        issue_key: &str,
+        project_key: &str,
+        upsert: &BackendIssueUpsert,
+    ) -> Result<(), RiptskError> {
+        let assignee_display = match upsert.assignees.first() {
+            Some(name) => name,
+            None => {
+                // Clear assignee
+                let payload = serde_json::json!({ "fields": { "assignee": null } });
+                let path = format!("/issue/{issue_key}");
+                let _ = self.put(&path, &payload).await;
+                return Ok(());
+            }
+        };
+
+        // Prefer stored account ID from round-trip metadata (Jira Cloud)
+        if let Some(ref account_id) = upsert.assignee_account_id {
+            let payload = serde_json::json!({
+                "fields": { "assignee": { "accountId": account_id } }
+            });
+            let path = format!("/issue/{issue_key}");
+            Self::check_response(self.put(&path, &payload).await?).await?;
+            return Ok(());
+        }
+
+        // Prefer stored username from round-trip metadata (Jira Server/DC)
+        if let Some(ref name) = upsert.assignee_name {
+            let payload = serde_json::json!({
+                "fields": { "assignee": { "name": name } }
+            });
+            let path = format!("/issue/{issue_key}");
+            Self::check_response(self.put(&path, &payload).await?).await?;
+            return Ok(());
+        }
+
+        // Fall back to searching for the user
+        let users = self
+            .search_assignable_users(project_key, assignee_display)
+            .await?;
+        if let Some(user) = users.first() {
+            let assignee_value = if let Some(ref account_id) = user.account_id {
+                // Jira Cloud
+                serde_json::json!({ "accountId": account_id })
+            } else if let Some(ref name) = user.name {
+                // Jira Server/DC
+                serde_json::json!({ "name": name })
+            } else {
+                return Err(RiptskError::General(format!(
+                    "assignable user '{}' has no accountId or name",
+                    user.display_name
+                )));
+            };
+            let payload = serde_json::json!({ "fields": { "assignee": assignee_value } });
+            let path = format!("/issue/{issue_key}");
+            Self::check_response(self.put(&path, &payload).await?).await?;
+        }
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -612,6 +705,12 @@ impl IssueTracker for JiraProvider {
 
         // Fetch the full issue to return a complete record
         let issue_id: u64 = created.id.parse().unwrap_or(0);
+
+        // Set assignee separately (requires issue key from the created response)
+        if !issue.assignees.is_empty() {
+            self.set_assignee(&created.key, project_key, issue).await?;
+        }
+
         self.get_issue(repo, issue_id).await
     }
 
@@ -625,25 +724,41 @@ impl IssueTracker for JiraProvider {
         let path = format!("/issue/{issue_id}");
         Self::check_response(self.put(&path, &payload).await?).await?;
 
+        // Set assignee separately (need issue key, fetch it)
+        let issue_path = format!("/issue/{issue_id}?fields=status");
+        let response = Self::check_response(self.get(&issue_path).await?).await?;
+        let jira_key: JiraIssueKey = response
+            .json()
+            .await
+            .map_err(|e| RiptskError::General(format!("failed to parse Jira issue key: {e}")))?;
+        let project_key = Self::project_key(_repo);
+        self.set_assignee(&jira_key.key, project_key, issue).await?;
+
         // Fetch updated issue
         self.get_issue(_repo, issue_id).await
     }
 
-    async fn close_issue(&self, _repo: &str, issue_id: u64) -> Result<(), RiptskError> {
+    async fn close_issue(
+        &self,
+        _repo: &str,
+        issue_id: u64,
+        state_reason: Option<&str>,
+    ) -> Result<(), RiptskError> {
         // First get the issue key (needed for transitions API)
         let path = format!("/issue/{issue_id}?fields=status");
         let response = Self::check_response(self.get(&path).await?).await?;
-        let issue: JiraIssue = response
+        let issue: JiraIssueKey = response
             .json()
             .await
-            .map_err(|e| RiptskError::General(format!("failed to parse Jira issue: {e}")))?;
+            .map_err(|e| RiptskError::General(format!("failed to parse Jira issue key: {e}")))?;
 
         let transitions = self.get_transitions(&issue.key).await?;
         let transition = find_transition(&transitions, &IssueState::Done)?;
 
-        // Include resolution when transitioning to done
+        // Map state_reason to the appropriate Jira resolution
+        let resolution = state_reason_to_jira_resolution(state_reason);
         let fields = serde_json::json!({
-            "resolution": { "name": "Done" }
+            "resolution": { "name": resolution }
         });
         self.transition_issue(&issue.key, &transition.id, Some(fields))
             .await
@@ -652,10 +767,10 @@ impl IssueTracker for JiraProvider {
     async fn reopen_issue(&self, _repo: &str, issue_id: u64) -> Result<(), RiptskError> {
         let path = format!("/issue/{issue_id}?fields=status");
         let response = Self::check_response(self.get(&path).await?).await?;
-        let issue: JiraIssue = response
+        let issue: JiraIssueKey = response
             .json()
             .await
-            .map_err(|e| RiptskError::General(format!("failed to parse Jira issue: {e}")))?;
+            .map_err(|e| RiptskError::General(format!("failed to parse Jira issue key: {e}")))?;
 
         let transitions = self.get_transitions(&issue.key).await?;
         let transition = find_transition(&transitions, &IssueState::Todo)?;
@@ -676,7 +791,7 @@ impl IssueTracker for JiraProvider {
             Ok(response) if response.status().is_success() => Ok(DeleteOutcome::HardDeleted),
             Ok(response) if response.status().as_u16() == 403 => {
                 // Permission denied — fall back to close
-                self.close_issue(_repo, issue_id).await?;
+                self.close_issue(_repo, issue_id, None).await?;
                 Ok(DeleteOutcome::SoftClosed)
             }
             Ok(response) => {
@@ -958,6 +1073,8 @@ mod tests {
         assert_eq!(record.issue_type, Some("Bug".into()));
         assert_eq!(record.comments, vec!["Working on it"]);
         assert_eq!(record.confidential, None);
+        assert_eq!(record.assignee_account_id, Some("abc123".into()));
+        assert_eq!(record.assignee_name, None);
     }
 
     #[test]
@@ -1016,6 +1133,8 @@ mod tests {
             weight: None,
             confidential: None,
             discussion_locked: None,
+            assignee_account_id: None,
+            assignee_name: None,
         };
 
         let json = upsert_to_jira_create(&upsert, "PROJ", "Task");
@@ -1041,6 +1160,8 @@ mod tests {
             weight: None,
             confidential: None,
             discussion_locked: None,
+            assignee_account_id: None,
+            assignee_name: None,
         };
 
         let json = upsert_to_jira_update(&upsert);
@@ -1049,5 +1170,594 @@ mod tests {
         assert!(json["fields"]["description"].is_null());
         assert!(json["fields"]["fixVersions"].as_array().unwrap().is_empty());
         assert!(json["fields"]["duedate"].is_null());
+    }
+
+    // -----------------------------------------------------------------------
+    // Wiremock integration tests
+    // -----------------------------------------------------------------------
+
+    fn jira_issue_json(id: &str, key: &str, summary: &str, status_key: &str) -> serde_json::Value {
+        serde_json::json!({
+            "id": id,
+            "key": key,
+            "fields": {
+                "summary": summary,
+                "description": "body",
+                "status": {
+                    "name": "To Do",
+                    "statusCategory": { "key": status_key, "name": "To Do" }
+                },
+                "resolution": null,
+                "labels": [],
+                "assignee": {
+                    "displayName": "Alice Smith",
+                    "accountId": "abc-123",
+                    "name": null
+                },
+                "fixVersions": [],
+                "issuetype": { "name": "Task", "subtask": false },
+                "priority": { "name": "Medium" },
+                "duedate": null,
+                "security": null,
+                "comment": { "comments": [] },
+                "updated": "2024-03-28T09:15:42.123+0000",
+                "created": "2024-03-20T10:00:00.000+0000"
+            }
+        })
+    }
+
+    fn mock_provider(host: &str) -> JiraProvider {
+        JiraProvider::new(
+            host,
+            JiraAuth::Basic {
+                email: "test@test.com".into(),
+                token: "token".into(),
+            },
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn wiremock_list_issues() {
+        let server = wiremock::MockServer::start().await;
+        let search_body = serde_json::json!({
+            "issues": [
+                jira_issue_json("10001", "PROJ-1", "First issue", "new"),
+                jira_issue_json("10002", "PROJ-2", "Second issue", "done"),
+            ],
+            "total": 2
+        });
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path_regex("/rest/api/2/search.*"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(&search_body))
+            .mount(&server)
+            .await;
+
+        let provider = mock_provider(&server.uri());
+        let records = provider.list_issues("myteam/PROJ").await.unwrap();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].title, "First issue");
+        assert_eq!(records[0].state, "open");
+        assert_eq!(records[1].title, "Second issue");
+        assert_eq!(records[1].state, "closed");
+    }
+
+    #[tokio::test]
+    async fn wiremock_create_issue() {
+        let server = wiremock::MockServer::start().await;
+
+        // Mock POST /issue
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/rest/api/2/issue"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(201).set_body_json(serde_json::json!({
+                    "id": "10050",
+                    "key": "PROJ-50",
+                    "self": "https://example.atlassian.net/rest/api/2/issue/10050"
+                })),
+            )
+            .mount(&server)
+            .await;
+
+        // Mock GET /issue/10050 (fetch after create)
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path_regex("/rest/api/2/issue/10050.*"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_json(jira_issue_json("10050", "PROJ-50", "New task", "new")),
+            )
+            .mount(&server)
+            .await;
+
+        let provider = mock_provider(&server.uri());
+        let upsert = BackendIssueUpsert {
+            title: "New task".into(),
+            body: "desc".into(),
+            state: Some("open".into()),
+            ..Default::default()
+        };
+        let record = provider.create_issue("myteam/PROJ", &upsert).await.unwrap();
+        assert_eq!(record.issue_id, 10050);
+        assert_eq!(record.title, "New task");
+    }
+
+    #[tokio::test]
+    async fn wiremock_update_issue() {
+        let server = wiremock::MockServer::start().await;
+
+        // Mock PUT /issue/10001
+        wiremock::Mock::given(wiremock::matchers::method("PUT"))
+            .and(wiremock::matchers::path("/rest/api/2/issue/10001"))
+            .respond_with(wiremock::ResponseTemplate::new(204))
+            .mount(&server)
+            .await;
+
+        // Mock GET /issue/10001 (fetch after update + assignee fetch)
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path_regex("/rest/api/2/issue/10001.*"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(jira_issue_json(
+                    "10001",
+                    "PROJ-1",
+                    "Updated title",
+                    "new",
+                )),
+            )
+            .mount(&server)
+            .await;
+
+        let provider = mock_provider(&server.uri());
+        let upsert = BackendIssueUpsert {
+            title: "Updated title".into(),
+            body: String::new(),
+            state: Some("open".into()),
+            ..Default::default()
+        };
+        let record = provider
+            .update_issue("myteam/PROJ", 10001, &upsert)
+            .await
+            .unwrap();
+        assert_eq!(record.title, "Updated title");
+    }
+
+    #[tokio::test]
+    async fn wiremock_close_issue_done_resolution() {
+        let server = wiremock::MockServer::start().await;
+
+        // Mock GET /issue/10001 (fetch status)
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path_regex("/rest/api/2/issue/10001.*"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "10001",
+                "key": "PROJ-1",
+                "fields": {
+                    "summary": "task", "description": null,
+                    "status": { "name": "To Do", "statusCategory": { "key": "new", "name": "To Do" } },
+                    "resolution": null, "labels": [], "assignee": null,
+                    "fixVersions": [], "issuetype": { "name": "Task", "subtask": false },
+                    "priority": null, "duedate": null, "security": null,
+                    "comment": { "comments": [] },
+                    "updated": "2024-03-28T09:15:42.123+0000",
+                    "created": "2024-03-20T10:00:00.000+0000"
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        // Mock GET transitions
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/rest/api/2/issue/PROJ-1/transitions"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "transitions": [{
+                    "id": "31",
+                    "name": "Done",
+                    "to": { "name": "Done", "statusCategory": { "key": "done", "name": "Done" } },
+                    "hasScreen": false,
+                    "isAvailable": true
+                }]
+            })))
+            .mount(&server)
+            .await;
+
+        // Mock POST transition — capture the request body to verify resolution
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path(
+                "/rest/api/2/issue/PROJ-1/transitions",
+            ))
+            .and(wiremock::matchers::body_json(serde_json::json!({
+                "transition": { "id": "31" },
+                "fields": { "resolution": { "name": "Done" } }
+            })))
+            .respond_with(wiremock::ResponseTemplate::new(204))
+            .mount(&server)
+            .await;
+
+        let provider = mock_provider(&server.uri());
+        provider
+            .close_issue("myteam/PROJ", 10001, Some("completed"))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn wiremock_close_issue_wont_do_resolution() {
+        let server = wiremock::MockServer::start().await;
+
+        // Mock GET /issue/10001
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path_regex("/rest/api/2/issue/10001.*"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "10001", "key": "PROJ-1",
+                "fields": {
+                    "summary": "task", "description": null,
+                    "status": { "name": "To Do", "statusCategory": { "key": "new", "name": "To Do" } },
+                    "resolution": null, "labels": [], "assignee": null,
+                    "fixVersions": [], "issuetype": { "name": "Task", "subtask": false },
+                    "priority": null, "duedate": null, "security": null,
+                    "comment": { "comments": [] },
+                    "updated": "2024-03-28T09:15:42.123+0000",
+                    "created": "2024-03-20T10:00:00.000+0000"
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/rest/api/2/issue/PROJ-1/transitions"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "transitions": [{
+                    "id": "31", "name": "Done",
+                    "to": { "name": "Done", "statusCategory": { "key": "done", "name": "Done" } },
+                    "hasScreen": false, "isAvailable": true
+                }]
+            })))
+            .mount(&server)
+            .await;
+
+        // Verify "Won't Do" resolution for not_planned
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path(
+                "/rest/api/2/issue/PROJ-1/transitions",
+            ))
+            .and(wiremock::matchers::body_json(serde_json::json!({
+                "transition": { "id": "31" },
+                "fields": { "resolution": { "name": "Won't Do" } }
+            })))
+            .respond_with(wiremock::ResponseTemplate::new(204))
+            .mount(&server)
+            .await;
+
+        let provider = mock_provider(&server.uri());
+        provider
+            .close_issue("myteam/PROJ", 10001, Some("not_planned"))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn wiremock_reopen_issue() {
+        let server = wiremock::MockServer::start().await;
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path_regex("/rest/api/2/issue/10001.*"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "10001", "key": "PROJ-1",
+                "fields": {
+                    "summary": "task", "description": null,
+                    "status": { "name": "Done", "statusCategory": { "key": "done", "name": "Done" } },
+                    "resolution": { "name": "Done" }, "labels": [], "assignee": null,
+                    "fixVersions": [], "issuetype": { "name": "Task", "subtask": false },
+                    "priority": null, "duedate": null, "security": null,
+                    "comment": { "comments": [] },
+                    "updated": "2024-03-28T09:15:42.123+0000",
+                    "created": "2024-03-20T10:00:00.000+0000"
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/rest/api/2/issue/PROJ-1/transitions"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "transitions": [{
+                    "id": "11", "name": "Reopen",
+                    "to": { "name": "To Do", "statusCategory": { "key": "new", "name": "To Do" } },
+                    "hasScreen": false, "isAvailable": true
+                }]
+            })))
+            .mount(&server)
+            .await;
+
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path(
+                "/rest/api/2/issue/PROJ-1/transitions",
+            ))
+            .respond_with(wiremock::ResponseTemplate::new(204))
+            .mount(&server)
+            .await;
+
+        wiremock::Mock::given(wiremock::matchers::method("PUT"))
+            .and(wiremock::matchers::path("/rest/api/2/issue/PROJ-1"))
+            .respond_with(wiremock::ResponseTemplate::new(204))
+            .mount(&server)
+            .await;
+
+        let provider = mock_provider(&server.uri());
+        provider.reopen_issue("myteam/PROJ", 10001).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn wiremock_assignee_uses_account_id_when_available() {
+        let server = wiremock::MockServer::start().await;
+
+        // Mock POST /issue (create)
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/rest/api/2/issue"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(201).set_body_json(serde_json::json!({
+                    "id": "10060", "key": "PROJ-60",
+                    "self": "https://example.atlassian.net/rest/api/2/issue/10060"
+                })),
+            )
+            .mount(&server)
+            .await;
+
+        // Mock PUT /issue/PROJ-60 (set assignee via accountId)
+        wiremock::Mock::given(wiremock::matchers::method("PUT"))
+            .and(wiremock::matchers::path("/rest/api/2/issue/PROJ-60"))
+            .and(wiremock::matchers::body_json(serde_json::json!({
+                "fields": { "assignee": { "accountId": "known-id-123" } }
+            })))
+            .respond_with(wiremock::ResponseTemplate::new(204))
+            .mount(&server)
+            .await;
+
+        // Mock GET /issue/10060 (fetch after create)
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path_regex("/rest/api/2/issue/10060.*"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(jira_issue_json(
+                    "10060",
+                    "PROJ-60",
+                    "Assigned task",
+                    "new",
+                )),
+            )
+            .mount(&server)
+            .await;
+
+        let provider = mock_provider(&server.uri());
+        let upsert = BackendIssueUpsert {
+            title: "Assigned task".into(),
+            body: String::new(),
+            state: Some("open".into()),
+            assignees: vec!["Alice Smith".into()],
+            assignee_account_id: Some("known-id-123".into()),
+            ..Default::default()
+        };
+        let record = provider.create_issue("myteam/PROJ", &upsert).await.unwrap();
+        assert_eq!(record.title, "Assigned task");
+    }
+
+    #[tokio::test]
+    async fn wiremock_assignee_falls_back_to_search() {
+        let server = wiremock::MockServer::start().await;
+
+        // Mock POST /issue (create)
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/rest/api/2/issue"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(201).set_body_json(serde_json::json!({
+                    "id": "10061", "key": "PROJ-61",
+                    "self": "https://example.atlassian.net/rest/api/2/issue/10061"
+                })),
+            )
+            .mount(&server)
+            .await;
+
+        // Mock GET /user/assignable/search (fallback search)
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path_regex(
+                "/rest/api/2/user/assignable/search.*",
+            ))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                    { "displayName": "Alice Smith", "accountId": "found-id-456", "name": null }
+                ])),
+            )
+            .mount(&server)
+            .await;
+
+        // Mock PUT /issue/PROJ-61 (set assignee from search result)
+        wiremock::Mock::given(wiremock::matchers::method("PUT"))
+            .and(wiremock::matchers::path("/rest/api/2/issue/PROJ-61"))
+            .respond_with(wiremock::ResponseTemplate::new(204))
+            .mount(&server)
+            .await;
+
+        // Mock GET /issue/10061 (fetch after create)
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path_regex("/rest/api/2/issue/10061.*"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(jira_issue_json(
+                    "10061",
+                    "PROJ-61",
+                    "Searched task",
+                    "new",
+                )),
+            )
+            .mount(&server)
+            .await;
+
+        let provider = mock_provider(&server.uri());
+        let upsert = BackendIssueUpsert {
+            title: "Searched task".into(),
+            body: String::new(),
+            state: Some("open".into()),
+            assignees: vec!["Alice Smith".into()],
+            assignee_account_id: None, // No cached ID, forces search
+            ..Default::default()
+        };
+        let record = provider.create_issue("myteam/PROJ", &upsert).await.unwrap();
+        assert_eq!(record.title, "Searched task");
+        assert_eq!(record.assignee_account_id, Some("abc-123".into()));
+    }
+
+    #[tokio::test]
+    async fn wiremock_pull_captures_assignee_identity() {
+        let server = wiremock::MockServer::start().await;
+        let search_body = serde_json::json!({
+            "issues": [jira_issue_json("10001", "PROJ-1", "Issue with assignee", "new")],
+            "total": 1
+        });
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path_regex("/rest/api/2/search.*"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(&search_body))
+            .mount(&server)
+            .await;
+
+        let provider = mock_provider(&server.uri());
+        let records = provider.list_issues("myteam/PROJ").await.unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].assignees, vec!["Alice Smith"]);
+        assert_eq!(records[0].assignee_account_id, Some("abc-123".into()));
+        assert_eq!(records[0].assignee_name, None);
+    }
+
+    #[tokio::test]
+    async fn wiremock_search_assignable_users() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path_regex(
+                "/rest/api/2/user/assignable/search.*",
+            ))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                    { "displayName": "Alice Smith", "accountId": "abc-123", "name": null },
+                    { "displayName": "Alice Jones", "accountId": "def-456", "name": null }
+                ])),
+            )
+            .mount(&server)
+            .await;
+
+        let provider = mock_provider(&server.uri());
+        let users = provider
+            .search_assignable_users("PROJ", "Alice")
+            .await
+            .unwrap();
+        assert_eq!(users.len(), 2);
+        assert_eq!(users[0].display_name, "Alice Smith");
+        assert_eq!(users[0].account_id, Some("abc-123".into()));
+    }
+
+    #[tokio::test]
+    async fn wiremock_assignee_uses_stored_name_for_server_dc() {
+        let server = wiremock::MockServer::start().await;
+
+        // Mock POST /issue (create)
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/rest/api/2/issue"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(201).set_body_json(serde_json::json!({
+                    "id": "10070", "key": "PROJ-70",
+                    "self": "https://example.atlassian.net/rest/api/2/issue/10070"
+                })),
+            )
+            .mount(&server)
+            .await;
+
+        // Mock PUT /issue/PROJ-70 (set assignee via name for Server/DC)
+        wiremock::Mock::given(wiremock::matchers::method("PUT"))
+            .and(wiremock::matchers::path("/rest/api/2/issue/PROJ-70"))
+            .and(wiremock::matchers::body_json(serde_json::json!({
+                "fields": { "assignee": { "name": "jdoe" } }
+            })))
+            .respond_with(wiremock::ResponseTemplate::new(204))
+            .mount(&server)
+            .await;
+
+        // Mock GET /issue/10070
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path_regex("/rest/api/2/issue/10070.*"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(jira_issue_json(
+                    "10070",
+                    "PROJ-70",
+                    "Server DC task",
+                    "new",
+                )),
+            )
+            .mount(&server)
+            .await;
+
+        let provider = mock_provider(&server.uri());
+        let upsert = BackendIssueUpsert {
+            title: "Server DC task".into(),
+            body: String::new(),
+            state: Some("open".into()),
+            assignees: vec!["John Doe".into()],
+            assignee_account_id: None,
+            assignee_name: Some("jdoe".into()),
+            ..Default::default()
+        };
+        let record = provider.create_issue("myteam/PROJ", &upsert).await.unwrap();
+        assert_eq!(record.title, "Server DC task");
+    }
+
+    #[tokio::test]
+    async fn wiremock_close_issue_uses_minimal_key_response() {
+        // Verify JiraIssueKey works with a response containing only id, key, and
+        // a minimal fields object (as Jira returns with ?fields=status)
+        let server = wiremock::MockServer::start().await;
+
+        // Mock GET /issue/10001 — return only id, key, and status field
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path_regex("/rest/api/2/issue/10001.*"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "id": "10001",
+                    "key": "PROJ-1",
+                    "fields": {
+                        "status": {
+                            "name": "To Do",
+                            "statusCategory": { "key": "new", "name": "To Do" }
+                        }
+                    }
+                })),
+            )
+            .mount(&server)
+            .await;
+
+        // Mock transitions
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/rest/api/2/issue/PROJ-1/transitions"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "transitions": [{
+                        "id": "31", "name": "Done",
+                        "to": { "name": "Done", "statusCategory": { "key": "done", "name": "Done" } },
+                        "hasScreen": false, "isAvailable": true
+                    }]
+                })),
+            )
+            .mount(&server)
+            .await;
+
+        // Mock POST transition
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path(
+                "/rest/api/2/issue/PROJ-1/transitions",
+            ))
+            .respond_with(wiremock::ResponseTemplate::new(204))
+            .mount(&server)
+            .await;
+
+        let provider = mock_provider(&server.uri());
+        // This would fail if still using JiraIssue instead of JiraIssueKey,
+        // because the response lacks required fields like summary, issuetype, etc.
+        provider
+            .close_issue("myteam/PROJ", 10001, Some("completed"))
+            .await
+            .unwrap();
     }
 }

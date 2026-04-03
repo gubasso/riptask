@@ -115,9 +115,23 @@ pub(crate) async fn create(paths: &AppPaths, args: PrCreateArgs) -> Result<(), R
         skip_ai = true;
     }
 
-    let issue_number = backend_issue_number(backend, &issue)?;
-    let title = default_title(issue_number, &issue.frontmatter.title);
-    let mut body = default_body(issue_number);
+    // For Jira issues, use the Jira issue key for PR title/body (not a numeric GitHub issue number)
+    let (title, mut body) = if let Some(ref jira_meta) = issue.frontmatter.jira {
+        let key = jira_meta
+            .issue_key
+            .as_deref()
+            .unwrap_or(&issue.frontmatter.id);
+        (
+            format!("{key}: {}", issue.frontmatter.title),
+            format!("Jira: {key}"),
+        )
+    } else {
+        let issue_number = backend_issue_number(backend, &issue)?;
+        (
+            default_title(issue_number, &issue.frontmatter.title),
+            default_body(issue_number),
+        )
+    };
     if !args.no_ai && !skip_ai {
         if let Some(ai) = optional_backend(&config) {
             let context =
@@ -1026,7 +1040,7 @@ mod tests {
             _repo: &str,
             _branch_name: &str,
             _base_ref: &str,
-            _issue_id: u64,
+            _issue_id: Option<u64>,
         ) -> Result<(), RiptskError> {
             unimplemented!()
         }

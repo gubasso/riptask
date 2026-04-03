@@ -296,7 +296,12 @@ impl IssueTracker for GitlabProvider {
         Ok(map_issue(updated))
     }
 
-    async fn close_issue(&self, repo: &str, issue_id: u64) -> Result<(), RiptskError> {
+    async fn close_issue(
+        &self,
+        repo: &str,
+        issue_id: u64,
+        _state_reason: Option<&str>,
+    ) -> Result<(), RiptskError> {
         let client = self.client().await?;
         edit_issue_state(
             &client,
@@ -562,7 +567,7 @@ impl VersionControl for GitlabProvider {
         repo: &str,
         branch_name: &str,
         base_ref: &str,
-        _issue_id: u64,
+        _issue_id: Option<u64>,
     ) -> Result<(), RiptskError> {
         let client = self.client().await?;
         let endpoint = gitlab::api::projects::repository::branches::CreateBranch::builder()
@@ -731,6 +736,8 @@ fn map_issue(issue: GitlabIssue) -> BackendIssueRecord {
         lock_reason: None,
         comments: Vec::new(),
         linked_mrs: Vec::new(),
+        assignee_account_id: None,
+        assignee_name: None,
     }
 }
 

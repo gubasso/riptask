@@ -229,6 +229,16 @@ pub fn issue_to_upsert(doc: &IssueDocument) -> BackendIssueUpsert {
         _ => "open",
     };
     let state_reason = sanitize_state_reason(state, doc.frontmatter.state_reason.as_deref());
+    let assignee_account_id = doc
+        .frontmatter
+        .jira
+        .as_ref()
+        .and_then(|meta| meta.assignee_account_id.clone());
+    let assignee_name = doc
+        .frontmatter
+        .jira
+        .as_ref()
+        .and_then(|meta| meta.assignee_name.clone());
     BackendIssueUpsert {
         title: doc.frontmatter.title.clone(),
         body: doc.body.clone(),
@@ -251,6 +261,8 @@ pub fn issue_to_upsert(doc: &IssueDocument) -> BackendIssueUpsert {
         weight: doc.frontmatter.weight,
         confidential: doc.frontmatter.confidential,
         discussion_locked: doc.frontmatter.discussion_locked,
+        assignee_account_id,
+        assignee_name,
     }
 }
 
@@ -316,8 +328,8 @@ pub fn backend_to_local(record: &BackendIssueRecord, backend: &BackendConfig) ->
                     updated_at: record.updated_at.clone(),
                     last_pushed_state: Some(state.clone()),
                     issue_type: record.issue_type.clone(),
-                    assignee_account_id: None,
-                    assignee_name: None,
+                    assignee_account_id: record.assignee_account_id.clone(),
+                    assignee_name: record.assignee_name.clone(),
                 })
             } else {
                 None
@@ -423,8 +435,8 @@ pub fn update_issue_from_backend(
                 updated_at: record.updated_at.clone(),
                 last_pushed_state: Some(state),
                 issue_type: record.issue_type.clone(),
-                assignee_account_id: None,
-                assignee_name: None,
+                assignee_account_id: record.assignee_account_id.clone(),
+                assignee_name: record.assignee_name.clone(),
             });
         }
         Backend::Local => {}
