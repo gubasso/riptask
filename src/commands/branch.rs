@@ -6,7 +6,9 @@ use crate::error::RiptskError;
 use crate::models::{Backend, BackendConfig};
 use crate::paths::AppPaths;
 use crate::services::auto_commit::maybe_auto_commit;
-use crate::services::backend_mapping::{build_provider_for_backend, resolve_git_auth};
+use crate::services::backend_mapping::{
+    build_version_control, resolve_git_auth, resolve_vc_for_backend,
+};
 use crate::services::issue_service::generate_branch_slug;
 use crate::services::{id_resolution, project_detection};
 use crate::storage::{frontmatter, issue_store};
@@ -56,15 +58,31 @@ pub(crate) async fn create_branch_for_issue(
     let slug = generate_branch_slug(issue_number, &issue.frontmatter.title);
 
     let repo = current_repo()?;
-    let auth = resolve_git_auth(backend);
+
+    // For Jira backends, resolve the VC backend for branch/PR operations
+    let (vc_provider, vc_backend, vc_issue_id) = if backend.backend == Backend::Jira {
+        let (provider, vc_backend) =
+            resolve_vc_for_backend(backend, &config)?.ok_or_else(|| {
+                RiptskError::Config(format!(
+                    "No version control backend configured for project '{}'. \
+                     Add 'vc: <github-or-gitlab-backend>' to the backend config.",
+                    backend.name
+                ))
+            })?;
+        // Don't link to a GitHub/GitLab issue — the issue lives in Jira
+        (provider, vc_backend.clone(), None)
+    } else {
+        let provider = build_version_control(backend)?;
+        (provider, backend.clone(), Some(issue_number))
+    };
+
+    let auth = resolve_git_auth(&vc_backend);
     let git = CliGit::with_auth(auth);
+    let repo_name = vc_backend.repo.as_deref().unwrap_or_default();
+    let base = vc_provider.default_branch(repo_name).await?;
 
-    let provider = build_provider_for_backend(backend)?;
-    let repo_name = backend.repo.as_deref().unwrap_or_default();
-    let base = provider.default_branch(repo_name).await?;
-
-    match provider
-        .create_branch(repo_name, &slug, &base, issue_number)
+    match vc_provider
+        .create_branch(repo_name, &slug, &base, vc_issue_id)
         .await
     {
         Ok(()) => {}
@@ -127,12 +145,12 @@ async fn delete_branch(paths: &AppPaths, args: BranchArgs) -> Result<(), RiptskE
         Err(RiptskError::NotFound(_)) => None,
         Err(e) => return Err(e),
     };
-    let (backend, default_branch) =
+    let (vc_backend, default_branch) =
         resolve_backend_and_default(&config, &cwd, issue_path.as_ref()).await?;
-    let auth = resolve_git_auth(&backend);
+    let auth = resolve_git_auth(&vc_backend);
     let git = CliGit::with_auth(auth);
-    let provider = build_provider_for_backend(&backend)?;
-    let repo_name = backend.repo.as_deref().unwrap_or_default();
+    let provider = build_version_control(&vc_backend)?;
+    let repo_name = vc_backend.repo.as_deref().unwrap_or_default();
 
     let _ = git.fetch(repo.as_path());
 
@@ -232,27 +250,39 @@ async fn resolve_backend_and_default(
     cwd: &camino::Utf8Path,
     issue_path: Option<&camino::Utf8PathBuf>,
 ) -> Result<(BackendConfig, String), RiptskError> {
-    if let Some(path) = issue_path {
+    let backend = if let Some(path) = issue_path {
         let id = path.file_stem().unwrap_or_default().to_string();
         let issue = crate::commands::issues::load_issue_or_conflict_error(path.as_std_path(), &id)?;
-        let backend = config
+        config
             .backends
             .iter()
             .find(|b| b.name == issue.frontmatter.project)
             .ok_or_else(|| RiptskError::Unregistered(issue.frontmatter.project.clone()))?
-            .clone();
-        let provider = build_provider_for_backend(&backend)?;
-        let repo_name = backend.repo.as_deref().unwrap_or_default();
-        let default = provider.default_branch(repo_name).await?;
-        return Ok((backend, default));
-    }
-    let backend = project_detection::detect_from_cwd(cwd, config)?.ok_or_else(|| {
-        RiptskError::Config("cannot determine project for branch deletion".into())
-    })?;
-    let provider = build_provider_for_backend(&backend)?;
-    let repo_name = backend.repo.as_deref().unwrap_or_default();
+            .clone()
+    } else {
+        project_detection::detect_from_cwd(cwd, config)?.ok_or_else(|| {
+            RiptskError::Config("cannot determine project for branch deletion".into())
+        })?
+    };
+
+    // For Jira backends, resolve the VC backend
+    let vc_backend = if backend.backend == Backend::Jira {
+        resolve_vc_for_backend(&backend, config)?
+            .map(|(_, vc_b)| vc_b.clone())
+            .ok_or_else(|| {
+                RiptskError::Config(format!(
+                    "No version control backend for project '{}'. Add 'vc' to the backend config.",
+                    backend.name
+                ))
+            })?
+    } else {
+        backend
+    };
+
+    let provider = build_version_control(&vc_backend)?;
+    let repo_name = vc_backend.repo.as_deref().unwrap_or_default();
     let default = provider.default_branch(repo_name).await?;
-    Ok((backend, default))
+    Ok((vc_backend, default))
 }
 
 pub(crate) fn backend_issue_number(

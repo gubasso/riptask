@@ -137,12 +137,19 @@ impl IssueTracker for GithubProvider {
         Ok(map_issue(updated))
     }
 
-    async fn close_issue(&self, repo: &str, issue_id: u64) -> Result<(), RiptskError> {
+    async fn close_issue(
+        &self,
+        repo: &str,
+        issue_id: u64,
+        state_reason: Option<&str>,
+    ) -> Result<(), RiptskError> {
         let (owner, repo_name) = self.split_owner_repo(repo)?;
-        self.client
-            .issues(owner, repo_name)
-            .update(issue_id)
-            .state(models::IssueState::Closed)
+        let issues = self.client.issues(owner, repo_name);
+        let mut builder = issues.update(issue_id).state(models::IssueState::Closed);
+        if let Some(reason) = state_reason {
+            builder = builder.state_reason(parse_github_state_reason(reason)?);
+        }
+        builder
             .send()
             .await
             .map_err(|error| RiptskError::Unreachable(format_octocrab_error(&error)))?;
@@ -190,7 +197,7 @@ impl IssueTracker for GithubProvider {
                         || lower.contains("not allowed")
                         || msg.contains("403")
                     {
-                        self.close_issue(repo, issue_id).await?;
+                        self.close_issue(repo, issue_id, None).await?;
                         return Ok(DeleteOutcome::SoftClosed);
                     }
                     return Err(RiptskError::Unreachable(format!(
@@ -203,7 +210,7 @@ impl IssueTracker for GithubProvider {
                 crate::ui::warn(&format!(
                     "GraphQL deleteIssue failed ({e}), falling back to close"
                 ));
-                self.close_issue(repo, issue_id).await?;
+                self.close_issue(repo, issue_id, None).await?;
                 Ok(DeleteOutcome::SoftClosed)
             }
         }
@@ -527,7 +534,7 @@ impl VersionControl for GithubProvider {
         repo: &str,
         branch_name: &str,
         base_ref: &str,
-        issue_id: u64,
+        issue_id: Option<u64>,
     ) -> Result<(), RiptskError> {
         let (owner, repo_name) = self.split_owner_repo(repo)?;
 
@@ -550,39 +557,76 @@ impl VersionControl for GithubProvider {
             }
         };
 
-        // Get issue node_id for GraphQL linking
-        let issue = self
-            .client
-            .issues(owner, repo_name)
-            .get(issue_id)
-            .await
-            .map_err(|e| RiptskError::Unreachable(format_octocrab_error(&e)))?;
-        let issue_node_id = issue.node_id;
+        if let Some(id) = issue_id {
+            // Get issue node_id for GraphQL linking
+            let issue = self
+                .client
+                .issues(owner, repo_name)
+                .get(id)
+                .await
+                .map_err(|e| RiptskError::Unreachable(format_octocrab_error(&e)))?;
+            let issue_node_id = issue.node_id;
 
-        // Use createLinkedBranch GraphQL mutation to create branch linked to issue
-        let query = r#"mutation($issueId: ID!, $oid: GitObjectID!, $name: String) {
-            createLinkedBranch(input: {issueId: $issueId, oid: $oid, name: $name}) {
-                linkedBranch { ref { name } }
-            }
-        }"#;
-        let payload = serde_json::json!({
-            "query": query,
-            "variables": {
-                "issueId": issue_node_id,
-                "oid": sha,
-                "name": branch_name,
-            }
-        });
-        let response: serde_json::Value = self
-            .client
-            .graphql(&payload)
-            .await
-            .map_err(|e| RiptskError::Unreachable(format_octocrab_error(&e)))?;
+            // Use createLinkedBranch GraphQL mutation to create branch linked to issue
+            let query = r#"mutation($issueId: ID!, $oid: GitObjectID!, $name: String) {
+                createLinkedBranch(input: {issueId: $issueId, oid: $oid, name: $name}) {
+                    linkedBranch { ref { name } }
+                }
+            }"#;
+            let payload = serde_json::json!({
+                "query": query,
+                "variables": {
+                    "issueId": issue_node_id,
+                    "oid": sha,
+                    "name": branch_name,
+                }
+            });
+            let response: serde_json::Value = self
+                .client
+                .graphql(&payload)
+                .await
+                .map_err(|e| RiptskError::Unreachable(format_octocrab_error(&e)))?;
 
-        if let Some(errors) = response.get("errors") {
-            return Err(RiptskError::Unreachable(format!(
-                "GitHub createLinkedBranch failed: {errors}"
-            )));
+            if let Some(errors) = response.get("errors") {
+                return Err(RiptskError::Unreachable(format!(
+                    "GitHub createLinkedBranch failed: {errors}"
+                )));
+            }
+        } else {
+            // Create a plain branch without linking to an issue
+            let query = r#"mutation($repoId: ID!, $name: String!, $oid: GitObjectID!) {
+                createRef(input: {repositoryId: $repoId, name: $name, oid: $oid}) {
+                    ref { name }
+                }
+            }"#;
+            let repo_info = self
+                .client
+                .repos(owner, repo_name)
+                .get()
+                .await
+                .map_err(|e| RiptskError::Unreachable(format_octocrab_error(&e)))?;
+            let repo_node_id = repo_info.node_id.ok_or_else(|| {
+                RiptskError::Unreachable(format!("missing node_id for repo {repo}"))
+            })?;
+            let payload = serde_json::json!({
+                "query": query,
+                "variables": {
+                    "repoId": repo_node_id,
+                    "name": format!("refs/heads/{branch_name}"),
+                    "oid": sha,
+                }
+            });
+            let response: serde_json::Value = self
+                .client
+                .graphql(&payload)
+                .await
+                .map_err(|e| RiptskError::Unreachable(format_octocrab_error(&e)))?;
+
+            if let Some(errors) = response.get("errors") {
+                return Err(RiptskError::Unreachable(format!(
+                    "GitHub createRef failed: {errors}"
+                )));
+            }
         }
 
         Ok(())
@@ -653,6 +697,8 @@ fn map_issue(issue: models::issues::Issue) -> BackendIssueRecord {
         lock_reason: issue.active_lock_reason,
         comments: Vec::new(),
         linked_mrs: Vec::new(),
+        assignee_account_id: None,
+        assignee_name: None,
     }
 }
 

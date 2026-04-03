@@ -277,7 +277,9 @@ impl<'a> SyncEngine<'a> {
                 if let Some(ref desired_state) = upsert.state {
                     let is_closed = record.state.eq_ignore_ascii_case("closed");
                     if desired_state == "closed" && !is_closed {
-                        provider.close_issue(repo, issue_id).await?;
+                        provider
+                            .close_issue(repo, issue_id, upsert.state_reason.as_deref())
+                            .await?;
                     } else if desired_state == "open" && is_closed {
                         provider.reopen_issue(repo, issue_id).await?;
                     }
@@ -305,7 +307,9 @@ impl<'a> SyncEngine<'a> {
                 .sync_labels(repo, record.issue_id, &upsert.labels)
                 .await?;
             if issue.frontmatter.status == crate::domain::issue::IssueState::Done {
-                provider.close_issue(repo, record.issue_id).await?;
+                provider
+                    .close_issue(repo, record.issue_id, upsert.state_reason.as_deref())
+                    .await?;
                 record.state = "closed".into();
             } else {
                 provider.reopen_issue(repo, record.issue_id).await?;
@@ -610,7 +614,12 @@ mod tests {
                 })
         }
 
-        async fn close_issue(&self, repo: &str, issue_id: u64) -> Result<(), RiptskError> {
+        async fn close_issue(
+            &self,
+            repo: &str,
+            issue_id: u64,
+            _state_reason: Option<&str>,
+        ) -> Result<(), RiptskError> {
             self.state
                 .lock()
                 .expect("lock")
@@ -1342,6 +1351,8 @@ mod tests {
             lock_reason: None,
             comments: Vec::new(),
             linked_mrs: Vec::new(),
+            assignee_account_id: None,
+            assignee_name: None,
         }
     }
 

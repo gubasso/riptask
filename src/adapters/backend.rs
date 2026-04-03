@@ -32,6 +32,8 @@ pub struct BackendIssueRecord {
     pub lock_reason: Option<String>,
     pub comments: Vec<String>,
     pub linked_mrs: Vec<String>,
+    pub assignee_account_id: Option<String>,
+    pub assignee_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -47,6 +49,8 @@ pub struct BackendIssueUpsert {
     pub weight: Option<u32>,
     pub confidential: Option<bool>,
     pub discussion_locked: Option<bool>,
+    pub assignee_account_id: Option<String>,
+    pub assignee_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
@@ -102,7 +106,12 @@ pub trait IssueTracker: Send + Sync {
         issue_id: u64,
         issue: &BackendIssueUpsert,
     ) -> Result<BackendIssueRecord, RiptskError>;
-    async fn close_issue(&self, repo: &str, issue_id: u64) -> Result<(), RiptskError>;
+    async fn close_issue(
+        &self,
+        repo: &str,
+        issue_id: u64,
+        state_reason: Option<&str>,
+    ) -> Result<(), RiptskError>;
     async fn reopen_issue(&self, repo: &str, issue_id: u64) -> Result<(), RiptskError>;
     async fn delete_issue(&self, repo: &str, issue_id: u64) -> Result<DeleteOutcome, RiptskError>;
     async fn lock_issue(
@@ -163,7 +172,7 @@ pub trait VersionControl: Send + Sync {
         repo: &str,
         branch_name: &str,
         base_ref: &str,
-        issue_id: u64,
+        issue_id: Option<u64>,
     ) -> Result<(), RiptskError>;
     async fn default_branch(&self, repo: &str) -> Result<String, RiptskError>;
     async fn delete_branch(&self, repo: &str, branch_name: &str) -> Result<(), RiptskError>;
