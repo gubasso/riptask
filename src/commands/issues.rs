@@ -738,6 +738,11 @@ fn backend_delete_target(issue: &IssueDocument) -> Option<(&'static str, String,
             .issue_id
             .map(|issue_id| ("gitlab", meta.repo.clone(), issue_id));
     }
+    if let Some(meta) = issue.frontmatter.jira.as_ref() {
+        return meta
+            .issue_id
+            .map(|issue_id| ("jira", meta.project_key.clone(), issue_id));
+    }
     None
 }
 

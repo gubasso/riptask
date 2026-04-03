@@ -108,9 +108,13 @@ pub fn build_issue_tracker(backend: &BackendConfig) -> Result<Box<dyn IssueTrack
                 "auth: jira backend '{}' using {}",
                 backend.name, source
             ));
-            Ok(Box::new(crate::adapters::jira::JiraProvider::new(
-                host, auth,
-            )?))
+            Ok(Box::new(
+                crate::adapters::jira::JiraProvider::with_issue_type(
+                    host,
+                    auth,
+                    backend.default_issue_type.clone(),
+                )?,
+            ))
         }
         Backend::Local => Err(RiptskError::Config(format!(
             "backend {} is local-only",
@@ -615,11 +619,16 @@ fn resolve_jira_credentials(
 
     // 2. Try jira-cli-go config + system keychain
     match run_jira_cli_go_auth(host) {
-        Ok((email, token)) => {
-            return Ok((
-                JiraAuth::Basic { email, token },
-                CredentialSource::CliTool("jira-cli-go keychain"),
-            ));
+        Ok((login, token, is_bearer)) => {
+            let auth = if is_bearer {
+                JiraAuth::Pat(token)
+            } else {
+                JiraAuth::Basic {
+                    email: login,
+                    token,
+                }
+            };
+            return Ok((auth, CredentialSource::CliTool("jira-cli-go keychain")));
         }
         Err(_reason) => {}
     }
@@ -634,7 +643,8 @@ To fix, do one of:\n\
     )))
 }
 
-fn run_jira_cli_go_auth(host: &str) -> Result<(String, String), String> {
+/// Returns `(login, token, is_bearer)`. `is_bearer` is true for Server/DC PAT auth.
+fn run_jira_cli_go_auth(host: &str) -> Result<(String, String, bool), String> {
     // Parse ~/.config/.jira/.config.yml
     let config_path = dirs_jira_cli_config();
     let content = std::fs::read_to_string(&config_path)
@@ -644,6 +654,8 @@ fn run_jira_cli_go_auth(host: &str) -> Result<(String, String), String> {
     struct JiraCliGoConfig {
         server: Option<String>,
         login: Option<String>,
+        #[serde(default)]
+        auth_type: Option<String>,
     }
 
     let config: JiraCliGoConfig =
@@ -672,7 +684,19 @@ fn run_jira_cli_go_auth(host: &str) -> Result<(String, String), String> {
         .get_password()
         .map_err(|e| format!("cannot read jira-cli token from keychain: {e}"))?;
 
-    Ok((login, token))
+    // Detect auth type: "bearer" means Server/DC PAT, otherwise Cloud basic
+    let auth_type_env = std::env::var("JIRA_AUTH_TYPE").ok();
+    let is_bearer = config
+        .auth_type
+        .as_deref()
+        .or(auth_type_env.as_deref())
+        .is_some_and(|t| t.eq_ignore_ascii_case("bearer"));
+
+    if is_bearer {
+        Ok((login, token, true))
+    } else {
+        Ok((login, token, false))
+    }
 }
 
 fn dirs_jira_cli_config() -> String {
@@ -869,6 +893,7 @@ mod tests {
             default_org: None,
             path: None,
             vc: None,
+            default_issue_type: None,
         };
 
         assert!(resolve_git_auth(&backend).is_none());
@@ -1003,6 +1028,7 @@ mod tests {
             default_org: None,
             path: None,
             vc: None,
+            default_issue_type: None,
         };
 
         assert!(resolve_git_auth(&backend).is_none());
@@ -1069,6 +1095,7 @@ mod tests {
             default_org: None,
             path: None,
             vc: None,
+            default_issue_type: None,
         };
         let config = crate::config::Config {
             backends: vec![backend.clone()],
@@ -1103,6 +1130,7 @@ mod tests {
             default_org: None,
             path: None,
             vc: Some("nonexistent".into()),
+            default_issue_type: None,
         };
         let config = crate::config::Config {
             backends: vec![backend.clone()],
@@ -1127,6 +1155,7 @@ mod tests {
             default_org: None,
             path: None,
             vc: Some("jira-other".into()),
+            default_issue_type: None,
         };
         let jira_other = BackendConfig {
             name: "jira-other".into(),
@@ -1137,6 +1166,7 @@ mod tests {
             default_org: None,
             path: None,
             vc: None,
+            default_issue_type: None,
         };
         let config = crate::config::Config {
             backends: vec![jira_backend.clone(), jira_other],
