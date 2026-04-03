@@ -129,6 +129,9 @@ pub struct JiraTransition {
     pub has_screen: bool,
     #[serde(rename = "isAvailable", default = "default_true")]
     pub is_available: bool,
+    /// Transition-screen fields (present when fetched with `expand=transitions.fields`).
+    #[serde(default)]
+    pub fields: Option<serde_json::Value>,
 }
 
 fn default_true() -> bool {
@@ -151,6 +154,14 @@ pub struct JiraTransitionsResponse {
 pub struct JiraSearchResult {
     pub issues: Vec<JiraIssue>,
     pub total: u64,
+}
+
+/// Response from the newer `/search/jql` endpoint (Jira Cloud).
+#[derive(Debug, Deserialize)]
+struct JiraSearchJqlResult {
+    pub issues: Vec<JiraIssue>,
+    #[serde(rename = "nextPageToken")]
+    pub next_page_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -216,6 +227,10 @@ pub fn state_reason_to_jira_resolution(reason: Option<&str>) -> &'static str {
 }
 
 /// Find the best transition for a target IssueState.
+///
+/// When transition fields metadata is available (via `expand=transitions.fields`),
+/// transitions that require unsupported screen fields (other than `resolution`)
+/// are excluded from candidates.
 pub fn find_transition<'a>(
     transitions: &'a [JiraTransition],
     target: &IssueState,
@@ -237,15 +252,50 @@ pub fn find_transition<'a>(
         )));
     }
 
-    // Prefer exact name match
-    if let Some(exact) = candidates
+    // Filter out transitions that require unsupported screen fields
+    let supported: Vec<&JiraTransition> = candidates
         .iter()
-        .find(|t| name_matches_state(&t.to.name, target))
-    {
+        .filter(|t| !has_unsupported_required_fields(t))
+        .copied()
+        .collect();
+
+    let pool = if supported.is_empty() {
+        // All transitions require unsupported fields — warn but try the first candidate anyway
+        &candidates
+    } else {
+        &supported
+    };
+
+    // Prefer exact name match
+    if let Some(exact) = pool.iter().find(|t| name_matches_state(&t.to.name, target)) {
         return Ok(exact);
     }
 
-    Ok(candidates[0])
+    Ok(pool[0])
+}
+
+/// Check whether a transition has required screen fields we don't support.
+/// We support `resolution` (set during close); anything else is unsupported.
+fn has_unsupported_required_fields(transition: &JiraTransition) -> bool {
+    let Some(ref fields_val) = transition.fields else {
+        return false;
+    };
+    let Some(fields_obj) = fields_val.as_object() else {
+        return false;
+    };
+    for (key, schema) in fields_obj {
+        if key == "resolution" {
+            continue;
+        }
+        let required = schema
+            .get("required")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if required {
+            return true;
+        }
+    }
+    false
 }
 
 fn name_matches_state(status_name: &str, target: &IssueState) -> bool {
@@ -423,10 +473,28 @@ pub struct JiraProvider {
     client: reqwest::Client,
     host: String,
     auth_header: String,
+    /// Configured default issue type for creation (from `BackendConfig.default_issue_type`).
+    configured_issue_type: Option<String>,
+}
+
+impl std::fmt::Debug for JiraProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("JiraProvider")
+            .field("host", &self.host)
+            .finish_non_exhaustive()
+    }
 }
 
 impl JiraProvider {
     pub fn new(host: &str, auth: JiraAuth) -> Result<Self, RiptskError> {
+        Self::with_issue_type(host, auth, None)
+    }
+
+    pub fn with_issue_type(
+        host: &str,
+        auth: JiraAuth,
+        configured_issue_type: Option<String>,
+    ) -> Result<Self, RiptskError> {
         let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
         let auth_header = match auth {
             JiraAuth::Basic {
@@ -447,6 +515,7 @@ impl JiraProvider {
             client,
             host: host.trim_end_matches('/').to_owned(),
             auth_header,
+            configured_issue_type,
         })
     }
 
@@ -520,17 +589,65 @@ impl JiraProvider {
         repo.rsplit('/').next().unwrap_or(repo)
     }
 
+    const SEARCH_FIELDS: &str = "summary,description,status,resolution,labels,assignee,fixVersions,issuetype,priority,duedate,security,comment,updated,created";
+    const MAX_SEARCH_PAGES: usize = 100;
+
     async fn search_issues(&self, jql: &str) -> Result<Vec<JiraIssue>, RiptskError> {
+        // Try the new /search/jql endpoint first (Jira Cloud, required since Oct 2025).
+        // Falls back to the legacy /search endpoint for Server/DC.
+        match self.search_issues_jql(jql).await {
+            Ok(issues) => Ok(issues),
+            Err(ref e) if e.to_string().contains("404") => {
+                // /search/jql not available (Server/DC) — use legacy endpoint
+                self.search_issues_legacy(jql).await
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Jira Cloud: `/rest/api/2/search/jql` with nextPageToken cursor pagination.
+    async fn search_issues_jql(&self, jql: &str) -> Result<Vec<JiraIssue>, RiptskError> {
+        let mut all_issues = Vec::new();
+        let mut next_page_token: Option<String> = None;
+        let max_results = 100u64;
+
+        for _ in 0..Self::MAX_SEARCH_PAGES {
+            let mut path = format!(
+                "/search/jql?jql={}&maxResults={}&fields={}",
+                urlencoding::encode(jql),
+                max_results,
+                Self::SEARCH_FIELDS,
+            );
+            if let Some(ref token) = next_page_token {
+                path.push_str(&format!("&nextPageToken={}", urlencoding::encode(token)));
+            }
+            let response = Self::check_response(self.get(&path).await?).await?;
+            let result: JiraSearchJqlResult = response.json().await.map_err(|e| {
+                RiptskError::General(format!("failed to parse Jira search/jql: {e}"))
+            })?;
+            all_issues.extend(result.issues);
+            match result.next_page_token {
+                Some(token) => next_page_token = Some(token),
+                None => break,
+            }
+        }
+
+        Ok(all_issues)
+    }
+
+    /// Jira Server/DC: legacy `/rest/api/2/search` with startAt/maxResults pagination.
+    async fn search_issues_legacy(&self, jql: &str) -> Result<Vec<JiraIssue>, RiptskError> {
         let mut all_issues = Vec::new();
         let mut start_at = 0u64;
         let max_results = 100u64;
 
-        loop {
+        for _ in 0..Self::MAX_SEARCH_PAGES {
             let path = format!(
-                "/search?jql={}&startAt={}&maxResults={}&fields=summary,description,status,resolution,labels,assignee,fixVersions,issuetype,priority,duedate,security,comment,updated,created",
+                "/search?jql={}&startAt={}&maxResults={}&fields={}",
                 urlencoding::encode(jql),
                 start_at,
-                max_results
+                max_results,
+                Self::SEARCH_FIELDS,
             );
             let response = Self::check_response(self.get(&path).await?).await?;
             let result: JiraSearchResult = response
@@ -549,7 +666,7 @@ impl JiraProvider {
     }
 
     async fn get_transitions(&self, issue_key: &str) -> Result<Vec<JiraTransition>, RiptskError> {
-        let path = format!("/issue/{issue_key}/transitions");
+        let path = format!("/issue/{issue_key}/transitions?expand=transitions.fields");
         let response = Self::check_response(self.get(&path).await?).await?;
         let result: JiraTransitionsResponse = response
             .json()
@@ -571,7 +688,13 @@ impl JiraProvider {
             body.as_object_mut().unwrap().insert("fields".into(), f);
         }
         let path = format!("/issue/{issue_key}/transitions");
-        Self::check_response(self.post(&path, &body).await?).await?;
+        let response = self.post(&path, &body).await?;
+        if response.status().as_u16() == 409 {
+            // 409 Conflict — retry once (transition race)
+            Self::check_response(self.post(&path, &body).await?).await?;
+        } else {
+            Self::check_response(response).await?;
+        }
         Ok(())
     }
 
@@ -593,7 +716,63 @@ impl JiraProvider {
             .map_err(|e| RiptskError::General(format!("failed to parse assignable users: {e}")))
     }
 
-    /// Set the assignee on a Jira issue.
+    /// Fetch valid issue types for a project from Jira's create metadata.
+    /// Returns the list of non-subtask issue type names.
+    pub async fn fetch_create_issue_types(
+        &self,
+        project_key: &str,
+    ) -> Result<Vec<String>, RiptskError> {
+        let path = format!(
+            "/issue/createmeta?projectKeys={}&expand=projects.issuetypes",
+            urlencoding::encode(project_key)
+        );
+        let response = Self::check_response(self.get(&path).await?).await?;
+        let body: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| RiptskError::General(format!("failed to parse create metadata: {e}")))?;
+        let mut types = Vec::new();
+        if let Some(projects) = body.get("projects").and_then(|v| v.as_array()) {
+            for project in projects {
+                if let Some(issue_types) = project.get("issuetypes").and_then(|v| v.as_array()) {
+                    for it in issue_types {
+                        let is_subtask =
+                            it.get("subtask").and_then(|v| v.as_bool()).unwrap_or(false);
+                        if !is_subtask && let Some(name) = it.get("name").and_then(|v| v.as_str()) {
+                            types.push(name.to_owned());
+                        }
+                    }
+                }
+            }
+        }
+        Ok(types)
+    }
+
+    /// Resolve the issue type to use for creation.
+    /// Priority: explicit config > metadata discovery > "Task" fallback.
+    pub async fn resolve_issue_type(
+        &self,
+        project_key: &str,
+        configured_type: Option<&str>,
+    ) -> Result<String, RiptskError> {
+        if let Some(t) = configured_type {
+            return Ok(t.to_owned());
+        }
+        let types = self.fetch_create_issue_types(project_key).await?;
+        if types.is_empty() {
+            return Err(RiptskError::General(format!(
+                "no creatable issue types found for project {project_key}; \
+                 set 'default_issue_type' in the backend config"
+            )));
+        }
+        // Prefer "Task" if present, otherwise use the first available type
+        if types.iter().any(|t| t == "Task") {
+            return Ok("Task".into());
+        }
+        Ok(types.into_iter().next().unwrap())
+    }
+
+    /// Set the assignee on a Jira issue using the dedicated assignee endpoint.
     /// Uses `accountId` for Cloud or `name` for Server/DC.
     async fn set_assignee(
         &self,
@@ -601,12 +780,13 @@ impl JiraProvider {
         project_key: &str,
         upsert: &BackendIssueUpsert,
     ) -> Result<(), RiptskError> {
+        let path = format!("/issue/{issue_key}/assignee");
+
         let assignee_display = match upsert.assignees.first() {
             Some(name) => name,
             None => {
-                // Clear assignee
-                let payload = serde_json::json!({ "fields": { "assignee": null } });
-                let path = format!("/issue/{issue_key}");
+                // Clear assignee: PUT with accountId: null (Cloud) or name: null (Server/DC)
+                let payload = serde_json::json!({ "accountId": null });
                 let _ = self.put(&path, &payload).await;
                 return Ok(());
             }
@@ -614,20 +794,14 @@ impl JiraProvider {
 
         // Prefer stored account ID from round-trip metadata (Jira Cloud)
         if let Some(ref account_id) = upsert.assignee_account_id {
-            let payload = serde_json::json!({
-                "fields": { "assignee": { "accountId": account_id } }
-            });
-            let path = format!("/issue/{issue_key}");
+            let payload = serde_json::json!({ "accountId": account_id });
             Self::check_response(self.put(&path, &payload).await?).await?;
             return Ok(());
         }
 
         // Prefer stored username from round-trip metadata (Jira Server/DC)
         if let Some(ref name) = upsert.assignee_name {
-            let payload = serde_json::json!({
-                "fields": { "assignee": { "name": name } }
-            });
-            let path = format!("/issue/{issue_key}");
+            let payload = serde_json::json!({ "name": name });
             Self::check_response(self.put(&path, &payload).await?).await?;
             return Ok(());
         }
@@ -637,11 +811,9 @@ impl JiraProvider {
             .search_assignable_users(project_key, assignee_display)
             .await?;
         if let Some(user) = users.first() {
-            let assignee_value = if let Some(ref account_id) = user.account_id {
-                // Jira Cloud
+            let payload = if let Some(ref account_id) = user.account_id {
                 serde_json::json!({ "accountId": account_id })
             } else if let Some(ref name) = user.name {
-                // Jira Server/DC
                 serde_json::json!({ "name": name })
             } else {
                 return Err(RiptskError::General(format!(
@@ -649,8 +821,6 @@ impl JiraProvider {
                     user.display_name
                 )));
             };
-            let payload = serde_json::json!({ "fields": { "assignee": assignee_value } });
-            let path = format!("/issue/{issue_key}");
             Self::check_response(self.put(&path, &payload).await?).await?;
         }
         Ok(())
@@ -696,7 +866,10 @@ impl IssueTracker for JiraProvider {
         issue: &BackendIssueUpsert,
     ) -> Result<BackendIssueRecord, RiptskError> {
         let project_key = Self::project_key(repo);
-        let payload = upsert_to_jira_create(issue, project_key, "Task");
+        let issue_type = self
+            .resolve_issue_type(project_key, self.configured_issue_type.as_deref())
+            .await?;
+        let payload = upsert_to_jira_create(issue, project_key, &issue_type);
         let response = Self::check_response(self.post("/issue", &payload).await?).await?;
         let created: JiraCreateResponse = response
             .json()
@@ -716,7 +889,7 @@ impl IssueTracker for JiraProvider {
 
     async fn update_issue(
         &self,
-        _repo: &str,
+        repo: &str,
         issue_id: u64,
         issue: &BackendIssueUpsert,
     ) -> Result<BackendIssueRecord, RiptskError> {
@@ -731,11 +904,11 @@ impl IssueTracker for JiraProvider {
             .json()
             .await
             .map_err(|e| RiptskError::General(format!("failed to parse Jira issue key: {e}")))?;
-        let project_key = Self::project_key(_repo);
+        let project_key = Self::project_key(repo);
         self.set_assignee(&jira_key.key, project_key, issue).await?;
 
         // Fetch updated issue
-        self.get_issue(_repo, issue_id).await
+        self.get_issue(repo, issue_id).await
     }
 
     async fn close_issue(
@@ -930,6 +1103,7 @@ mod tests {
                 },
                 has_screen: false,
                 is_available: true,
+                fields: None,
             },
             JiraTransition {
                 id: "2".into(),
@@ -943,6 +1117,7 @@ mod tests {
                 },
                 has_screen: false,
                 is_available: true,
+                fields: None,
             },
         ];
 
@@ -964,6 +1139,7 @@ mod tests {
             },
             has_screen: false,
             is_available: true,
+            fields: None,
         }];
 
         let result = find_transition(&transitions, &IssueState::Done).unwrap();
@@ -984,6 +1160,7 @@ mod tests {
             },
             has_screen: false,
             is_available: true,
+            fields: None,
         }];
 
         let result = find_transition(&transitions, &IssueState::Done);
@@ -1217,18 +1394,40 @@ mod tests {
         .unwrap()
     }
 
+    /// Mount a createmeta mock that returns "Task" as available issue type for PROJ.
+    async fn mount_createmeta_mock(server: &wiremock::MockServer) {
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path_regex(
+                "/rest/api/2/issue/createmeta.*",
+            ))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "projects": [{
+                        "key": "PROJ",
+                        "issuetypes": [
+                            { "name": "Task", "subtask": false },
+                            { "name": "Sub-task", "subtask": true }
+                        ]
+                    }]
+                })),
+            )
+            .mount(server)
+            .await;
+    }
+
     #[tokio::test]
-    async fn wiremock_list_issues() {
+    async fn wiremock_list_issues_cloud() {
         let server = wiremock::MockServer::start().await;
+        // Mock the new /search/jql endpoint (Jira Cloud)
         let search_body = serde_json::json!({
             "issues": [
                 jira_issue_json("10001", "PROJ-1", "First issue", "new"),
                 jira_issue_json("10002", "PROJ-2", "Second issue", "done"),
             ],
-            "total": 2
+            "nextPageToken": null
         });
         wiremock::Mock::given(wiremock::matchers::method("GET"))
-            .and(wiremock::matchers::path_regex("/rest/api/2/search.*"))
+            .and(wiremock::matchers::path_regex("/rest/api/2/search/jql.*"))
             .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(&search_body))
             .mount(&server)
             .await;
@@ -1243,8 +1442,73 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn wiremock_list_issues_server_dc_fallback() {
+        let server = wiremock::MockServer::start().await;
+        // /search/jql returns 404 (Server/DC doesn't have it)
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path_regex("/rest/api/2/search/jql.*"))
+            .respond_with(wiremock::ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+        // Legacy /search endpoint works
+        let search_body = serde_json::json!({
+            "issues": [jira_issue_json("10001", "PROJ-1", "Server issue", "new")],
+            "total": 1
+        });
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/rest/api/2/search"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(&search_body))
+            .mount(&server)
+            .await;
+
+        let provider = mock_provider(&server.uri());
+        let records = provider.list_issues("myteam/PROJ").await.unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].title, "Server issue");
+    }
+
+    #[tokio::test]
+    async fn wiremock_list_issues_cloud_pagination() {
+        let server = wiremock::MockServer::start().await;
+        // Page 1: returns a nextPageToken
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path_regex("/rest/api/2/search/jql.*"))
+            .and(wiremock::matchers::query_param_is_missing("nextPageToken"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "issues": [jira_issue_json("10001", "PROJ-1", "Page 1 issue", "new")],
+                    "nextPageToken": "page2token"
+                })),
+            )
+            .mount(&server)
+            .await;
+        // Page 2: no nextPageToken (end of results)
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path_regex("/rest/api/2/search/jql.*"))
+            .and(wiremock::matchers::query_param(
+                "nextPageToken",
+                "page2token",
+            ))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "issues": [jira_issue_json("10002", "PROJ-2", "Page 2 issue", "done")],
+                    "nextPageToken": null
+                })),
+            )
+            .mount(&server)
+            .await;
+
+        let provider = mock_provider(&server.uri());
+        let records = provider.list_issues("myteam/PROJ").await.unwrap();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].title, "Page 1 issue");
+        assert_eq!(records[1].title, "Page 2 issue");
+    }
+
+    #[tokio::test]
     async fn wiremock_create_issue() {
         let server = wiremock::MockServer::start().await;
+        mount_createmeta_mock(&server).await;
 
         // Mock POST /issue
         wiremock::Mock::given(wiremock::matchers::method("POST"))
@@ -1489,6 +1753,7 @@ mod tests {
     #[tokio::test]
     async fn wiremock_assignee_uses_account_id_when_available() {
         let server = wiremock::MockServer::start().await;
+        mount_createmeta_mock(&server).await;
 
         // Mock POST /issue (create)
         wiremock::Mock::given(wiremock::matchers::method("POST"))
@@ -1502,11 +1767,13 @@ mod tests {
             .mount(&server)
             .await;
 
-        // Mock PUT /issue/PROJ-60 (set assignee via accountId)
+        // Mock PUT /issue/PROJ-60/assignee (dedicated assignee endpoint)
         wiremock::Mock::given(wiremock::matchers::method("PUT"))
-            .and(wiremock::matchers::path("/rest/api/2/issue/PROJ-60"))
+            .and(wiremock::matchers::path(
+                "/rest/api/2/issue/PROJ-60/assignee",
+            ))
             .and(wiremock::matchers::body_json(serde_json::json!({
-                "fields": { "assignee": { "accountId": "known-id-123" } }
+                "accountId": "known-id-123"
             })))
             .respond_with(wiremock::ResponseTemplate::new(204))
             .mount(&server)
@@ -1542,6 +1809,7 @@ mod tests {
     #[tokio::test]
     async fn wiremock_assignee_falls_back_to_search() {
         let server = wiremock::MockServer::start().await;
+        mount_createmeta_mock(&server).await;
 
         // Mock POST /issue (create)
         wiremock::Mock::given(wiremock::matchers::method("POST"))
@@ -1568,9 +1836,11 @@ mod tests {
             .mount(&server)
             .await;
 
-        // Mock PUT /issue/PROJ-61 (set assignee from search result)
+        // Mock PUT /issue/PROJ-61/assignee (dedicated assignee endpoint)
         wiremock::Mock::given(wiremock::matchers::method("PUT"))
-            .and(wiremock::matchers::path("/rest/api/2/issue/PROJ-61"))
+            .and(wiremock::matchers::path(
+                "/rest/api/2/issue/PROJ-61/assignee",
+            ))
             .respond_with(wiremock::ResponseTemplate::new(204))
             .mount(&server)
             .await;
@@ -1653,6 +1923,7 @@ mod tests {
     #[tokio::test]
     async fn wiremock_assignee_uses_stored_name_for_server_dc() {
         let server = wiremock::MockServer::start().await;
+        mount_createmeta_mock(&server).await;
 
         // Mock POST /issue (create)
         wiremock::Mock::given(wiremock::matchers::method("POST"))
@@ -1666,11 +1937,13 @@ mod tests {
             .mount(&server)
             .await;
 
-        // Mock PUT /issue/PROJ-70 (set assignee via name for Server/DC)
+        // Mock PUT /issue/PROJ-70/assignee (dedicated assignee endpoint, Server/DC name)
         wiremock::Mock::given(wiremock::matchers::method("PUT"))
-            .and(wiremock::matchers::path("/rest/api/2/issue/PROJ-70"))
+            .and(wiremock::matchers::path(
+                "/rest/api/2/issue/PROJ-70/assignee",
+            ))
             .and(wiremock::matchers::body_json(serde_json::json!({
-                "fields": { "assignee": { "name": "jdoe" } }
+                "name": "jdoe"
             })))
             .respond_with(wiremock::ResponseTemplate::new(204))
             .mount(&server)
