@@ -185,6 +185,7 @@ pub fn register_project_auto(
                 default_org: None,
                 path: None,
                 vc: None,
+                default_issue_type: None,
             };
             config.backends.push(backend.clone());
             return Ok(Some(backend));
@@ -208,6 +209,7 @@ pub fn register_project_auto(
                 default_org: None,
                 path: Some(path),
                 vc: None,
+                default_issue_type: None,
             };
             config.backends.push(backend.clone());
             return Ok(Some(backend));
@@ -230,6 +232,7 @@ pub fn register_project_auto(
         default_org: None,
         path: Some(path),
         vc: None,
+        default_issue_type: None,
     };
     config.backends.push(backend.clone());
     Ok(Some(backend))
@@ -377,6 +380,7 @@ pub fn register_project_interactive(
         default_org: None,
         path,
         vc: None,
+        default_issue_type: None,
     };
     validate_new_backend(config, &backend_config)?;
     config.backends.push(backend_config.clone());
@@ -593,6 +597,7 @@ mod tests {
             default_org: None,
             path: Some(canon),
             vc: None,
+            default_issue_type: None,
         });
 
         let detected = detect_from_cwd(&cwd, &config).expect("detect");
@@ -645,6 +650,7 @@ mod tests {
             default_org: None,
             path: Some(parent_canon),
             vc: None,
+            default_issue_type: None,
         });
         // Remote backend registered by URL — should win over parent path
         config.backends.push(BackendConfig {
@@ -656,6 +662,7 @@ mod tests {
             default_org: None,
             path: None,
             vc: None,
+            default_issue_type: None,
         });
 
         let cwd = Utf8PathBuf::from_path_buf(child_dir).expect("utf8");
@@ -682,6 +689,7 @@ mod tests {
             default_org: None,
             path: Some("/some/other/myapp".into()),
             vc: None,
+            default_issue_type: None,
         });
 
         let name = deduplicate_name("myapp", &cwd, &config);
@@ -705,6 +713,7 @@ mod tests {
             default_org: None,
             path: Some("/some/other/myapp".into()),
             vc: None,
+            default_issue_type: None,
         });
         config.backends.push(BackendConfig {
             name: "parent-myapp".into(),
@@ -715,6 +724,7 @@ mod tests {
             default_org: None,
             path: Some("/some/other/parent-myapp".into()),
             vc: None,
+            default_issue_type: None,
         });
 
         let name = deduplicate_name("myapp", &cwd, &config);

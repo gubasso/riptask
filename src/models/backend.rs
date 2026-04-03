@@ -37,4 +37,8 @@ pub struct BackendConfig {
     pub path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vc: Option<String>,
+    /// Jira-specific: default issue type for creation (e.g. "Task", "Story", "Bug").
+    /// When absent, the type is discovered from Jira's create metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_issue_type: Option<String>,
 }

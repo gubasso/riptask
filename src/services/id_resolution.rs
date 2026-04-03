@@ -138,6 +138,7 @@ mod tests {
             default_org: None,
             path: Some(cwd.to_string()),
             vc: None,
+            default_issue_type: None,
         }]);
 
         let resolved = resolve_id(&paths, &config, &cwd, "61").expect("resolve numeric id");

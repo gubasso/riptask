@@ -146,11 +146,13 @@ impl<'a> SyncEngine<'a> {
                         Backend::Gitlab => issue.frontmatter.gitlab.as_ref().and_then(|meta| {
                             (meta.repo == repo).then_some(meta.issue_id).flatten()
                         }),
-                        Backend::Jira => issue
-                            .frontmatter
-                            .jira
-                            .as_ref()
-                            .and_then(|meta| meta.issue_id),
+                        Backend::Jira => issue.frontmatter.jira.as_ref().and_then(|meta| {
+                            let expected_key =
+                                crate::adapters::jira::JiraProvider::project_key(repo);
+                            (meta.project_key == expected_key)
+                                .then_some(meta.issue_id)
+                                .flatten()
+                        }),
                         Backend::Local => None,
                     };
                 let Some(issue_id) = meta else {
@@ -382,11 +384,12 @@ impl<'a> SyncEngine<'a> {
                     meta.repo == backend.repo.clone().unwrap_or_default()
                         && meta.issue_id == Some(issue_id)
                 }),
-                Backend::Jira => issue
-                    .frontmatter
-                    .jira
-                    .as_ref()
-                    .is_some_and(|meta| meta.issue_id == Some(issue_id)),
+                Backend::Jira => issue.frontmatter.jira.as_ref().is_some_and(|meta| {
+                    let expected_key = crate::adapters::jira::JiraProvider::project_key(
+                        backend.repo.as_deref().unwrap_or_default(),
+                    );
+                    meta.project_key == expected_key && meta.issue_id == Some(issue_id)
+                }),
                 Backend::Local => false,
             };
             if matches {
@@ -1322,6 +1325,7 @@ mod tests {
             default_org: None,
             path: None,
             vc: None,
+            default_issue_type: None,
         };
         let mut config = default_config();
         config.backends = vec![backend.clone()];
