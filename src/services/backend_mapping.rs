@@ -1,3 +1,13 @@
+//! Backend mapping — builds providers from config, converts between backend and local formats.
+//!
+//! This module is the glue between `BackendConfig` entries and the trait objects
+//! that commands use. It handles:
+//! - Provider construction: `build_issue_tracker()`, `build_version_control()`
+//! - VC resolution: `resolve_vc_for_backend()` (links Jira → GitHub/GitLab for PRs)
+//! - Credential resolution for all backends (env vars → CLI tools → error)
+//! - Data conversion: `backend_to_local()`, `issue_to_upsert()`, `update_issue_from_backend()`
+//! - Git HTTP auth: `resolve_git_auth()` (returns None for Jira — no git involvement)
+
 use crate::adapters::backend::{
     BackendIssueRecord, BackendIssueUpsert, BackendProvider, IssueTracker, VersionControl,
 };
@@ -202,6 +212,8 @@ pub fn resolve_vc_for_backend<'a>(
     }
 }
 
+/// Resolve git HTTP credentials for a backend. Returns `None` for Jira and Local
+/// because Jira has no git involvement — git auth comes from the VC layer separately.
 pub fn resolve_git_auth(backend: &BackendConfig) -> Option<GitHttpAuth> {
     match backend.backend {
         Backend::Gitlab => {
@@ -227,6 +239,8 @@ pub fn resolve_git_auth(backend: &BackendConfig) -> Option<GitHttpAuth> {
     }
 }
 
+/// Convert a local `IssueDocument` to a `BackendIssueUpsert` for pushing to a remote backend.
+/// Extracts Jira-specific round-trip metadata (assignee identity) from `JiraIssueMeta`.
 pub fn issue_to_upsert(doc: &IssueDocument) -> BackendIssueUpsert {
     let state = match doc.frontmatter.status {
         IssueState::Done => "closed",
@@ -270,6 +284,9 @@ pub fn issue_to_upsert(doc: &IssueDocument) -> BackendIssueUpsert {
     }
 }
 
+/// Convert a `BackendIssueRecord` from any backend into a local `IssueDocument`.
+/// Populates the backend-specific metadata (github/gitlab/jira) based on backend type.
+/// For Jira, extracts the issue key from the browse URL and stores assignee identity.
 pub fn backend_to_local(record: &BackendIssueRecord, backend: &BackendConfig) -> IssueDocument {
     let state = state_from_backend(record);
     let issue_id = issue_ids::format_id(
@@ -596,6 +613,11 @@ To fix, do one of:\n\
     }
 }
 
+/// Resolve Jira credentials following the same pattern as GitHub/GitLab:
+/// 1. `JIRA_API_TOKEN` + `JIRA_EMAIL` → Cloud basic auth (base64 `email:token`)
+/// 2. `JIRA_API_TOKEN` alone → Server/DC PAT auth (Bearer token)
+/// 3. `jira-cli-go` config + system keychain → auto-detect Cloud vs Server
+/// 4. Error with actionable guidance
 fn resolve_jira_credentials(
     backend_name: &str,
     host: &str,
@@ -643,6 +665,13 @@ To fix, do one of:\n\
     )))
 }
 
+/// Read credentials from `jira-cli-go`'s config and system keychain.
+///
+/// `jira-cli-go` (~3.8k GitHub stars) is the de facto Jira CLI. `jira init`
+/// stores config at `~/.config/.jira/.config.yml` (server URL, login email)
+/// and the API token in the system keychain (macOS Keychain, GNOME Keyring,
+/// Windows Credential Manager) under service="jira-cli".
+///
 /// Returns `(login, token, is_bearer)`. `is_bearer` is true for Server/DC PAT auth.
 fn run_jira_cli_go_auth(host: &str) -> Result<(String, String, bool), String> {
     // Parse ~/.config/.jira/.config.yml
@@ -732,7 +761,8 @@ fn state_from_backend(record: &BackendIssueRecord) -> IssueState {
 ///
 /// GitHub allows `completed` / `not_planned` / `duplicate` when closing
 /// and `reopened` when opening. Sending a mismatched reason triggers a
-/// 422 validation error.
+/// 422 validation error. Jira resolutions map through the same values:
+/// "Done" ↔ "completed", "Won't Do" ↔ "not_planned", "Duplicate" ↔ "duplicate".
 fn sanitize_state_reason(state: &str, reason: Option<&str>) -> Option<String> {
     let reason = reason?;
     let valid = match state {
