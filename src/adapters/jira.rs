@@ -1,3 +1,32 @@
+//! Jira backend — implements [`IssueTracker`] only (no [`VersionControl`]).
+//!
+//! Uses direct `reqwest` calls against Jira REST API v2 (`/rest/api/2/`).
+//! API v2 was chosen over v3 because:
+//! - v2 uses plain text / wiki markup for descriptions (no ADF conversion needed)
+//! - Jira Server/Data Center only supports v2 (v3 is Cloud-only)
+//! - v2 gives automatic compatibility with both Cloud and Server
+//!
+//! The spec originally planned to use the `gouqi` crate, but direct reqwest
+//! proved more practical — it handles Cloud/Server endpoint differences
+//! (dual search endpoints, assignee identity models), transition field filtering,
+//! and pagination quirks without fighting a third-party abstraction.
+//!
+//! ## Authentication
+//!
+//! Credentials are resolved externally via [`resolve_jira_credentials`] in
+//! `backend_mapping.rs`. Two auth modes:
+//! - **Jira Cloud**: Basic auth (`email:token` base64) via API tokens
+//! - **Jira Server/DC**: Bearer auth via Personal Access Tokens (PAT)
+//!
+//! ## State mapping
+//!
+//! Jira statuses are fully customizable per workflow, but every status belongs
+//! to one of 4 fixed `statusCategory.key` values: `new`, `indeterminate`,
+//! `done`, `undefined`. We map these to `"open"`/`"closed"` and use `status::`
+//! labels for fine-grained riptsk states (backlog/todo/in-progress/review).
+//! State changes go through the transitions API — you cannot set `fields.status`
+//! directly on a Jira issue.
+
 use crate::adapters::backend::{
     BackendIssueRecord, BackendIssueUpsert, DeleteOutcome, IssueTracker,
 };
@@ -21,6 +50,11 @@ pub enum JiraAuth {
 
 // ---------------------------------------------------------------------------
 // Jira API v2 deserialization structs
+//
+// These mirror the JSON shape returned by `/rest/api/2/issue` and
+// `/rest/api/2/search`. Fields use `#[serde(rename)]` to match Jira's
+// camelCase naming. Optional fields use `Option` or `#[serde(default)]`
+// to handle missing data gracefully across Cloud and Server responses.
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Deserialize)]
@@ -120,6 +154,8 @@ pub struct JiraComment {
     pub body: String,
 }
 
+/// A workflow transition returned by `GET /issue/{key}/transitions`.
+/// Transitions are the only way to change issue status in Jira.
 #[derive(Debug, Deserialize)]
 pub struct JiraTransition {
     pub id: String,
@@ -127,9 +163,11 @@ pub struct JiraTransition {
     pub to: JiraTransitionTarget,
     #[serde(rename = "hasScreen", default)]
     pub has_screen: bool,
+    /// Server/DC may omit `isAvailable`, so default to true.
     #[serde(rename = "isAvailable", default = "default_true")]
     pub is_available: bool,
     /// Transition-screen fields (present when fetched with `expand=transitions.fields`).
+    /// Used to filter out transitions requiring fields we can't populate.
     #[serde(default)]
     pub fields: Option<serde_json::Value>,
 }
@@ -156,7 +194,8 @@ pub struct JiraSearchResult {
     pub total: u64,
 }
 
-/// Response from the newer `/search/jql` endpoint (Jira Cloud).
+/// Response from the newer `/search/jql` endpoint (Jira Cloud, required since Oct 2025).
+/// Uses cursor-based pagination via `nextPageToken` instead of offset-based.
 #[derive(Debug, Deserialize)]
 struct JiraSearchJqlResult {
     pub issues: Vec<JiraIssue>,
@@ -174,9 +213,17 @@ pub struct JiraCreateResponse {
 
 // ---------------------------------------------------------------------------
 // State mapping functions
+//
+// Jira has 4 fixed status categories (new, indeterminate, done, undefined).
+// We map these to the binary open/closed state that BackendIssueRecord uses,
+// then derive fine-grained riptsk states (backlog/todo/in-progress/review)
+// from the status name using heuristics (e.g. "In Review" → status::review).
 // ---------------------------------------------------------------------------
 
 /// Map Jira status category key to BackendIssueRecord.state ("open" / "closed").
+///
+/// Only `"done"` maps to `"closed"`. The `"undefined"` category is a system
+/// artifact that appears after workflow migrations — treat as open.
 pub fn jira_status_to_backend_state(status_category_key: &str) -> &'static str {
     match status_category_key {
         "done" => "closed",
@@ -184,7 +231,7 @@ pub fn jira_status_to_backend_state(status_category_key: &str) -> &'static str {
     }
 }
 
-/// Map Jira status category key + status name to a `status::` label.
+/// Map Jira status category + status name to a `status::` label for fine-grained state.
 pub fn jira_status_to_label(status_category_key: &str, status_name: &str) -> String {
     let lower = status_name.to_lowercase();
     match status_category_key {
@@ -228,9 +275,10 @@ pub fn state_reason_to_jira_resolution(reason: Option<&str>) -> &'static str {
 
 /// Find the best transition for a target IssueState.
 ///
-/// When transition fields metadata is available (via `expand=transitions.fields`),
-/// transitions that require unsupported screen fields (other than `resolution`)
-/// are excluded from candidates.
+/// Algorithm: filter by target status category → exclude transitions with
+/// unsupported required screen fields → prefer exact status name match →
+/// fall back to first available. If all candidates require unsupported fields,
+/// we still try the first one (Jira often doesn't enforce screen fields via API).
 pub fn find_transition<'a>(
     transitions: &'a [JiraTransition],
     target: &IssueState,
@@ -467,13 +515,24 @@ pub fn upsert_to_jira_update(upsert: &BackendIssueUpsert) -> serde_json::Value {
 
 // ---------------------------------------------------------------------------
 // JiraProvider — HTTP client wrapper
+//
+// Wraps reqwest::Client with pre-configured auth headers. All API calls go
+// through the helper methods (get/post/put/delete_request) which attach the
+// Authorization header automatically. This is simpler than using the gouqi
+// crate because we need fine-grained control over:
+// - Dual search endpoints (Cloud vs Server/DC)
+// - Transition field filtering
+// - Assignee identity resolution (accountId vs name)
+// - Pagination strategy differences
 // ---------------------------------------------------------------------------
 
 pub struct JiraProvider {
     client: reqwest::Client,
     host: String,
+    /// Pre-computed `Authorization` header value (Basic or Bearer).
     auth_header: String,
     /// Configured default issue type for creation (from `BackendConfig.default_issue_type`).
+    /// When set, skips the create metadata API call to discover valid types.
     configured_issue_type: Option<String>,
 }
 
@@ -592,9 +651,12 @@ impl JiraProvider {
     const SEARCH_FIELDS: &str = "summary,description,status,resolution,labels,assignee,fixVersions,issuetype,priority,duedate,security,comment,updated,created";
     const MAX_SEARCH_PAGES: usize = 100;
 
+    /// Search issues using JQL. Tries Cloud endpoint first, falls back to Server/DC.
+    ///
+    /// Jira Cloud deprecated `/search` in favor of `/search/jql` (Oct 2025).
+    /// Server/DC doesn't have `/search/jql` at all. We try Cloud first; if we
+    /// get a 404, we know it's Server/DC and fall back to the legacy endpoint.
     async fn search_issues(&self, jql: &str) -> Result<Vec<JiraIssue>, RiptskError> {
-        // Try the new /search/jql endpoint first (Jira Cloud, required since Oct 2025).
-        // Falls back to the legacy /search endpoint for Server/DC.
         match self.search_issues_jql(jql).await {
             Ok(issues) => Ok(issues),
             Err(ref e) if e.to_string().contains("404") => {
@@ -675,6 +737,9 @@ impl JiraProvider {
         Ok(result.transitions)
     }
 
+    /// Execute a workflow transition on an issue. Optionally includes fields
+    /// (e.g. resolution when closing). Retries once on 409 Conflict, which
+    /// Jira Cloud returns when two transitions race on the same issue.
     async fn transition_issue(
         &self,
         issue_key: &str,
@@ -690,7 +755,6 @@ impl JiraProvider {
         let path = format!("/issue/{issue_key}/transitions");
         let response = self.post(&path, &body).await?;
         if response.status().as_u16() == 409 {
-            // 409 Conflict — retry once (transition race)
             Self::check_response(self.post(&path, &body).await?).await?;
         } else {
             Self::check_response(response).await?;
@@ -772,8 +836,15 @@ impl JiraProvider {
         Ok(types.into_iter().next().unwrap())
     }
 
-    /// Set the assignee on a Jira issue using the dedicated assignee endpoint.
-    /// Uses `accountId` for Cloud or `name` for Server/DC.
+    /// Set the assignee on a Jira issue using the dedicated `/issue/{key}/assignee` endpoint.
+    ///
+    /// Assignee identity differs by platform:
+    /// - **Cloud**: requires `accountId` (opaque string like "5b10a284...")
+    /// - **Server/DC**: requires `name` (username like "jdoe")
+    ///
+    /// Resolution priority: stored accountId → stored name → search by display name.
+    /// The stored values come from `JiraIssueMeta` round-trip metadata, avoiding
+    /// an API call on every push when the assignee hasn't changed.
     async fn set_assignee(
         &self,
         issue_key: &str,

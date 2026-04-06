@@ -113,6 +113,9 @@ pub fn validate_config(config: &Config) -> Result<()> {
     Ok(())
 }
 
+/// Validate Jira-specific config requirements:
+/// - `host` is required and must use HTTPS
+/// - `repo` must use `org/PROJECT_KEY` format (must contain `/`)
 fn validate_jira_backends(config: &Config) -> Result<()> {
     use crate::models::Backend;
     for backend in &config.backends {
@@ -145,6 +148,8 @@ fn validate_jira_backends(config: &Config) -> Result<()> {
     Ok(())
 }
 
+/// Validate that `vc` fields reference existing GitHub or GitLab backends.
+/// Prevents referencing nonexistent backends or using Jira/Local as a VC target.
 fn validate_vc_references(config: &Config) -> Result<()> {
     use crate::models::Backend;
     for backend in &config.backends {
