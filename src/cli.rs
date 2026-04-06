@@ -56,6 +56,10 @@ pub enum Commands {
     Path(IdArgs),
     /// Create, switch to, or delete an issue branch
     Branch(BranchArgs),
+    /// Create a work-clone for an issue
+    Clone(CloneArgs),
+    /// Push changes and remove the current work-clone
+    Unclone(UncloneArgs),
     /// Complete an issue: merge PR, clean up branches, close issue (convenience wrapper — see `tsk pr merge`, `tsk branch -D`, `tsk close`)
     Done(DoneArgs),
     /// Start working on a new issue: create issue, branch, and PR (convenience wrapper — see `tsk new`, `tsk branch`, `tsk pr`)
@@ -128,6 +132,21 @@ pub struct BranchArgs {
     /// Skip confirmation prompt (for -d/-D)
     #[arg(short = 'y', long = "yes")]
     pub yes: bool,
+}
+
+#[derive(Debug, Clone, Args, Default)]
+pub struct CloneArgs {
+    #[command(flatten)]
+    pub scope: ScopeArgs,
+    /// Issue ID
+    pub id: Option<String>,
+}
+
+#[derive(Debug, Clone, Args, Default)]
+pub struct UncloneArgs {
+    /// Discard uncommitted changes before pushing
+    #[arg(short = 'f', long)]
+    pub force: bool,
 }
 
 #[derive(Debug, Clone, Args, Default)]

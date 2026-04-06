@@ -103,6 +103,14 @@ fn run() -> Result<(), RiptskError> {
                 .context("failed to construct tokio runtime")?;
             runtime.block_on(commands::branch::branch(&paths, args))
         }
+        Commands::Clone(args) => {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .context("failed to construct tokio runtime")?;
+            runtime.block_on(commands::clone_cmd::run(&paths, args))
+        }
+        Commands::Unclone(args) => commands::unclone::run(&paths, args),
         Commands::Done(args) => {
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
