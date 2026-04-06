@@ -185,10 +185,135 @@ tsk reorder-up <ID>          # move issue up in its lane
 tsk reorder-down <ID>        # move issue down in its lane
 ```
 
-### Sync with GitHub / GitLab
+### Backend authentication
 
-Requires a configured remote in `riptsk.yaml` and an API token
-(`GITHUB_TOKEN`/`GH_TOKEN` for GitHub, `GITLAB_TOKEN` for GitLab).
+riptsk looks for API tokens in environment variables, falling back to CLI
+tool keychains when available.
+
+#### GitHub
+
+Tried in order:
+
+1. `GITHUB_TOKEN` environment variable
+2. `GH_TOKEN` environment variable
+3. `gh auth token` (GitHub CLI keychain)
+
+```bash
+export GITHUB_TOKEN="ghp_..."
+```
+
+#### GitLab
+
+Tried in order:
+
+1. `GITLAB_TOKEN` environment variable
+2. `glab auth status --show-token` (GitLab CLI keychain)
+
+```bash
+export GITLAB_TOKEN="glpat-..."
+```
+
+#### Jira
+
+Authentication differs between Jira Cloud and Jira Server/Data Center.
+
+**Jira Cloud** (basic auth -- both variables required):
+
+```bash
+export JIRA_EMAIL="you@company.com"
+export JIRA_API_TOKEN="<api-token>"    # from id.atlassian.com
+```
+
+**Jira Server / Data Center** (PAT bearer auth):
+
+```bash
+export JIRA_API_TOKEN="<personal-access-token>"
+```
+
+Set `JIRA_AUTH_TYPE=bearer` to force bearer mode when both `JIRA_EMAIL` and
+`JIRA_API_TOKEN` are present.
+
+**Fallback:** if no environment variables are set, riptsk reads credentials
+from the `jira-cli-go` keychain (`~/.config/.jira/.config.yml`).
+
+### Backend setup
+
+Each project you track needs a backend entry in the `backends` section of
+`riptsk.yaml`. Backends tell riptsk where to sync issues and how to
+authenticate.
+
+#### Auto-detection (`tsk register`)
+
+The easiest way to add a backend is to `cd` into your project and run:
+
+```bash
+cd ~/projects/my-app
+tsk register
+```
+
+riptsk reads the `origin` remote URL and infers the backend type:
+
+| Remote host | Detected type |
+|-------------|---------------|
+| `github.com` | `github` |
+| Any host containing `gitlab` (e.g., `gitlab.com`, `gitlab.internal.co`) | `gitlab` |
+| Anything else | `local` |
+
+You are then prompted to confirm or override the name, type, host, repo,
+and default board. If the project is already registered, `tsk register`
+exits immediately.
+
+> **Note:** Jira backends cannot be auto-detected from a git remote and must
+> be added manually (see below).
+
+Use `tsk register --list` to see all registered backends.
+
+#### Manual configuration
+
+Add entries directly to `riptsk.yaml` for full control or for backends that
+cannot be auto-detected (like Jira):
+
+```yaml
+backends:
+  # GitHub (host defaults to github.com)
+  - name: my-github
+    type: github
+    repo: myorg/my-app
+
+  # Self-hosted GitLab
+  - name: my-gitlab
+    type: gitlab
+    host: https://gitlab.internal.co
+    repo: team/my-app
+
+  # Jira Cloud
+  - name: my-jira
+    type: jira
+    host: https://myteam.atlassian.net   # required, must start with https://
+    repo: myorg/PROJ                     # org/PROJECT_KEY format
+    default_issue_type: Task             # optional; skips API discovery if set
+    vc: my-github                        # optional; links to a GitHub/GitLab
+                                         # backend for branch/PR workflows
+
+  # Local-only (no remote sync)
+  - name: side-project
+    type: local
+    path: /home/user/projects/side-project
+```
+
+**Jira-specific fields:**
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `host` | yes | Instance URL (e.g., `https://myteam.atlassian.net`) |
+| `repo` | yes | `org/PROJECT_KEY` (e.g., `chrono/WHL`) |
+| `default_issue_type` | no | Issue type for new issues (`Task`, `Story`, `Bug`, etc.). If omitted, riptsk queries the Jira API to discover valid types. |
+| `vc` | no | Name of a GitHub/GitLab backend to use for branch and PR operations. |
+
+### Sync with GitHub / GitLab / Jira
+
+Requires a configured backend in `riptsk.yaml` and the appropriate API
+token (see [Backend authentication](#backend-authentication)).
 
 ```bash
 tsk sync                     # pull then push (default)
@@ -436,7 +561,7 @@ The main configuration file is `riptsk.yaml` in `$RIPTSK_REPO`. Run `tsk init` t
 generate one with sensible defaults. Key sections:
 
 - **defaults** -- default board, status, priority, template for new issues
-- **remotes** -- GitHub/GitLab project connections
+- **backends** -- GitHub/GitLab/Jira project connections
 - **boards** -- kanban board definitions with custom status lists
 - **ui** -- opener command, tree depth, fzf options
 - **ai** -- command template, enabled features
