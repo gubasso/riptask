@@ -1,5 +1,6 @@
 pub mod ai;
 pub mod branch;
+pub mod clone_cmd;
 pub mod config_cmd;
 pub mod done;
 pub mod hooks;
@@ -11,4 +12,5 @@ pub mod register;
 pub mod start;
 pub mod sync_cmd;
 pub mod templates;
+pub mod unclone;
 pub mod views;

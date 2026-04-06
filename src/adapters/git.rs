@@ -8,6 +8,7 @@ pub trait GitBackend {
     fn init(&self, path: &Path) -> Result<(), RiptskError>;
     fn add(&self, repo: &Path, files: &[&Path]) -> Result<(), RiptskError>;
     fn commit(&self, repo: &Path, message: &str) -> Result<(), RiptskError>;
+    fn repo_root(&self, cwd: &Path) -> Result<std::path::PathBuf, RiptskError>;
     fn merge_file(&self, local: &Path, base: &Path, remote: &Path) -> Result<String, RiptskError>;
     fn has_changes(&self, repo: &Path) -> Result<bool, RiptskError>;
     fn has_uncommitted_changes(&self, repo: &Path) -> Result<bool, RiptskError>;
@@ -57,6 +58,12 @@ pub trait GitBackend {
     fn diff_between(&self, repo: &Path, base: &str, head: &str) -> Result<String, RiptskError>;
     fn working_tree_diff(&self, repo: &Path) -> Result<String, RiptskError>;
     fn head_sha(&self, repo: &Path) -> Result<String, RiptskError>;
+    fn clone_with_reference(
+        &self,
+        reference_repo: &Path,
+        remote_url: &str,
+        target_dir: &Path,
+    ) -> Result<(), RiptskError>;
 }
 
 #[derive(Debug, Clone, Default)]
@@ -103,11 +110,52 @@ impl CliGit {
         }
         status_to_result(command.status()?)
     }
+
+    fn prepare_auth_command(&self) -> Result<(Command, Option<tempfile::TempPath>), RiptskError> {
+        let mut command = Command::new("git");
+        let Some(auth) = self.auth.as_ref() else {
+            return Ok((command, None));
+        };
+
+        let mut askpass = tempfile::NamedTempFile::new().map_err(RiptskError::Io)?;
+        askpass
+            .write_all(build_askpass_script(&auth.token).as_bytes())
+            .map_err(RiptskError::Io)?;
+        askpass.flush().map_err(RiptskError::Io)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(askpass.path(), std::fs::Permissions::from_mode(0o700))
+                .map_err(RiptskError::Io)?;
+        }
+        let askpass_path = askpass.into_temp_path();
+        command
+            .env("GIT_ASKPASS", &askpass_path)
+            .env("GIT_TERMINAL_PROMPT", "0");
+        Ok((command, Some(askpass_path)))
+    }
 }
 
 impl GitBackend for CliGit {
     fn init(&self, path: &Path) -> Result<(), RiptskError> {
         run_git(path, ["init"])
+    }
+
+    fn repo_root(&self, cwd: &Path) -> Result<std::path::PathBuf, RiptskError> {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(cwd)
+            .args(["rev-parse", "--show-toplevel"])
+            .output()?;
+        if output.status.success() {
+            Ok(std::path::PathBuf::from(
+                String::from_utf8_lossy(&output.stdout).trim(),
+            ))
+        } else {
+            Err(RiptskError::General(
+                "failed to determine git repository root".into(),
+            ))
+        }
     }
 
     fn add(&self, repo: &Path, files: &[&Path]) -> Result<(), RiptskError> {
@@ -447,6 +495,22 @@ impl GitBackend for CliGit {
         Ok(truncate_diff(
             String::from_utf8_lossy(&output.stdout).trim().to_owned(),
         ))
+    }
+
+    fn clone_with_reference(
+        &self,
+        reference_repo: &Path,
+        remote_url: &str,
+        target_dir: &Path,
+    ) -> Result<(), RiptskError> {
+        let (mut command, _askpass_path) = self.prepare_auth_command()?;
+        command
+            .arg("clone")
+            .arg("--reference")
+            .arg(reference_repo)
+            .arg(remote_url)
+            .arg(target_dir);
+        status_to_result(command.status()?)
     }
 }
 
