@@ -56,11 +56,23 @@ pub struct GitlabIssueMeta {
     pub last_pushed_state: Option<IssueState>,
 }
 
+/// Jira-specific metadata stored in the issue frontmatter for round-trip fidelity.
+///
+/// Key design decisions:
+/// - `issue_key` (e.g. "PROJ-123") is tracked alongside `issue_id` because Jira's
+///   transitions API uses keys, not numeric IDs, and keys are human-readable.
+/// - `assignee_account_id` (Cloud) and `assignee_name` (Server/DC) are cached to
+///   avoid resolving displayName → identity on every push. Jira Cloud uses opaque
+///   `accountId` strings; Server/DC uses usernames.
+/// - `issue_type` is stored so it can be displayed locally without an API call.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct JiraIssueMeta {
+    /// Jira project key extracted from the `repo` config (e.g. "PROJ" from "org/PROJ").
     pub project_key: String,
+    /// Human-readable issue key (e.g. "PROJ-123"). Used for browse URLs and transitions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub issue_key: Option<String>,
+    /// Numeric issue ID from the API. Used as `BackendIssueRecord.issue_id`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub issue_id: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -70,8 +82,10 @@ pub struct JiraIssueMeta {
     pub last_pushed_state: Option<IssueState>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub issue_type: Option<String>,
+    /// Jira Cloud: opaque account ID for push round-trip (avoids user search).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assignee_account_id: Option<String>,
+    /// Jira Server/DC: username for push round-trip.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assignee_name: Option<String>,
 }
