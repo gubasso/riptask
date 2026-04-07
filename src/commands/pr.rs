@@ -203,6 +203,19 @@ async fn merge(paths: &AppPaths, args: PrMergeArgs) -> Result<(), RiptskError> {
     let backend = resolve_hosted_backend(&config, &issue)?;
     let git = CliGit::with_auth(resolve_git_auth(backend));
     let repo_path = current_repo()?;
+    let stashed = if git.has_working_tree_changes(repo_path.as_path())? {
+        let current_branch = git.current_branch(repo_path.as_path()).unwrap_or_default();
+        let msg = format!(
+            "tsk pr merge: auto-stash ({} on {}) [{}]",
+            issue.frontmatter.id,
+            current_branch,
+            now_utc()
+        );
+        ui::info(&format!("stashing uncommitted changes: {msg}"));
+        git.stash_push(repo_path.as_path(), &msg)?
+    } else {
+        false
+    };
     let provider = build_provider_for_backend(backend)?;
     let repo_name = backend.repo.as_deref().unwrap_or_default();
     let pr_number = resolve_pr_number(provider.as_ref(), repo_name, &issue).await?;
@@ -214,7 +227,7 @@ async fn merge(paths: &AppPaths, args: PrMergeArgs) -> Result<(), RiptskError> {
         force_push: args.force_push,
     };
 
-    merge_pr_workflow(
+    let result = merge_pr_workflow(
         provider.as_ref(),
         &DialoguerPrompts,
         &git,
@@ -225,7 +238,11 @@ async fn merge(paths: &AppPaths, args: PrMergeArgs) -> Result<(), RiptskError> {
         &issue,
         &opts,
     )
-    .await
+    .await;
+    if stashed {
+        crate::adapters::git::try_stash_pop(&git, repo_path.as_path());
+    }
+    result
 }
 
 async fn edit(paths: &AppPaths, args: PrEditArgs) -> Result<(), RiptskError> {

@@ -64,6 +64,12 @@ pub trait GitBackend {
         remote_url: &str,
         target_dir: &Path,
     ) -> Result<(), RiptskError>;
+    /// Stash uncommitted changes (staged, unstaged, and untracked) with a message.
+    /// Returns `true` if a stash entry was created, `false` if there was nothing to stash.
+    fn stash_push(&self, repo: &Path, message: &str) -> Result<bool, RiptskError>;
+    /// Pop the most recent stash entry.
+    /// Returns `true` on clean apply, `false` if conflicts occurred (stash is preserved).
+    fn stash_pop(&self, repo: &Path) -> Result<bool, RiptskError>;
 }
 
 #[derive(Debug, Clone, Default)]
@@ -512,6 +518,50 @@ impl GitBackend for CliGit {
             .arg(target_dir);
         status_to_result(command.status()?)
     }
+
+    fn stash_push(&self, repo: &Path, message: &str) -> Result<bool, RiptskError> {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["stash", "push", "--include-untracked", "-m", message])
+            .output()?;
+        if !output.status.success() {
+            return Err(RiptskError::General("git stash push failed".into()));
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Ok(!stdout.contains("No local changes to save"))
+    }
+
+    fn stash_pop(&self, repo: &Path) -> Result<bool, RiptskError> {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["stash", "pop"])
+            .output()?;
+        if output.status.success() {
+            return Ok(true);
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        // Conflicts during apply: stash is preserved, user must resolve manually
+        if stderr.contains("CONFLICT") || stderr.contains("could not apply") {
+            return Ok(false);
+        }
+        Err(RiptskError::General(format!(
+            "git stash pop failed: {}",
+            stderr.trim()
+        )))
+    }
+}
+
+/// Attempt to pop an auto-stashed entry, printing a user-friendly message on success or failure.
+pub fn try_stash_pop(git: &dyn GitBackend, repo: &Path) {
+    match git.stash_pop(repo) {
+        Ok(true) => crate::ui::success("restored auto-stashed changes"),
+        Ok(false) => crate::ui::warn(
+            "auto-stashed changes conflicted; resolve the conflicts, then run `git stash drop` to remove the stash entry",
+        ),
+        Err(e) => crate::ui::warn(&format!("failed to restore stashed changes: {e}")),
+    }
 }
 
 fn run_git<const N: usize>(repo: &Path, args: [&str; N]) -> Result<(), RiptskError> {
@@ -616,6 +666,99 @@ mod tests {
             .expect("working tree diff");
 
         assert!(diff.is_empty());
+    }
+
+    #[test]
+    fn stash_push_returns_true_when_changes_exist() {
+        let temp = tempdir().expect("temp dir");
+        run_git(temp.path(), &["init"]);
+        run_git(temp.path(), &["config", "user.name", "Test User"]);
+        run_git(temp.path(), &["config", "user.email", "test@example.com"]);
+
+        fs::write(temp.path().join("file.txt"), "initial\n").expect("write file");
+        run_git(temp.path(), &["add", "file.txt"]);
+        run_git(temp.path(), &["commit", "-m", "initial"]);
+
+        fs::write(temp.path().join("file.txt"), "modified\n").expect("modify file");
+
+        let created = CliGit::new()
+            .stash_push(temp.path(), "test stash")
+            .expect("stash push");
+        assert!(created);
+    }
+
+    #[test]
+    fn stash_push_returns_false_when_clean() {
+        let temp = tempdir().expect("temp dir");
+        run_git(temp.path(), &["init"]);
+        run_git(temp.path(), &["config", "user.name", "Test User"]);
+        run_git(temp.path(), &["config", "user.email", "test@example.com"]);
+
+        fs::write(temp.path().join("file.txt"), "stable\n").expect("write file");
+        run_git(temp.path(), &["add", "file.txt"]);
+        run_git(temp.path(), &["commit", "-m", "initial"]);
+
+        let created = CliGit::new()
+            .stash_push(temp.path(), "test stash")
+            .expect("stash push");
+        assert!(!created);
+    }
+
+    #[test]
+    fn stash_pop_restores_changes() {
+        let temp = tempdir().expect("temp dir");
+        run_git(temp.path(), &["init"]);
+        run_git(temp.path(), &["config", "user.name", "Test User"]);
+        run_git(temp.path(), &["config", "user.email", "test@example.com"]);
+
+        fs::write(temp.path().join("file.txt"), "initial\n").expect("write file");
+        run_git(temp.path(), &["add", "file.txt"]);
+        run_git(temp.path(), &["commit", "-m", "initial"]);
+
+        fs::write(temp.path().join("file.txt"), "modified\n").expect("modify file");
+
+        let git = CliGit::new();
+        git.stash_push(temp.path(), "test stash")
+            .expect("stash push");
+
+        // Working tree should be clean after stash
+        let content = fs::read_to_string(temp.path().join("file.txt")).expect("read file");
+        assert_eq!(content, "initial\n");
+
+        // Pop should succeed and restore changes
+        let ok = git.stash_pop(temp.path()).expect("stash pop");
+        assert!(ok);
+        let content = fs::read_to_string(temp.path().join("file.txt")).expect("read file");
+        assert_eq!(content, "modified\n");
+    }
+
+    #[test]
+    fn stash_push_includes_untracked_files() {
+        let temp = tempdir().expect("temp dir");
+        run_git(temp.path(), &["init"]);
+        run_git(temp.path(), &["config", "user.name", "Test User"]);
+        run_git(temp.path(), &["config", "user.email", "test@example.com"]);
+
+        fs::write(temp.path().join("tracked.txt"), "content\n").expect("write file");
+        run_git(temp.path(), &["add", "tracked.txt"]);
+        run_git(temp.path(), &["commit", "-m", "initial"]);
+
+        // Create an untracked file
+        fs::write(temp.path().join("untracked.txt"), "new\n").expect("write file");
+
+        let git = CliGit::new();
+        let created = git
+            .stash_push(temp.path(), "test stash")
+            .expect("stash push");
+        assert!(created);
+
+        // Untracked file should be gone after stash
+        assert!(!temp.path().join("untracked.txt").exists());
+
+        // Pop should restore it
+        let ok = git.stash_pop(temp.path()).expect("stash pop");
+        assert!(ok);
+        assert!(temp.path().join("untracked.txt").exists());
     }
 
     fn run_git(repo: &std::path::Path, args: &[&str]) {
