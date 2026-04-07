@@ -92,109 +92,130 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
     let git = CliGit::with_auth(resolve_git_auth(backend));
     let repo_dir = current_repo()?;
 
-    if git.has_working_tree_changes(repo_dir.as_path())? {
-        return Err(RiptskError::General(
-            "working tree is dirty; commit or stash changes before running `tsk done`".into(),
-        ));
-    }
-
-    let merge_opts = pr::MergeOptions {
-        merge_method: args.merge_method.unwrap_or_default(),
-        auto_merge: args.auto_merge,
-        yes: args.yes,
-        timeout: args.timeout,
-        force_push: args.force_push,
-    };
-    pr::merge_pr_workflow(
-        provider.as_ref(),
-        &DialoguerPrompts,
-        &git,
-        backend.backend.clone(),
-        repo_dir.as_path(),
-        repo_name,
-        pr_number,
-        &issue,
-        &merge_opts,
-    )
-    .await?;
-
-    let closed_record = match backend_issue_number(backend, &issue)
-        .ok()
-        .zip(Some(repo_name))
-    {
-        Some((backend_issue_id, repo)) => match provider.get_issue(repo, backend_issue_id).await {
-            Ok(record) if record.state.eq_ignore_ascii_case("closed") => Some(record),
-            Ok(_) | Err(_) => None,
-        },
-        None => None,
+    let stashed = if git.has_working_tree_changes(repo_dir.as_path())? {
+        let current_branch = git.current_branch(repo_dir.as_path()).unwrap_or_default();
+        let msg = format!(
+            "tsk done: auto-stash ({} on {}) [{}]",
+            id,
+            current_branch,
+            now_utc()
+        );
+        crate::ui::info(&format!("stashing uncommitted changes: {msg}"));
+        git.stash_push(repo_dir.as_path(), &msg)?
+    } else {
+        false
     };
 
-    let default_branch = provider.default_branch(repo_name).await?;
-    git.checkout(repo_dir.as_path(), &default_branch)?;
-    git.pull(repo_dir.as_path())?;
+    let result = async {
+        let merge_opts = pr::MergeOptions {
+            merge_method: args.merge_method.unwrap_or_default(),
+            auto_merge: args.auto_merge,
+            yes: args.yes,
+            timeout: args.timeout,
+            force_push: args.force_push,
+        };
+        pr::merge_pr_workflow(
+            provider.as_ref(),
+            &DialoguerPrompts,
+            &git,
+            backend.backend.clone(),
+            repo_dir.as_path(),
+            repo_name,
+            pr_number,
+            &issue,
+            &merge_opts,
+        )
+        .await?;
 
-    match provider.delete_branch(repo_name, &branch_name).await {
-        Ok(()) => crate::ui::success(&format!("deleted remote branch: {branch_name}")),
-        Err(error) if is_branch_not_found_error(&error) => {
-            crate::ui::info("remote branch not found, continuing with local cleanup");
+        let closed_record = match backend_issue_number(backend, &issue)
+            .ok()
+            .zip(Some(repo_name))
+        {
+            Some((backend_issue_id, repo)) => {
+                match provider.get_issue(repo, backend_issue_id).await {
+                    Ok(record) if record.state.eq_ignore_ascii_case("closed") => Some(record),
+                    Ok(_) | Err(_) => None,
+                }
+            }
+            None => None,
+        };
+
+        let default_branch = provider.default_branch(repo_name).await?;
+        git.checkout(repo_dir.as_path(), &default_branch)?;
+        git.pull(repo_dir.as_path())?;
+
+        match provider.delete_branch(repo_name, &branch_name).await {
+            Ok(()) => crate::ui::success(&format!("deleted remote branch: {branch_name}")),
+            Err(error) if is_branch_not_found_error(&error) => {
+                crate::ui::info("remote branch not found, continuing with local cleanup");
+            }
+            Err(error) => return Err(error),
         }
-        Err(error) => return Err(error),
-    }
 
-    if git.branch_exists(repo_dir.as_path(), &branch_name)? {
-        match git.delete_local_branch(repo_dir.as_path(), &branch_name, true) {
-            Ok(()) => crate::ui::success(&format!("deleted local branch: {branch_name}")),
-            Err(error) => crate::ui::warn(&format!(
-                "failed to delete local branch {branch_name}: {error}"
-            )),
+        if git.branch_exists(repo_dir.as_path(), &branch_name)? {
+            match git.delete_local_branch(repo_dir.as_path(), &branch_name, true) {
+                Ok(()) => crate::ui::success(&format!("deleted local branch: {branch_name}")),
+                Err(error) => crate::ui::warn(&format!(
+                    "failed to delete local branch {branch_name}: {error}"
+                )),
+            }
         }
-    }
 
-    let mut issue =
-        crate::commands::issues::load_issue_or_conflict_error(issue_path.as_std_path(), &id)?;
-    issue.frontmatter.branch = None;
-    issue.frontmatter.id_slug = None;
-    frontmatter::save_issue(issue_path.as_std_path(), &issue).map_err(RiptskError::Other)?;
-    if let Some(record) = &closed_record {
         let mut issue =
             crate::commands::issues::load_issue_or_conflict_error(issue_path.as_std_path(), &id)?;
-        update_issue_from_backend(&mut issue, record, backend);
         issue.frontmatter.branch = None;
         issue.frontmatter.id_slug = None;
         frontmatter::save_issue(issue_path.as_std_path(), &issue).map_err(RiptskError::Other)?;
-        cache::seed_backend_state_entry(paths, backend.backend.as_str(), repo_name, record)
+        if let Some(record) = &closed_record {
+            let mut issue = crate::commands::issues::load_issue_or_conflict_error(
+                issue_path.as_std_path(),
+                &id,
+            )?;
+            update_issue_from_backend(&mut issue, record, backend);
+            issue.frontmatter.branch = None;
+            issue.frontmatter.id_slug = None;
+            frontmatter::save_issue(issue_path.as_std_path(), &issue)
+                .map_err(RiptskError::Other)?;
+            cache::seed_backend_state_entry(paths, backend.backend.as_str(), repo_name, record)
+                .map_err(RiptskError::Other)?;
+        } else {
+            let mut issue =
+                frontmatter::load_issue(issue_path.as_std_path()).map_err(RiptskError::Other)?;
+            issue.frontmatter.status = IssueState::Done;
+            issue.frontmatter.local_updated_at = now_utc();
+            issue.frontmatter.branch = None;
+            issue.frontmatter.id_slug = None;
+            frontmatter::save_issue(issue_path.as_std_path(), &issue)
+                .map_err(RiptskError::Other)?;
+        }
+        maybe_auto_commit(
+            &config,
+            &git,
+            paths.riptsk_repo.as_std_path(),
+            &format!(
+                "riptsk: done {} - {}",
+                issue.frontmatter.id, issue.frontmatter.title
+            ),
+            &[issue_path.as_std_path()],
+        )?;
+        sync_cmd::run(
+            paths,
+            SyncArgs {
+                force_pull_ids: vec![id.clone()],
+                ..SyncArgs::default()
+            },
+        )
+        .await?;
+        ViewBuilder::new(paths, &config)
+            .regenerate_all(None)
             .map_err(RiptskError::Other)?;
-    } else {
-        let mut issue =
-            frontmatter::load_issue(issue_path.as_std_path()).map_err(RiptskError::Other)?;
-        issue.frontmatter.status = IssueState::Done;
-        issue.frontmatter.local_updated_at = now_utc();
-        issue.frontmatter.branch = None;
-        issue.frontmatter.id_slug = None;
-        frontmatter::save_issue(issue_path.as_std_path(), &issue).map_err(RiptskError::Other)?;
+        Ok(())
     }
-    maybe_auto_commit(
-        &config,
-        &git,
-        paths.riptsk_repo.as_std_path(),
-        &format!(
-            "riptsk: done {} - {}",
-            issue.frontmatter.id, issue.frontmatter.title
-        ),
-        &[issue_path.as_std_path()],
-    )?;
-    sync_cmd::run(
-        paths,
-        SyncArgs {
-            force_pull_ids: vec![id.clone()],
-            ..SyncArgs::default()
-        },
-    )
-    .await?;
-    ViewBuilder::new(paths, &config)
-        .regenerate_all(None)
-        .map_err(RiptskError::Other)?;
-    Ok(())
+    .await;
+    if stashed {
+        crate::adapters::git::try_stash_pop(&git, repo_dir.as_path());
+    }
+    result
 }
 
 fn is_branch_not_found_error(error: &RiptskError) -> bool {
