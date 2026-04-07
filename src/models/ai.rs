@@ -20,4 +20,10 @@ pub struct AiFeatures {
     pub summarize: bool,
     #[serde(default)]
     pub ask: bool,
+    #[serde(default = "default_true")]
+    pub commit: bool,
+}
+
+fn default_true() -> bool {
+    true
 }

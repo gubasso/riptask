@@ -64,6 +64,7 @@ pub fn default_config() -> Config {
                 triage: true,
                 summarize: true,
                 ask: true,
+                commit: true,
             },
         },
         sync: SyncConfig {

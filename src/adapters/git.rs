@@ -57,6 +57,7 @@ pub trait GitBackend {
     fn log_between(&self, repo: &Path, base: &str, head: &str) -> Result<String, RiptskError>;
     fn diff_between(&self, repo: &Path, base: &str, head: &str) -> Result<String, RiptskError>;
     fn working_tree_diff(&self, repo: &Path) -> Result<String, RiptskError>;
+    fn staged_diff(&self, repo: &Path) -> Result<String, RiptskError>;
     fn head_sha(&self, repo: &Path) -> Result<String, RiptskError>;
     fn clone_with_reference(
         &self,
@@ -496,6 +497,22 @@ impl GitBackend for CliGit {
         if !output.status.success() {
             return Err(RiptskError::General(
                 "failed to read working tree git diff".into(),
+            ));
+        }
+        Ok(truncate_diff(
+            String::from_utf8_lossy(&output.stdout).trim().to_owned(),
+        ))
+    }
+
+    fn staged_diff(&self, repo: &Path) -> Result<String, RiptskError> {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["diff", "--cached"])
+            .output()?;
+        if !output.status.success() {
+            return Err(RiptskError::General(
+                "failed to read staged git diff".into(),
             ));
         }
         Ok(truncate_diff(

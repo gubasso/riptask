@@ -1,5 +1,5 @@
 use crate::cli::{
-    CommitArgs, ResolveArgs, SessionArgs, SessionStartArgs, SessionSubcommand, SyncArgs,
+    ResolveArgs, SessionArgs, SessionStartArgs, SessionSubcommand, StoreCommitArgs, SyncArgs,
     SyncPullPushArgs, SyncSubcommand,
 };
 use crate::config::{Config, load_config};
@@ -454,7 +454,7 @@ pub fn session(paths: &AppPaths, args: SessionArgs) -> Result<(), RiptskError> {
     }
 }
 
-pub fn commit(paths: &AppPaths, args: CommitArgs) -> Result<(), RiptskError> {
+pub fn commit(paths: &AppPaths, args: StoreCommitArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
     let git = CliGit::new();
     let repo = paths.riptsk_repo.as_std_path().to_path_buf();
@@ -550,7 +550,7 @@ fn session_end(paths: &AppPaths) -> Result<(), RiptskError> {
     let git = CliGit::new();
     let repo = current_repo()?;
     if git.has_working_tree_changes(paths.riptsk_repo.as_std_path())? {
-        commit(paths, CommitArgs { edit: false })?;
+        commit(paths, StoreCommitArgs { edit: false })?;
     }
     git.checkout(repo.as_path(), &session.previous_branch)?;
     session_store::clear_session(paths.session_state_path().as_std_path())?;
