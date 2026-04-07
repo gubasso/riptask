@@ -18,7 +18,9 @@ pub async fn run(paths: &AppPaths, args: CloneArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
     let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
     let cwd = cwd_utf8();
-    let Some(id) = id_resolution::require_id(paths, &config, &cwd, args.id, &args.scope)? else {
+    let Some(id) =
+        id_resolution::resolve_or_pick_id(paths, &config, &cwd, args.id, args.pick, &args.scope)?
+    else {
         return Ok(());
     };
 

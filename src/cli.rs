@@ -27,6 +27,8 @@ pub struct ScopeArgs {
 pub struct IdArgs {
     #[command(flatten)]
     pub scope: ScopeArgs,
+    #[arg(short = 'i', long = "pick")]
+    pub pick: bool,
     /// Issue ID (or pick interactively if omitted)
     pub id: Option<String>,
 }
@@ -118,6 +120,9 @@ pub struct BranchArgs {
     #[command(flatten)]
     pub scope: ScopeArgs,
 
+    #[arg(short = 'i', long = "pick", conflicts_with_all = ["delete", "force_delete"])]
+    pub pick: bool,
+
     /// Target branch name or issue ID
     pub id: Option<String>,
 
@@ -138,6 +143,8 @@ pub struct BranchArgs {
 pub struct CloneArgs {
     #[command(flatten)]
     pub scope: ScopeArgs,
+    #[arg(short = 'i', long = "pick")]
+    pub pick: bool,
     /// Issue ID
     pub id: Option<String>,
 }
@@ -163,6 +170,8 @@ pub struct PrArgs {
 pub struct DoneArgs {
     #[command(flatten)]
     pub scope: ScopeArgs,
+    #[arg(short = 'i', long = "pick")]
+    pub pick: bool,
     /// Issue ID (or pick interactively)
     pub id: Option<String>,
     /// Merge method (merge, squash, rebase)
@@ -321,6 +330,8 @@ pub struct NewArgs {
 pub struct StatusArgs {
     #[command(flatten)]
     pub scope: ScopeArgs,
+    #[arg(short = 'i', long = "pick")]
+    pub pick: bool,
     /// Issue ID
     pub id: Option<String>,
     /// Target status
@@ -889,6 +900,85 @@ mod tests {
         };
         assert_eq!(args.id.as_deref(), Some("42"));
         assert_eq!(args.status.as_deref(), Some("in-progress"));
+    }
+
+    #[test]
+    fn show_long_pick_parses() {
+        let cli = Cli::try_parse_from(["tsk", "show", "--pick"]).expect("parse");
+        let Commands::Show(args) = cli.command.expect("command") else {
+            panic!("expected show command");
+        };
+        assert!(args.pick);
+        assert!(args.id.is_none());
+    }
+
+    #[test]
+    fn show_short_pick_parses() {
+        let cli = Cli::try_parse_from(["tsk", "show", "-i"]).expect("parse");
+        let Commands::Show(args) = cli.command.expect("command") else {
+            panic!("expected show command");
+        };
+        assert!(args.pick);
+        assert!(args.id.is_none());
+    }
+
+    #[test]
+    fn edit_short_pick_parses() {
+        let cli = Cli::try_parse_from(["tsk", "edit", "-i"]).expect("parse");
+        let Commands::Edit(args) = cli.command.expect("command") else {
+            panic!("expected edit command");
+        };
+        assert!(args.pick);
+        assert!(args.id.is_none());
+    }
+
+    #[test]
+    fn done_pick_parses() {
+        let cli = Cli::try_parse_from(["tsk", "done", "--pick"]).expect("parse");
+        let Commands::Done(args) = cli.command.expect("command") else {
+            panic!("expected done command");
+        };
+        assert!(args.pick);
+        assert!(args.id.is_none());
+    }
+
+    #[test]
+    fn clone_short_pick_parses() {
+        let cli = Cli::try_parse_from(["tsk", "clone", "-i"]).expect("parse");
+        let Commands::Clone(args) = cli.command.expect("command") else {
+            panic!("expected clone command");
+        };
+        assert!(args.pick);
+        assert!(args.id.is_none());
+    }
+
+    #[test]
+    fn status_pick_parses() {
+        let cli = Cli::try_parse_from(["tsk", "status", "--pick"]).expect("parse");
+        let Commands::Status(args) = cli.command.expect("command") else {
+            panic!("expected status command");
+        };
+        assert!(args.pick);
+        assert!(args.id.is_none());
+        assert!(args.status.is_none());
+    }
+
+    #[test]
+    fn branch_pick_parses() {
+        let cli = Cli::try_parse_from(["tsk", "branch", "--pick"]).expect("parse");
+        let Commands::Branch(args) = cli.command.expect("command") else {
+            panic!("expected branch command");
+        };
+        assert!(args.pick);
+        assert!(args.id.is_none());
+    }
+
+    #[test]
+    fn branch_delete_and_pick_conflict() {
+        let err = Cli::try_parse_from(["tsk", "branch", "-d", "--pick"]).expect_err("conflict");
+        let rendered = err.to_string();
+        assert!(rendered.contains("--pick"));
+        assert!(rendered.contains("--delete"));
     }
 
     #[test]

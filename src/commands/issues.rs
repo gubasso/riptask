@@ -5,7 +5,7 @@ use crate::adapters::picker::{
 };
 use crate::adapters::prompts::{DialoguerPrompts, PromptBackend};
 use crate::cli::{IdArgs, LsArgs, NewArgs, StatusArgs};
-use crate::config::load_config;
+use crate::config::{load_config, parse_state};
 use crate::domain::issue::{
     GithubIssueMeta, GitlabIssueMeta, IssueDocument, IssueFrontmatter, IssueState, JiraIssueMeta,
     Priority,
@@ -27,7 +27,7 @@ use std::io::IsTerminal;
 
 pub fn show(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    let IdArgs { scope, id } = args;
+    let IdArgs { scope, id, pick } = args;
     let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
     let cwd = camino::Utf8PathBuf::from(
         std::env::current_dir()
@@ -35,7 +35,8 @@ pub fn show(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
             .to_string_lossy()
             .to_string(),
     );
-    let Some(id) = id_resolution::require_id(paths, &config, &cwd, id, &scope)? else {
+    let Some(id) = id_resolution::resolve_or_pick_id(paths, &config, &cwd, id, pick, &scope)?
+    else {
         return Ok(());
     };
     let path = issue_store::find_issue(paths, &id)?;
@@ -51,7 +52,7 @@ pub fn show(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
 
 pub fn path(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    let IdArgs { scope, id } = args;
+    let IdArgs { scope, id, pick } = args;
     let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
     let cwd = camino::Utf8PathBuf::from(
         std::env::current_dir()
@@ -59,7 +60,8 @@ pub fn path(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
             .to_string_lossy()
             .to_string(),
     );
-    let Some(id) = id_resolution::require_id(paths, &config, &cwd, id, &scope)? else {
+    let Some(id) = id_resolution::resolve_or_pick_id(paths, &config, &cwd, id, pick, &scope)?
+    else {
         return Ok(());
     };
     println!("{}", issue_store::find_issue(paths, &id)?);
@@ -483,7 +485,7 @@ fn style_with_color(text: String, color: Color) -> console::StyledObject<String>
 
 pub fn edit(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    let IdArgs { scope, id } = args;
+    let IdArgs { scope, id, pick } = args;
     let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
     let cwd = camino::Utf8PathBuf::from(
         std::env::current_dir()
@@ -491,7 +493,8 @@ pub fn edit(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
             .to_string_lossy()
             .to_string(),
     );
-    let Some(id) = id_resolution::require_id(paths, &config, &cwd, id, &scope)? else {
+    let Some(id) = id_resolution::resolve_or_pick_id(paths, &config, &cwd, id, pick, &scope)?
+    else {
         return Ok(());
     };
     let path = issue_store::find_issue(paths, &id)?;
@@ -518,7 +521,12 @@ pub fn edit(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
 
 pub fn set_status(paths: &AppPaths, args: StatusArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    let StatusArgs { scope, id, status } = args;
+    let StatusArgs {
+        scope,
+        id,
+        status,
+        pick,
+    } = args;
     let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
     let cwd = camino::Utf8PathBuf::from(
         std::env::current_dir()
@@ -526,7 +534,13 @@ pub fn set_status(paths: &AppPaths, args: StatusArgs) -> Result<(), RiptskError>
             .to_string_lossy()
             .to_string(),
     );
-    let Some(id) = id_resolution::require_id(paths, &config, &cwd, id, &scope)? else {
+    let (id, status) = if status.is_none() && id.as_ref().is_some_and(|v| parse_state(v).is_ok()) {
+        (None, id)
+    } else {
+        (id, status)
+    };
+    let Some(id) = id_resolution::resolve_or_pick_id(paths, &config, &cwd, id, pick, &scope)?
+    else {
         return Ok(());
     };
     let status = status.ok_or_else(|| RiptskError::General("<status> required".into()))?;
@@ -549,6 +563,7 @@ pub fn close(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
         paths,
         StatusArgs {
             scope: args.scope,
+            pick: args.pick,
             id: args.id,
             status: Some("done".into()),
         },
@@ -561,6 +576,7 @@ pub fn reopen(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
         paths,
         StatusArgs {
             scope: args.scope,
+            pick: args.pick,
             id: args.id,
             status: Some("todo".into()),
         },
@@ -569,7 +585,7 @@ pub fn reopen(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
 
 pub fn remove(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    let IdArgs { scope, id } = args;
+    let IdArgs { scope, id, pick } = args;
     let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
     let cwd = camino::Utf8PathBuf::from(
         std::env::current_dir()
@@ -577,7 +593,8 @@ pub fn remove(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
             .to_string_lossy()
             .to_string(),
     );
-    let Some(id) = id_resolution::require_id(paths, &config, &cwd, id, &scope)? else {
+    let Some(id) = id_resolution::resolve_or_pick_id(paths, &config, &cwd, id, pick, &scope)?
+    else {
         return Ok(());
     };
     let path = issue_store::find_issue(paths, &id)?;

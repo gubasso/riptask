@@ -1,9 +1,11 @@
+use crate::adapters::git::{CliGit, GitBackend};
 use crate::adapters::picker::{FzfPicker, IssueDisplayMode, Picker, format_issue_plain};
 use crate::cli::{LsArgs, ScopeArgs};
 use crate::config::Config;
 use crate::error::{RiptskError, StoreError};
 use crate::paths::AppPaths;
 use crate::services::{issue_ids, issue_service::IssueService, project_detection};
+use crate::storage::{frontmatter, issue_store};
 use camino::Utf8Path;
 
 pub fn resolve_id(
@@ -97,6 +99,85 @@ pub fn require_id(
             Err(e)
         }
     }
+}
+
+pub fn resolve_or_pick_id(
+    paths: &AppPaths,
+    config: &Config,
+    cwd: &Utf8Path,
+    id: Option<String>,
+    pick: bool,
+    scope_args: &ScopeArgs,
+) -> Result<Option<String>, RiptskError> {
+    if let Some(input) = id {
+        return resolve_id(paths, config, cwd, &input).map(Some);
+    }
+
+    if pick {
+        return require_id(paths, config, cwd, None, scope_args);
+    }
+
+    match current_repo()
+        .and_then(|repo| CliGit::new().current_branch(repo.as_path()))
+        .and_then(|branch| find_issue_for_branch(paths, &branch))
+        .and_then(|path| {
+            let id = path.file_stem().unwrap_or_default().to_string();
+            crate::commands::issues::load_issue_or_conflict_error(path.as_std_path(), &id)
+        }) {
+        Ok(issue) => Ok(Some(issue.frontmatter.id)),
+        Err(_) => require_id(paths, config, cwd, None, scope_args),
+    }
+}
+
+pub(crate) fn current_repo() -> Result<std::path::PathBuf, RiptskError> {
+    std::env::current_dir().map_err(RiptskError::from)
+}
+
+pub(crate) fn cwd_utf8() -> camino::Utf8PathBuf {
+    camino::Utf8PathBuf::from(
+        std::env::current_dir()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string(),
+    )
+}
+
+pub(crate) fn find_issue_for_branch(
+    paths: &AppPaths,
+    branch: &str,
+) -> Result<camino::Utf8PathBuf, RiptskError> {
+    for path in issue_store::list_issues(paths)? {
+        match frontmatter::try_load_issue(path.as_std_path()) {
+            frontmatter::IssueLoadResult::Ok(issue) => {
+                if issue.frontmatter.branch.as_deref() == Some(branch)
+                    || issue.frontmatter.id_slug.as_deref() == Some(branch)
+                {
+                    return Ok(path);
+                }
+            }
+            frontmatter::IssueLoadResult::Conflict { id, .. } => {
+                for backup in [
+                    issue_store::local_backup_path(paths, &id),
+                    issue_store::remote_backup_path(paths, &id),
+                ] {
+                    if !backup.exists() {
+                        continue;
+                    }
+                    if let frontmatter::IssueLoadResult::Ok(issue) =
+                        frontmatter::try_load_issue(backup.as_std_path())
+                        && (issue.frontmatter.branch.as_deref() == Some(branch)
+                            || issue.frontmatter.id_slug.as_deref() == Some(branch))
+                    {
+                        return Ok(path.clone());
+                    }
+                }
+            }
+            frontmatter::IssueLoadResult::Err(error) => return Err(RiptskError::Other(error)),
+        }
+    }
+    Err(RiptskError::NotFound(format!(
+        "no issue found for branch {branch}"
+    )))
 }
 
 #[cfg(test)]
