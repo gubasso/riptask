@@ -30,7 +30,7 @@ fn hooks_status_reports_not_installed() {
         .expect("binary")
         .env("RIPTSK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
-        .args(["hooks", "status"])
+        .args(["store", "hooks", "status"])
         .assert()
         .failure()
         .stdout(predicate::str::contains("not installed"));
@@ -45,7 +45,7 @@ fn hooks_install_creates_hook_file() {
         .expect("binary")
         .env("RIPTSK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
-        .args(["hooks", "install"])
+        .args(["store", "hooks", "install"])
         .assert()
         .success();
 
@@ -72,7 +72,7 @@ fn hooks_status_reports_installed_after_install() {
         .expect("binary")
         .env("RIPTSK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
-        .args(["hooks", "install"])
+        .args(["store", "hooks", "install"])
         .assert()
         .success();
 
@@ -80,7 +80,7 @@ fn hooks_status_reports_installed_after_install() {
         .expect("binary")
         .env("RIPTSK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
-        .args(["hooks", "status"])
+        .args(["store", "hooks", "status"])
         .assert()
         .success()
         .stdout(
@@ -98,7 +98,7 @@ fn hooks_update_restores_modified_hook() {
         .expect("binary")
         .env("RIPTSK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
-        .args(["hooks", "install"])
+        .args(["store", "hooks", "install"])
         .assert()
         .success();
 
@@ -108,7 +108,7 @@ fn hooks_update_restores_modified_hook() {
         .expect("binary")
         .env("RIPTSK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
-        .args(["hooks", "update"])
+        .args(["store", "hooks", "update"])
         .assert()
         .success();
 
@@ -126,7 +126,7 @@ fn hooks_update_errors_when_not_installed() {
         .expect("binary")
         .env("RIPTSK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
-        .args(["hooks", "update"])
+        .args(["store", "hooks", "update"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("hook not installed"));
@@ -141,7 +141,7 @@ fn hooks_uninstall_removes_hook() {
         .expect("binary")
         .env("RIPTSK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
-        .args(["hooks", "install"])
+        .args(["store", "hooks", "install"])
         .assert()
         .success();
 
@@ -154,7 +154,7 @@ fn hooks_uninstall_removes_hook() {
         .expect("binary")
         .env("RIPTSK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
-        .args(["hooks", "uninstall"])
+        .args(["store", "hooks", "uninstall"])
         .assert()
         .success();
 
@@ -172,7 +172,7 @@ fn hooks_uninstall_is_idempotent() {
         .expect("binary")
         .env("RIPTSK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
-        .args(["hooks", "uninstall"])
+        .args(["store", "hooks", "uninstall"])
         .assert()
         .success();
 }

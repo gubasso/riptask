@@ -51,6 +51,7 @@ ai:
     triage: true
     summarize: true
     ask: true
+    commit: true
 sync:
   conflict_detection: true
 recurring:

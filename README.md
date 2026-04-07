@@ -466,6 +466,7 @@ ai:
     triage: true         # tsk sync pull --auto-triage
     summarize: true      # tsk summarize
     ask: true            # tsk ask
+    commit: true         # tsk commit (AI-generated commit message)
 ```
 
 #### Usage
@@ -474,12 +475,13 @@ ai:
 tsk new --title "Refactor auth"        # AI writes the issue body (when ai.enabled)
 tsk pr                                 # AI generates PR description
 tsk pr edit                            # AI updates PR description
+tsk commit                             # AI generates a conventional commit message from staged diff
 tsk summarize                          # summarize all issues
 tsk summarize --cycle 2026-Q1          # summarize a cycle
 tsk ask "What are the highest priority bugs?"
 ```
 
-Use `--no-ai` with `tsk pr` or `tsk pr edit` to skip AI generation.
+Use `--no-ai` with `tsk pr`, `tsk pr edit`, or `tsk commit` to skip AI generation.
 
 ### Configuration
 
@@ -490,13 +492,17 @@ tsk register                 # register current project
 tsk register --list          # list registered projects
 ```
 
-### Git hooks
+### Task store maintenance
+
+`tsk store` groups commands that operate on the riptsk task store repository
+itself (not your project's git repo).
 
 ```bash
-tsk hooks install            # install pre-commit hook
-tsk hooks status             # check hook status
-tsk hooks update             # update hook
-tsk hooks uninstall          # remove hook
+tsk store commit                  # commit pending changes to the task store
+tsk store hooks install           # install pre-commit hook in the task store
+tsk store hooks status            # check hook status
+tsk store hooks update            # update hook
+tsk store hooks uninstall         # remove hook
 ```
 
 ## Issue format
@@ -544,8 +550,8 @@ receive a project-prefixed ID (e.g., `WHL-042`).
 |------|----------|
 | `fzf` | Interactive issue selection |
 | Any AI CLI (`claude`, `llm`, `ollama`, etc.) | AI features (configured via `ai.command`) |
-| `bash` | Managed hook script execution after `tsk hooks install` |
-| `yq`, `jq` | Managed hook validation after `tsk hooks install` |
+| `bash` | Managed hook script execution after `tsk store hooks install` |
+| `yq`, `jq` | Managed hook validation after `tsk store hooks install` |
 
 ## Configuration
 

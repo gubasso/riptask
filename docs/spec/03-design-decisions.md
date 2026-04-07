@@ -82,7 +82,7 @@ Lifecycle commands (`new`, `close`, `status`, `reopen`, `rm`) auto-commit `$RIPT
 
 **Why not for synced issues:** Their source of truth is GitHub/GitLab. The `$RIPTSK_REPO` copy is a backup. Auto-committing every backup-copy mutation adds noise to `$RIPTSK_REPO` git history without improving data safety — the remote already has the canonical state.
 
-**Why not for trivial mutations:** Field edits (`tsk edit`), comments, and tag changes are low-signal individually. Batching them via `tsk commit` or `tsk session end` produces a cleaner history. The data loss risk is lower — these are incremental refinements, not status transitions.
+**Why not for trivial mutations:** Field edits (`tsk edit`), comments, and tag changes are low-signal individually. Batching them via `tsk store commit` or `tsk session end` produces a cleaner history. The data loss risk is lower — these are incremental refinements, not status transitions.
 
 **Commit message format:** `riptsk: <verb> <ID> — <title>` (see [15 — Version Control & Backup](archive/15-version-control-backup.md) for full conventions).
 

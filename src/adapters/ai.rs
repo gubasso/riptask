@@ -25,6 +25,7 @@ pub trait AiBackend {
     fn summarize(&self, issues: &str) -> Result<String, RiptskError>;
     fn ask(&self, question: &str, context: &str) -> Result<String, RiptskError>;
     fn update_pr_description(&self, context: &str) -> Result<String, RiptskError>;
+    fn generate_commit_message(&self, diff: &str) -> Result<String, RiptskError>;
 }
 
 #[derive(Debug, Clone)]
@@ -118,6 +119,14 @@ impl AiBackend for TemplateAiBackend {
             &self.command_template,
             "Update this PR description based on the current changes. Keep it concise and focused on implementation details.",
             context,
+        )
+    }
+
+    fn generate_commit_message(&self, diff: &str) -> Result<String, RiptskError> {
+        run_ai(
+            &self.command_template,
+            "Generate a single conventional commit message for the given diff. Use the format: type(scope): description. Types: feat, fix, refactor, docs, test, chore, ci, style, perf, build. Keep the subject line under 72 characters. Add a blank line and a concise body only if the change is non-trivial. Output only the commit message, nothing else.",
+            diff,
         )
     }
 }
