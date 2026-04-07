@@ -1,7 +1,6 @@
 use anyhow::Context;
-use clap::CommandFactory;
-use clap::Parser;
-use riptsk::cli::{Cli, Commands, CompletionShell};
+use clap::FromArgMatches;
+use riptsk::cli::{Cli, Commands, CompletionShell, root_command};
 use riptsk::commands;
 use riptsk::error::RiptskError;
 use riptsk::paths::AppPaths;
@@ -22,7 +21,8 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<(), RiptskError> {
-    let cli = Cli::parse();
+    let matches = root_command().get_matches();
+    let cli = Cli::from_arg_matches(&matches).map_err(anyhow::Error::from)?;
     let paths = AppPaths::from_env().context("failed to resolve application paths")?;
 
     riptsk::services::project_detection::ensure_registered(
@@ -46,13 +46,13 @@ fn run() -> Result<(), RiptskError> {
                 CompletionShell::Zsh => clap_complete::Shell::Zsh,
                 CompletionShell::Fish => clap_complete::Shell::Fish,
             };
-            let mut root = Cli::command();
+            let mut root = root_command();
             clap_complete::generate(shell, &mut root, "tsk", &mut std::io::stdout());
             Ok(())
         }
         Commands::Help { command } => {
             if let Some(command) = command {
-                let mut root = Cli::command();
+                let mut root = root_command();
                 if let Some(sub) = root.find_subcommand_mut(&command) {
                     sub.print_long_help().map_err(anyhow::Error::from)?;
                     println!();
@@ -61,7 +61,7 @@ fn run() -> Result<(), RiptskError> {
                     Err(RiptskError::General(format!("unknown command: {command}")))
                 }
             } else {
-                let mut root = Cli::command();
+                let mut root = root_command();
                 root.print_long_help().map_err(anyhow::Error::from)?;
                 println!();
                 Ok(())
