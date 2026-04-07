@@ -5,30 +5,64 @@ use crate::error::RiptskError;
 use crate::models::Backend;
 use crate::paths::AppPaths;
 use crate::services::backend_mapping::resolve_vc_for_backend;
+use crate::services::id_resolution;
+use crate::storage::issue_store;
 
 pub async fn run(paths: &AppPaths, args: StartArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-
-    // Convert StartArgs to NewArgs with AI enabled by default
-    let new_args = NewArgs {
-        title_pos: args.title_pos,
-        title: args.title,
-        project: args.project,
-        board: args.board,
-        status: args.status,
-        priority: args.priority,
-        template: args.template,
-        ai: !args.no_ai,
-        edit: args.edit,
-    };
-
-    // Step 1: Create issue
-    let (issue, _issue_path) = issues::create_issue_from_args(paths, new_args).await?;
-    let id = issue.frontmatter.id.clone();
-    issues::print_issue_created(&issue);
-
-    // Step 2: Check if VC is available for branch/PR
     let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let cwd = id_resolution::cwd_utf8();
+
+    // Determine mode: existing issue or new issue
+    let is_numeric = args
+        .title_pos
+        .as_ref()
+        .is_some_and(|s| s.chars().all(|c| c.is_ascii_digit()));
+
+    let (issue, _issue_path) =
+        if is_numeric || args.pick || (args.title_pos.is_none() && args.title.is_none()) {
+            // Existing issue mode: resolve by ID, pick, or auto-detect from branch
+            let id_input = if is_numeric {
+                args.title_pos.clone()
+            } else {
+                None
+            };
+            let Some(id) = id_resolution::resolve_or_pick_id(
+                paths,
+                &config,
+                &cwd,
+                id_input,
+                args.pick,
+                &args.scope,
+            )?
+            else {
+                return Ok(()); // User cancelled picker
+            };
+            let path = issue_store::find_issue(paths, &id)?;
+            let issue = issues::load_issue_or_conflict_error(path.as_std_path(), &id)?;
+            (issue, path)
+        } else {
+            // New issue mode: create from title
+            let project = args.scope.projects.first().cloned();
+            let new_args = NewArgs {
+                title_pos: args.title_pos,
+                title: args.title,
+                project,
+                board: args.board,
+                status: args.status,
+                priority: args.priority,
+                template: args.template,
+                ai: !args.no_ai,
+                edit: args.edit,
+            };
+            let (issue, path) = issues::create_issue_from_args(paths, new_args).await?;
+            issues::print_issue_created(&issue);
+            (issue, path)
+        };
+
+    let id = issue.frontmatter.id.clone();
+
+    // Check if VC is available for branch/PR
     let backend = config
         .backends
         .iter()
@@ -50,7 +84,6 @@ pub async fn run(paths: &AppPaths, args: StartArgs) -> Result<(), RiptskError> {
         return Ok(());
     }
 
-    // For Jira with vc, resolve the VC backend for branch/PR operations
     if backend.backend == Backend::Jira {
         let vc_resolution = resolve_vc_for_backend(backend, &config)?;
         if vc_resolution.is_none() {
@@ -61,10 +94,10 @@ pub async fn run(paths: &AppPaths, args: StartArgs) -> Result<(), RiptskError> {
         }
     }
 
-    // Step 3: Create branch
+    // Create branch
     let _branch = branch::create_branch_for_issue(paths, &id).await?;
 
-    // Step 4: Create PR
+    // Create PR
     pr::create(
         paths,
         PrCreateArgs {

@@ -64,7 +64,7 @@ pub enum Commands {
     Unclone(UncloneArgs),
     /// Complete an issue: merge PR, clean up branches, close issue (convenience wrapper — see `tsk pr merge`, `tsk branch -D`, `tsk close`)
     Done(DoneArgs),
-    /// Start working on a new issue: create issue, branch, and PR (convenience wrapper — see `tsk new`, `tsk branch`, `tsk pr`)
+    /// Start working on an issue: resolve existing or create new, then branch + PR
     Start(StartArgs),
     /// Create, edit, or show a pull/merge request
     Pr(PrArgs),
@@ -193,31 +193,35 @@ pub struct DoneArgs {
 
 #[derive(Debug, Clone, Args, Default)]
 pub struct StartArgs {
-    /// Issue title (positional)
+    #[command(flatten)]
+    pub scope: ScopeArgs,
+
+    /// Pick an existing issue interactively
+    #[arg(short = 'i', long = "pick", conflicts_with_all = ["title", "title_pos"])]
+    pub pick: bool,
+
+    /// Issue title OR numeric issue ID (positional)
     #[arg(conflicts_with = "title")]
     pub title_pos: Option<String>,
     /// Issue title (or enter interactively)
     #[arg(short = 't', long)]
     pub title: Option<String>,
-    /// Target project
-    #[arg(short = 'p', long)]
-    pub project: Option<String>,
-    /// Board to assign
+    /// Board to assign (new issues only)
     #[arg(short = 'b', long)]
     pub board: Option<String>,
-    /// Initial status
+    /// Initial status (new issues only)
     #[arg(short = 's', long)]
     pub status: Option<String>,
-    /// Priority level
+    /// Priority level (new issues only)
     #[arg(short = 'P', long)]
     pub priority: Option<String>,
-    /// Template to use
+    /// Template to use (new issues only)
     #[arg(short = 'T', long)]
     pub template: Option<String>,
     /// Disable AI-assisted content generation (AI is on by default)
     #[arg(long)]
     pub no_ai: bool,
-    /// Open in $EDITOR after creation
+    /// Open in $EDITOR after creation (new issues only)
     #[arg(short = 'e', long)]
     pub edit: bool,
 }
@@ -875,12 +879,23 @@ mod tests {
     }
 
     #[test]
-    fn start_project_parses() {
-        let cli = Cli::try_parse_from(["tsk", "start", "-p", "myproject"]).expect("parse");
+    fn start_pick_parses() {
+        let cli = Cli::try_parse_from(["tsk", "start", "--pick"]).expect("parse");
         let Commands::Start(args) = cli.command.expect("command") else {
             panic!("expected start command");
         };
-        assert_eq!(args.project.as_deref(), Some("myproject"));
+        assert!(args.pick);
+    }
+
+    #[test]
+    fn start_project_scope_parses() {
+        let cli =
+            Cli::try_parse_from(["tsk", "start", "-p", "myproject", "--pick"]).expect("parse");
+        let Commands::Start(args) = cli.command.expect("command") else {
+            panic!("expected start command");
+        };
+        assert_eq!(args.scope.projects, vec!["myproject".to_string()]);
+        assert!(args.pick);
     }
 
     #[test]
