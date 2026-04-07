@@ -1,55 +1,130 @@
 # riptsk
 
-A plaintext, git-backed issue tracker that lives in your terminal.
+A plaintext issue tracker for the terminal.
 
-Issues are Markdown files with YAML frontmatter, stored in a local Git
-repository and optionally synced with GitHub or GitLab. Everything works
-offline; AI features are available but never required.
+- Markdown issues with YAML frontmatter in a local git-backed task store
+- Optional sync with GitHub, GitLab, and Jira
+- AI features are available, but never required
 
-## Features
+## Table of contents
 
-- **Plaintext-first** -- issues are readable Markdown files you can grep, edit,
-  and version-control with standard tools
-- **Git-backed** -- every change is committed; sync across machines with
-  `git push`/`pull`
-- **Offline by default** -- no network needed for day-to-day work
-- **Multi-remote sync** -- pull/push issues to GitHub and GitLab projects with
-  conflict detection and resolution
-- **Kanban board** -- terminal tree view grouped by status
-- **Recurring tasks** -- schedule daily/weekly/monthly/yearly issues from
-  templates
-- **Sessions** -- one-command start/end workflow for multi-host setups
-- **AI-optional** -- generate issue bodies, auto-triage, summarize, and ask
-  questions about your backlog (bring your own AI CLI)
+- [Quick start](#quick-start)
+- [Architecture](#architecture)
+- [Installation](#installation)
+- [Core concepts](#core-concepts)
+- [Issue lifecycle](#issue-lifecycle)
+- [Branch → PR → Done workflow](#branch--pr--done-workflow)
+- [Sync with GitHub, GitLab, Jira](#sync-with-github-gitlab-jira)
+- [Templates](#templates)
+- [Recurring tasks](#recurring-tasks)
+- [Sessions](#sessions)
+- [AI integration](#ai-integration)
+- [Configuration](#configuration)
+- [Issue format](#issue-format)
+- [Task store maintenance](#task-store-maintenance)
+- [Dependencies](#dependencies)
+- [Development](#development)
 
 ## Quick start
 
 ```bash
-make install          # install to ~/.cargo/bin
-tsk init              # create the issue repository
+make install
+
+tsk init
 tsk new --title "My first issue"
-tsk board             # view the kanban board
+tsk ls
+tsk board
+```
+
+The default board is `personal`. New issues default to status `backlog`.
+
+## Architecture
+
+High-level architecture:
+
+```mermaid
+flowchart LR
+    User[User terminal] --> CLI[tsk CLI]
+    CLI --> Repo[RIPTSK_REPO<br/>issues, templates, riptsk.yaml, .git]
+    CLI --> Cache[XDG_CACHE_HOME riptsk<br/>views, id_map, backend_state, session]
+    CLI --> ProjRepo[Project repo<br/>registered backend cwd]
+    CLI --> Sync[Sync engine]
+    Sync --> GitHub[GitHub]
+    Sync --> GitLab[GitLab]
+    Sync --> Jira[Jira]
+    ProjRepo --> BranchPR[branch, pr, done]
+    BranchPR --> GitHub
+    BranchPR --> GitLab
+    Jira -. vc points to gh or glab .-> BranchPR
+```
+
+Sync data flow:
+
+```mermaid
+flowchart TD
+    Remote[GitHub GitLab Jira] -->|tsk sync pull| Mapper[backend mapping]
+    Mapper --> Local[issues ID.md frontmatter and body]
+    Local -->|tsk sync push| Mapper2[backend mapping]
+    Mapper2 --> Remote
+    Local --> Conflict{conflict}
+    Conflict -->|yes| Markers[ID.md with markers]
+    Conflict -->|yes| Backups[ID.LOCAL.md and ID.REMOTE.md]
+    Markers -->|tsk sync resolve| Local
+```
+
+Issue lifecycle:
+
+```mermaid
+flowchart LR
+    New[tsk new] --> Backlog[backlog]
+    Backlog --> Todo[todo]
+    Todo --> Branch[tsk branch]
+    Branch --> InProgress[tsk pr<br/>status in progress]
+    InProgress --> Merge[tsk pr merge]
+    Merge --> Done[tsk done<br/>status done]
+```
+
+AI command pipeline:
+
+```mermaid
+flowchart LR
+    Cmd[tsk new, pr, pr edit, summarize, ask, commit] --> Gate{ai enabled and feature flag}
+    Gate -->|yes| Tmpl[ai.command template]
+    Tmpl --> Subst[substitute system, input or input_file]
+    Subst --> Shell[sh -c]
+    Shell --> External[external AI CLI]
+    External --> Stdout[stdout into tsk]
+```
+
+XDG and task store layout:
+
+```mermaid
+flowchart TD
+    XDG[XDG env] --> Repo[RIPTSK_REPO<br/>default XDG_DATA_HOME riptsk]
+    XDG --> Conf[XDG_CONFIG_HOME riptsk config.env]
+    XDG --> Cache[XDG_CACHE_HOME riptsk]
+    Repo --> R1[issues]
+    Repo --> R2[templates]
+    Repo --> R3[riptsk.yaml]
+    Repo --> R4[.git]
+    Cache --> C1[views]
+    Cache --> C2[id_map.json]
+    Cache --> C3[backend_state.json]
+    Cache --> C4[session.json]
 ```
 
 ## Installation
 
 ```bash
-# Install to ~/.cargo/bin
 make install
 
-# Equivalent cargo command
+# equivalent
 cargo install --path .
-
-# Remove
-make uninstall
 ```
 
-> **Note:** After installing, run `tsk init` to create the issue repository
-> before using any other command.
+After installing, run `tsk init` before using the task store.
 
-`make install` installs the Rust binary to `~/.cargo/bin/tsk`.
-
-Shell completions are generated on demand:
+Shell completions:
 
 ```bash
 tsk completions bash > ~/.local/share/bash-completion/completions/tsk
@@ -57,343 +132,424 @@ tsk completions zsh > "${fpath[1]}/_tsk"
 tsk completions fish > ~/.config/fish/completions/tsk.fish
 ```
 
-## Usage
+## Core concepts
 
-### Issue lifecycle
+### Task store vs project repos
 
-```bash
-tsk new                                  # interactive new issue
-tsk new --title "Fix login bug"          # quick create with title
-tsk new --template bug --priority high   # use a template
-tsk new --title "Draft spec"             # AI generates body when ai.enabled
+`tsk` keeps issues, templates, and `riptsk.yaml` in one local task store repository. By default that repository lives at `$XDG_DATA_HOME/riptsk`, or `~/.local/share/riptsk` when `XDG_DATA_HOME` is unset.
 
-tsk ls                                   # list issues (default: todo)
-tsk ls --status in-progress              # filter by status
-tsk ls --priority high --project myapp   # combine filters
-tsk ls --all                             # all statuses
+Project repositories are separate. Commands like `tsk branch`, `tsk pr`, `tsk done`, `tsk clone`, and `tsk unclone` operate in a project repo, while issue files and task-store commits live under `$RIPTSK_REPO`.
 
-tsk show <ID>                            # display full issue
-tsk edit <ID>                            # open in $EDITOR
-tsk status <ID> in-progress              # change status
-tsk close <ID>                           # move to done
-tsk reopen <ID>                          # move back from done
-tsk rm <ID>                              # delete issue
-tsk path <ID>                            # print file path
-```
+### Directory layout
 
-When `fzf` is installed, omitting `<ID>` opens an interactive picker.
+`tsk` resolves paths like this:
 
-### Branching & pull requests
+| Location | Default | Contents |
+|---|---|---|
+| `$RIPTSK_REPO` | `$XDG_DATA_HOME/riptsk` | `issues/`, `templates/`, `riptsk.yaml`, `.git/` |
+| `$XDG_CONFIG_HOME/riptsk/config.env` | `~/.config/riptsk/config.env` | Optional `RIPTSK_REPO=...` override |
+| `$XDG_CACHE_HOME/riptsk` | `~/.cache/riptsk` | `views/`, `backend_state.json`, `id_map.json`, `deleted_keys.json`, `session.json` |
 
-Each issue carries an `id-slug` field (e.g., `42-fix-login-bug`) that doubles
-as the branch name. The workflow enforces a strict chain:
-**task → branch → PR/MR**.
+`tsk init` creates the task store, seeds built-in templates, writes `riptsk.yaml`, and initializes a git repo there.
+
+## Issue lifecycle
+
+Create, inspect, and manage issues:
 
 ```bash
-tsk new --title "Fix login bug"      # 1. create the issue (required first)
-tsk branch WHL-042                   # 2. create & push branch from issue
-# ... work on the branch, commit, push ...
-tsk pr                               # 3. open PR/MR from current branch
-tsk done WHL-042                     # 4. merge, clean up, and mark done
+tsk new
+tsk new --title "Fix login bug"
+tsk new --template bug --priority high
+tsk new --title "Write spec" --edit
+
+tsk ls
+tsk ls --status backlog
+tsk ls --priority high --project my-app
+tsk ls --all
+tsk ls --conflicts
+
+tsk show <ID>
+tsk edit <ID>
+tsk status <ID> in-progress
+tsk close <ID>
+tsk reopen <ID>
+tsk rm <ID>
+tsk path <ID>
 ```
 
-`tsk branch` must be run from within the project's git working directory (not
-`$RIPTSK_REPO`). It creates the branch locally and pushes it to `origin`.
+Notes:
 
-`tsk pr` detects the current branch, finds the matching issue (by `branch` or
-`id-slug` frontmatter field), and creates a pull request (GitHub) or merge
-request (GitLab) with:
-
-- **Title**: `Resolve "<issue title>"`
-- **Body**: `Closes #<issue_number>` followed by the issue body
-
-The issue status is automatically changed to `in-progress` if it was in
-`backlog` or `todo`. The PR/MR URL is stored in the issue's `pr_url`
-frontmatter field.
-
-`tsk done` completes the PR workflow for an issue. It is a convenience
-wrapper that combines several individual commands into a single operation.
-In order, it:
-
-1. Validates that the project working tree is clean.
-2. Merges the PR — skips if already merged, supports confirmation and
-   auto-merge (`tsk pr merge <ID>`).
-3. Checks out the default branch and pulls the latest changes
-   (`git checkout` + `git pull`).
-4. Deletes the remote and local branch, clears the issue's `branch` and
-   `id_slug` metadata (`tsk branch <ID> -D`).
-5. Changes the issue status to `done` (`tsk close <ID>`).
-
-When auto-commit is enabled, `tsk done` creates a single commit in the
-`$RIPTSK_REPO` (the tasks repository, not the project repository) covering
-all issue metadata changes (steps 4-5). When running the steps individually,
-each command (`tsk branch -D`, `tsk close`) auto-commits to `$RIPTSK_REPO`
-separately.
-
-#### Manual step-by-step (equivalent to `tsk done`)
-
-Each step of `tsk done` can be performed individually:
-
-```bash
-tsk pr merge <ID>                          # 1. merge the PR (or --auto-merge)
-git checkout <default-branch> && git pull   # 2. switch to default branch
-tsk branch <ID> -D                         # 3. delete branches + clear metadata
-tsk close <ID>                             # 4. set status to done
-```
-
-`tsk pr show <ID>` can be used beforehand to inspect the PR state.
-
-Options (shared by both `tsk done` and `tsk pr merge`):
-
-- `--merge-method <merge|squash|rebase>`: choose the merge strategy.
-- `--auto-merge`: enable auto-merge and wait for required checks to pass.
-- `--yes`, `-y`: skip the confirmation prompt before merging.
-- `--timeout <SECONDS>`: set how long to wait for auto-merge before failing.
-
-Additional `tsk done` options:
-
-- `--project`, `-p`: limit issue resolution to one or more specific projects.
-- `--all-projects`, `-a`: allow issue resolution across all registered projects.
+- `tsk ls` defaults to open issues unless `--all` is used.
+- `tsk show` prints the raw issue file. If a file contains unresolved sync markers, `tsk` warns but still prints it.
+- When `fzf` is installed, commands that take an issue ID can often pick interactively with `--pick` or by omitting the ID where supported.
 
 ### Kanban board
 
-The default board lanes are: **todo**, **in-progress**, and **done**. Custom
-boards and statuses can be defined in the `boards` section of `riptsk.yaml`.
+The default board is `personal`, with lanes:
+
+- `backlog`
+- `todo`
+- `in-progress`
+- `done`
+
+Board and ordering commands:
 
 ```bash
-tsk board                    # show default board
-tsk board --board work       # show a specific board
-tsk board --all              # show all boards
-tsk board --open             # open board directory in ui.opener (e.g. nvim)
+tsk board
+tsk board --board personal
+tsk board --all
+tsk board --open
+tsk board --path
+
+tsk view
+
+tsk reorder backlog
+tsk reorder-up <ID>
+tsk reorder-down <ID>
 ```
 
-To open the board in `nvim`, set `ui.opener` in `riptsk.yaml`:
+Custom boards and lane sets are defined in `riptsk.yaml` under `boards`.
+
+### Work-clones
+
+For per-issue working directories:
 
 ```bash
-tsk config set ui.opener nvim
+tsk clone <ID>
+tsk unclone
+tsk unclone --force
 ```
 
-Change issue status between lanes and reorder within a lane:
+`tsk clone` creates a sibling work-clone for an issue branch. `tsk unclone` pushes the current work-clone, removes that clone directory, and prints the main repo path to return to.
+
+## Branch → PR → Done workflow
+
+The main remote workflow is issue first, then branch, then PR:
 
 ```bash
-tsk status <ID> in-progress  # change status (move to a different lane)
-tsk close <ID>               # move to done
-tsk reopen <ID>              # move back from done
-
-tsk reorder <status>         # interactive reorder (requires fzf)
-tsk reorder-up <ID>          # move issue up in its lane
-tsk reorder-down <ID>        # move issue down in its lane
+tsk new --title "Fix login bug"
+tsk branch <ID>
+# work in the project repo
+tsk pr
+tsk done <ID>
 ```
+
+### `tsk branch`
+
+Run `tsk branch` from the project repository, not from `$RIPTSK_REPO`.
+
+```bash
+tsk branch <ID>
+tsk branch <ID> -d
+tsk branch <ID> -D
+tsk branch <ID> -D --yes
+```
+
+Creating a branch:
+
+- resolves the issue
+- creates or reuses the remote branch for the issue
+- checks out the local branch
+- stores both `branch` and `id-slug` in the issue frontmatter
+
+Deleting a branch with `-d` or `-D` clears `branch` and `id-slug` from the issue.
+
+### `tsk pr`
+
+```bash
+tsk pr
+tsk pr <ID>
+tsk pr create <ID>
+tsk pr edit <ID>
+tsk pr edit <ID> --no-ai
+tsk pr edit <ID> -y
+tsk pr show <ID>
+tsk pr show <ID> --json
+tsk pr merge <ID>
+```
+
+`tsk pr` without a subcommand behaves like `tsk pr create`.
+
+Verified behavior:
+
+- the current branch must match the issue branch
+- creating a PR records `pr_url` and `pr_number`
+- if the issue was `backlog` or `todo`, `tsk pr` moves it to `in-progress`
+- Jira-backed issues use the Jira issue key in the PR title/body when Jira metadata exists
+
+### `tsk done`
+
+`tsk done` is the convenience wrapper for the full finish flow:
+
+```bash
+tsk done <ID>
+tsk done <ID> --merge-method squash
+tsk done <ID> --auto-merge
+tsk done <ID> --timeout 900
+tsk done <ID> --force-push
+tsk done <ID> --yes
+```
+
+When a version-control backend is available and the issue has a branch, `tsk done`:
+
+1. merges the PR
+2. checks out the default branch and pulls
+3. deletes the remote branch
+4. deletes the local branch
+5. clears `branch` and `id-slug`
+6. marks the issue `done`
+7. syncs the issue back to its backend
+8. regenerates cached views
+
+When the issue is local-only or Jira-without-`vc`, `tsk done` skips PR merge, marks the issue `done`, syncs issue state if applicable, and regenerates views.
+
+Manual equivalent:
+
+```bash
+tsk pr show <ID>
+tsk pr merge <ID> --merge-method squash --timeout 900
+git checkout <default-branch>
+git pull
+tsk branch <ID> -D
+tsk close <ID>
+```
+
+### `tsk start`
+
+`tsk start` wraps issue creation or selection, then runs branch + PR creation when a version-control backend is available.
+
+```bash
+tsk start --title "Implement parser"
+tsk start 42
+tsk start --pick
+tsk start --title "Refactor auth" --template feature --priority high
+```
+
+## Sync with GitHub, GitLab, Jira
+
+Backends are configured in `riptsk.yaml` under `backends`.
 
 ### Backend authentication
 
-riptsk looks for API tokens in environment variables, falling back to CLI
-tool keychains when available.
+GitHub token lookup order:
 
-#### GitHub
+1. `GITHUB_TOKEN`
+2. `GH_TOKEN`
+3. `gh auth token`
 
-Tried in order:
+GitLab token lookup order:
 
-1. `GITHUB_TOKEN` environment variable
-2. `GH_TOKEN` environment variable
-3. `gh auth token` (GitHub CLI keychain)
+1. `GITLAB_TOKEN`
+2. `glab auth status --show-token`
+
+Jira authentication:
+
+- Jira Cloud: `JIRA_API_TOKEN` plus `JIRA_EMAIL`
+- Jira Server or Data Center: `JIRA_API_TOKEN`
+- Optional override: `JIRA_AUTH_TYPE=bearer`
+- Fallback: `jira-cli-go` config and keychain
+
+Examples:
 
 ```bash
 export GITHUB_TOKEN="ghp_..."
-```
-
-#### GitLab
-
-Tried in order:
-
-1. `GITLAB_TOKEN` environment variable
-2. `glab auth status --show-token` (GitLab CLI keychain)
-
-```bash
 export GITLAB_TOKEN="glpat-..."
+
+export JIRA_EMAIL="you@example.com"
+export JIRA_API_TOKEN="..."
+export JIRA_AUTH_TYPE=bearer
 ```
 
-#### Jira
+### Auto-detect with `tsk register`
 
-Authentication differs between Jira Cloud and Jira Server/Data Center.
-
-**Jira Cloud** (basic auth -- both variables required):
+From a project directory:
 
 ```bash
-export JIRA_EMAIL="you@company.com"
-export JIRA_API_TOKEN="<api-token>"    # from id.atlassian.com
-```
-
-**Jira Server / Data Center** (PAT bearer auth):
-
-```bash
-export JIRA_API_TOKEN="<personal-access-token>"
-```
-
-Set `JIRA_AUTH_TYPE=bearer` to force bearer mode when both `JIRA_EMAIL` and
-`JIRA_API_TOKEN` are present.
-
-**Fallback:** if no environment variables are set, riptsk reads credentials
-from the `jira-cli-go` keychain (`~/.config/.jira/.config.yml`).
-
-### Backend setup
-
-Each project you track needs a backend entry in the `backends` section of
-`riptsk.yaml`. Backends tell riptsk where to sync issues and how to
-authenticate.
-
-#### Auto-detection (`tsk register`)
-
-The easiest way to add a backend is to `cd` into your project and run:
-
-```bash
-cd ~/projects/my-app
 tsk register
+tsk register --list
 ```
 
-riptsk reads the `origin` remote URL and infers the backend type:
+Detection rules:
 
-| Remote host | Detected type |
-|-------------|---------------|
-| `github.com` | `github` |
-| Any host containing `gitlab` (e.g., `gitlab.com`, `gitlab.internal.co`) | `gitlab` |
-| Anything else | `local` |
+- `github.com` remote -> `github`
+- any host containing `gitlab` -> `gitlab`
+- local git repo with no supported remote -> `local`
+- non-git directory -> `local`
 
-You are then prompted to confirm or override the name, type, host, repo,
-and default board. If the project is already registered, `tsk register`
-exits immediately.
+Jira is not auto-detected from git remotes. Add Jira backends manually in `riptsk.yaml`.
 
-> **Note:** Jira backends cannot be auto-detected from a git remote and must
-> be added manually (see below).
+`tsk` also performs best-effort project auto-registration on startup when the current directory is not already registered.
 
-Use `tsk register --list` to see all registered backends.
-
-#### Manual configuration
-
-Add entries directly to `riptsk.yaml` for full control or for backends that
-cannot be auto-detected (like Jira):
+### Manual backend configuration
 
 ```yaml
 backends:
-  # GitHub (host defaults to github.com)
   - name: my-github
     type: github
     repo: myorg/my-app
 
-  # Self-hosted GitLab
   - name: my-gitlab
     type: gitlab
-    host: https://gitlab.internal.co
+    host: https://gitlab.internal.example
     repo: team/my-app
 
-  # Jira Cloud
   - name: my-jira
     type: jira
-    host: https://myteam.atlassian.net   # required, must start with https://
-    repo: myorg/PROJ                     # org/PROJECT_KEY format
-    default_issue_type: Task             # optional; skips API discovery if set
-    vc: my-github                        # optional; links to a GitHub/GitLab
-                                         # backend for branch/PR workflows
+    host: https://myteam.atlassian.net
+    repo: myorg/PROJ
+    default_issue_type: Task
+    vc: my-github
 
-  # Local-only (no remote sync)
   - name: side-project
     type: local
     path: /home/user/projects/side-project
 ```
 
-**Jira-specific fields:**
+Field notes:
 
-| Field | Required | Description |
-|-------|----------|-------------|
-| `host` | yes | Instance URL (e.g., `https://myteam.atlassian.net`) |
-| `repo` | yes | `org/PROJECT_KEY` (e.g., `chrono/WHL`) |
-| `default_issue_type` | no | Issue type for new issues (`Task`, `Story`, `Bug`, etc.). If omitted, riptsk queries the Jira API to discover valid types. |
-| `vc` | no | Name of a GitHub/GitLab backend to use for branch and PR operations. |
+- `type` is one of `github`, `gitlab`, `jira`, `local`
+- `repo` format is `owner repo` style by backend convention:
+  GitHub uses `owner/repo`, GitLab uses `group/project`, Jira uses `org/PROJECT_KEY`
+- Jira `host` is required and must start with `https://`
+- Jira `vc` may point to a GitHub or GitLab backend for branch and PR commands
+- `path` is used for local path-based project detection
 
-### Sync with GitHub / GitLab / Jira
-
-Requires a configured backend in `riptsk.yaml` and the appropriate API
-token (see [Backend authentication](#backend-authentication)).
+### Sync commands
 
 ```bash
-tsk sync                     # pull then push (default)
-tsk sync pull                # fetch remote issues
-tsk sync pull 42             # fetch one issue
-tsk sync push                # push local changes
-tsk sync push 42             # push one issue
-tsk sync status              # show unsynced issues
-tsk sync resolve <ID>        # finish conflict resolution
-tsk sync pull --auto-triage  # AI auto-categorize on pull
-
-tsk ls --conflicts           # list conflicting issues
+tsk sync
+tsk sync pull
+tsk sync pull 42
+tsk sync push
+tsk sync push 42
+tsk sync status
+tsk sync resolve <ID>
 tsk sync resolve <ID> --take-local
 tsk sync resolve <ID> --take-remote
 ```
 
-#### Conflict resolution
+`tsk sync` without a subcommand runs pull, then push.
 
-When `tsk sync pull` detects a conflict, `tsk` keeps both clean versions as
-`issues/<ID>.LOCAL.md` and `issues/<ID>.REMOTE.md`, then overwrites the main
-`issues/<ID>.md` file with git-style conflict markers. That main file is
-intentionally not parseable until you resolve it.
-
-Use `tsk ls --conflicts` to find unresolved conflicts. `tsk show <ID>` still
-prints the raw file, and `tsk edit <ID>` still opens the file in your editor so
-you can resolve the markers manually.
-
-After editing, run one of:
+Project selection can be scoped with the standard project flags where supported:
 
 ```bash
-tsk sync resolve <ID>               # accept your manual edit, remove backups
-tsk sync resolve <ID> --take-local  # restore the local backup
-tsk sync resolve <ID> --take-remote # restore the remote backup
+tsk sync -p my-github
+tsk sync --backend my-gitlab
+tsk done -p my-github <ID>
+tsk done -a <ID>
 ```
 
-### Templates
+### Conflict resolution
+
+On pull conflicts, `tsk` writes:
+
+- `issues/<ID>.md` with conflict markers
+- `issues/<ID>.LOCAL.md`
+- `issues/<ID>.REMOTE.md`
+
+Then resolve with:
 
 ```bash
-tsk template list            # list available templates
-tsk template show bug        # display a template
-tsk template new             # create a new template
-tsk template edit bug        # edit in $EDITOR
-tsk template rm bug          # delete
-tsk template validate bug    # check YAML and fields
+tsk edit <ID>
+tsk sync resolve <ID>
 ```
 
-Built-in templates: `task`, `bug`, `feature`, `weekly-review`.
-
-### Recurring tasks
+Or restore one side directly:
 
 ```bash
-tsk recur list               # list recurring definitions
-tsk recur new                # create a new recurrence interactively
-tsk recur run                # create all issues due today
-tsk recur run 2026-04-01     # create issues due on a specific date
-tsk recur skip <recur_id>    # skip without creating
+tsk sync resolve <ID> --take-local
+tsk sync resolve <ID> --take-remote
 ```
 
-Recurring definitions live in `riptsk.yaml` and support daily, weekly (with
-`day_of_week`), monthly (with `day_of_month`), and yearly frequencies.
+## Templates
 
-### Sessions
-
-For multi-host workflows where `$RIPTSK_REPO` is a Git repository:
+Template commands:
 
 ```bash
-tsk session start            # git pull + sync pull
-tsk session end              # sync push + git commit + git push
+tsk template list
+tsk template show bug
+tsk template new bugfix
+tsk template edit bug
+tsk template rm bug
+tsk template validate bug
+tsk template validate
 ```
 
-### AI features
+Built-in templates:
 
-riptsk is **agent-agnostic** -- you provide your own AI CLI command and riptsk
-injects the right context via template placeholders. Any CLI tool that reads a
-prompt and writes to stdout will work (`claude`, `llm`, `ollama`, `sgpt`,
-a custom script, etc.).
+- `task`
+- `bug`
+- `feature`
+- `weekly-review`
 
-#### Setup
+Notes:
 
-1. Enable AI and set your command in `riptsk.yaml`:
+- `show`, `new`, `edit`, and `rm` require a template name
+- `validate` accepts an optional template name; without one it validates all templates
+
+## Recurring tasks
+
+Recurring definitions live in `riptsk.yaml` under `recurring`.
+
+```bash
+tsk recur list
+tsk recur run
+tsk recur run 2026-04-01
+tsk recur skip weekly-review
+
+tsk recur new \
+  --id weekly-review \
+  --title-pattern "Weekly review %Y-%m-%d" \
+  --frequency weekly \
+  --template weekly-review \
+  --day-of-week friday \
+  --board personal \
+  --status backlog
+```
+
+Supported frequencies:
+
+- `daily`
+- `weekly`
+- `monthly`
+- `yearly`
+
+Notes:
+
+- `--id`, `--title-pattern`, and `--frequency` are required
+- weekly recurrences require `--day-of-week`
+- monthly recurrences require `--day-of-month`
+- `run` creates due issues and updates `last_run`
+
+## Sessions
+
+Session commands:
+
+```bash
+tsk session start <ID>
+tsk session end
+```
+
+`tsk session start`:
+
+- records the current branch in cache
+- resolves the issue
+- creates or checks out the session branch
+- stores session state in `session.json`
+
+`tsk session end`:
+
+- commits the task store if `$RIPTSK_REPO` has uncommitted changes
+- checks out the previous project branch
+- clears the saved session state
+
+It does not run sync, pull, or push automation by itself.
+
+## AI integration
+
+`tsk` is AI-provider agnostic. You configure one shell command template in `riptsk.yaml`, and `tsk` renders it with context before executing it with `sh -c`.
+
+### Setup
 
 ```yaml
 ai:
@@ -401,114 +557,178 @@ ai:
   command: "cat {{input_file}} | claude -p --model haiku --system-prompt {{system}}"
 ```
 
-Or via the CLI:
+Or with `config set`:
 
 ```bash
 tsk config set ai.enabled true
 tsk config set ai.command "cat {{input_file}} | claude -p --model haiku --system-prompt {{system}}"
 ```
 
-2. Make sure your AI CLI is authenticated and on `$PATH`.
+### Placeholders
 
-#### Template placeholders
+| Placeholder | Meaning |
+|---|---|
+| `{{system}}` | Shell-escaped system prompt |
+| `{{input}}` | Shell-escaped input content |
+| `{{input_file}}` | Path to a temp file containing the raw input |
 
-Your `ai.command` is a shell command template with these placeholders:
+`ai.command` must contain either `{{input}}` or `{{input_file}}`.
 
-| Placeholder | Value | Notes |
-|---|---|---|
-| `{{system}}` | Shell-escaped system prompt | Already quoted — do **not** wrap in extra quotes |
-| `{{input}}` | Shell-escaped input content | Already quoted — do **not** wrap in extra quotes; may hit shell arg limits on large diffs |
-| `{{input_file}}` | Path to a temp file with raw input | Recommended for large inputs (PR diffs, issue corpora) |
+### Feature toggles
 
-The command is executed via `sh -c`, stdout is captured as the AI response, and
-a non-zero exit code is treated as an error.
-
-#### Recommended configurations
-
-**Claude Code CLI** (recommended -- handles large inputs via stdin):
-
-```yaml
-ai:
-  command: "cat {{input_file}} | claude -p --model haiku --system-prompt {{system}}"
-```
-
-**llm** (Simon Willison's CLI):
-
-```yaml
-ai:
-  command: "cat {{input_file}} | llm -s {{system}}"
-```
-
-**Ollama** (local models):
-
-```yaml
-ai:
-  command: "cat {{input_file}} | ollama run llama3 --system {{system}}"
-```
-
-**Simple inline** (for CLIs that accept short prompts as arguments):
-
-```yaml
-ai:
-  command: "my-ai-cli --system {{system}} --prompt {{input}}"
-```
-
-#### Feature toggles
-
-Individual AI features can be enabled or disabled:
+These live in YAML under `ai.features`:
 
 ```yaml
 ai:
   enabled: true
   command: "..."
   features:
-    new_body_gen: true   # tsk new (auto when enabled)
-    triage: true         # tsk sync pull --auto-triage
-    summarize: true      # tsk summarize
-    ask: true            # tsk ask
-    commit: true         # tsk commit (AI-generated commit message)
+    new_body_gen: true
+    triage: true
+    summarize: true
+    ask: true
+    commit: true
 ```
 
-#### Usage
+`ai.features.*` are YAML-only settings. They are not supported by `tsk config set`.
+
+### Command coverage
+
+Current AI-gated commands:
+
+- `tsk new`
+- `tsk pr`
+- `tsk pr edit`
+- `tsk summarize`
+- `tsk ask`
+- `tsk commit`
+
+### Example configurations
+
+Claude:
+
+```yaml
+ai:
+  command: "cat {{input_file}} | claude -p --model haiku --system-prompt {{system}}"
+```
+
+llm:
+
+```yaml
+ai:
+  command: "cat {{input_file}} | llm -s {{system}}"
+```
+
+Ollama:
+
+```yaml
+ai:
+  command: "cat {{input_file}} | ollama run llama3 --system {{system}}"
+```
+
+Inline prompt style:
+
+```yaml
+ai:
+  command: "my-ai-cli --system {{system}} --prompt {{input}}"
+```
+
+### Usage
 
 ```bash
-tsk new --title "Refactor auth"        # AI writes the issue body (when ai.enabled)
-tsk pr                                 # AI generates PR description
-tsk pr edit                            # AI updates PR description
-tsk commit                             # AI generates a conventional commit message from staged diff
-tsk summarize                          # summarize all issues
-tsk summarize --cycle 2026-Q1          # summarize a cycle
+tsk new --title "Refactor auth"
+tsk pr
+tsk pr edit <ID>
+tsk pr edit <ID> --no-ai
+tsk summarize
+tsk summarize --project my-app
+tsk summarize --board personal
+tsk summarize --cycle 2026-Q1
 tsk ask "What are the highest priority bugs?"
+
+tsk commit
+tsk commit --no-ai
+tsk commit --edit
+tsk commit --message "docs(readme): refresh architecture docs"
 ```
 
-Use `--no-ai` with `tsk pr`, `tsk pr edit`, or `tsk commit` to skip AI generation.
+## Configuration
 
-### Configuration
+The main config file is `$RIPTSK_REPO/riptsk.yaml`.
 
-```bash
-tsk config                   # show current config
-tsk config set key value     # set a config value
-tsk register                 # register current project
-tsk register --list          # list registered projects
+Example:
+
+```yaml
+version: 1
+auto_commit: false
+
+defaults:
+  board: personal
+  status: backlog
+  priority: medium
+  assignee: null
+  template: task
+
+backends:
+  - name: my-github
+    type: github
+    repo: myorg/my-app
+    default_board: personal
+
+boards:
+  - name: personal
+    statuses: [backlog, todo, in-progress, done]
+
+ui:
+  opener: "nvim -R"
+  tree_depth: 2
+  fzf_opts: "--border"
+
+ai:
+  enabled: false
+  command: null
+  features:
+    new_body_gen: true
+    triage: true
+    summarize: true
+    ask: true
+    commit: true
+
+sync:
+  conflict_detection: true
+
+recurring: []
 ```
 
-### Task store maintenance
+### Settable via `tsk config set`
 
-`tsk store` groups commands that operate on the riptsk task store repository
-itself (not your project's git repo).
+Exactly these keys are supported:
 
-```bash
-tsk store commit                  # commit pending changes to the task store
-tsk store hooks install           # install pre-commit hook in the task store
-tsk store hooks status            # check hook status
-tsk store hooks update            # update hook
-tsk store hooks uninstall         # remove hook
-```
+- `auto_commit`
+- `defaults.board`
+- `defaults.status`
+- `defaults.priority`
+- `defaults.assignee`
+- `defaults.template`
+- `ui.opener`
+- `ui.tree_depth`
+- `ui.fzf_opts`
+- `ai.enabled`
+- `ai.command`
+- `sync.conflict_detection`
+
+Everything else is YAML-only, including:
+
+- `backends`
+- `boards`
+- `recurring`
+- `ai.features.*`
 
 ## Issue format
 
-Issues are Markdown files stored in `$RIPTSK_REPO/issues/`. Each file has YAML
-frontmatter followed by a Markdown body:
+Issues are Markdown files in `$RIPTSK_REPO/issues/`.
+
+Example:
 
 ```markdown
 ---
@@ -519,10 +739,19 @@ board: personal
 project: wormhole-router
 priority: high
 labels: [bug, temporal-drift]
-assignee: ppuffin
+assignees: [ppuffin]
 cycle: 2026-Q1
 order: 1
 due: 2026-03-20
+id-slug: 42-fix-wormhole-stabilizer-retry-logic
+branch: 42-fix-wormhole-stabilizer-retry-logic
+pr_url: https://github.com/myorg/wormhole-router/pull/128
+pr_number: 128
+local_updated_at: "2026-04-07T10:15:00Z"
+github:
+  repo: myorg/wormhole-router
+  issue_id: 42
+  updated_at: "2026-04-07T10:15:00Z"
 ---
 
 ## Description
@@ -530,57 +759,53 @@ due: 2026-03-20
 The stabilizer retry logic does not back off correctly...
 ```
 
-Key frontmatter fields: `id`, `title`, `status`, `board`, `project`, `org`,
-`priority` (low/medium/high/urgent), `labels`, `assignee`, `milestone`,
-`cycle`, `order`, `due`, `recurring`.
+Frontmatter fields in the current schema include:
 
-Local issues get a provisional `LOCAL-<hex>` ID until first sync, when they
-receive a project-prefixed ID (e.g., `WHL-042`).
+- identity and workflow: `id`, `title`, `status`, `board`, `project`, `org`, `order`
+- planning: `priority`, `labels`, `assignees`, `milestone`, `cycle`, `due`, `weight`, `recurring`
+- sync state: `state_reason`, `local_updated_at`, `remote_deleted`
+- branch and PR state: `id-slug`, `branch`, `pr_url`, `pr_number`
+- backend metadata blocks: `github`, `gitlab`, `jira`
+- backend-specific fields: `confidential`, `discussion_locked`, `issue_type`, `locked`, `lock_reason`
+
+Legacy `assignee: <name>` is still accepted when reading older issue files, but new docs and examples should use `assignees`.
+
+## Task store maintenance
+
+The task store is the riptsk repository itself, not your project repository.
+
+```bash
+tsk store commit
+tsk store commit --edit
+
+tsk store hooks install
+tsk store hooks status
+tsk store hooks update
+tsk store hooks uninstall
+```
+
+`tsk store commit` stages `issues/`, `templates/`, and `riptsk.yaml`, then creates a task-store commit. Hook management installs the bundled pre-commit hook into `$RIPTSK_REPO/.git/hooks/pre-commit`.
 
 ## Dependencies
 
 ### Required
 
-- **git**
-- **Rust toolchain** (for building from source)
+- `git`
+- Rust toolchain for building from source
 
 ### Optional
 
 | Tool | Used for |
-|------|----------|
-| `fzf` | Interactive issue selection |
-| Any AI CLI (`claude`, `llm`, `ollama`, etc.) | AI features (configured via `ai.command`) |
-| `bash` | Managed hook script execution after `tsk store hooks install` |
-| `yq`, `jq` | Managed hook validation after `tsk store hooks install` |
-
-## Configuration
-
-riptsk follows the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir-spec/latest/):
-
-| Variable | Default | Contents |
-|----------|---------|----------|
-| `$RIPTSK_REPO` (`$XDG_DATA_HOME/riptsk`) | `~/.local/share/riptsk` | Issues, templates, `riptsk.yaml` |
-| `$XDG_CONFIG_HOME/riptsk` | `~/.config/riptsk` | `config.env` |
-| `$XDG_CACHE_HOME/riptsk` | `~/.cache/riptsk` | View cache, ID map |
-
-The main configuration file is `riptsk.yaml` in `$RIPTSK_REPO`. Run `tsk init` to
-generate one with sensible defaults. Key sections:
-
-- **defaults** -- default board, status, priority, template for new issues
-- **backends** -- GitHub/GitLab/Jira project connections
-- **boards** -- kanban board definitions with custom status lists
-- **ui** -- opener command, tree depth, fzf options
-- **ai** -- command template, enabled features
-- **sync** -- conflict detection toggle
-- **recurring** -- recurring task definitions
+|---|---|
+| `fzf` | Interactive issue selection and reorder flows |
+| Any AI CLI | `ai.command` integrations |
+| `bash` | Managed task-store pre-commit hook execution |
+| `yq` and `jq` | Managed task-store hook validation |
 
 ## Development
 
 ```bash
-make lint    # cargo fmt --check + cargo clippy
-make test    # cargo nextest run
-make check   # both lint and test
+make lint
+make test
+make check
 ```
-
-Pre-commit hooks enforce formatting, linting, and security checks on commit and
-push. See `.pre-commit-config.yaml` for the full hook list.
