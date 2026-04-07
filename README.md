@@ -88,7 +88,7 @@ AI command pipeline:
 
 ```mermaid
 flowchart LR
-    Cmd[tsk new, pr, pr edit, summarize, ask, commit] --> Gate{ai enabled and feature flag}
+    Cmd[tsk new --ai, pr, pr edit, summarize, ask, commit] --> Gate{command opt-in or ai enabled, plus feature flag}
     Gate -->|yes| Tmpl[ai.command template]
     Tmpl --> Subst[substitute system, input or input_file]
     Subst --> Shell[sh -c]
@@ -161,6 +161,7 @@ tsk new
 tsk new --title "Fix login bug"
 tsk new --template bug --priority high
 tsk new --title "Write spec" --edit
+tsk new --title "Refactor auth" --ai
 
 tsk ls
 tsk ls --status backlog
@@ -596,12 +597,16 @@ ai:
 
 Current AI-gated commands:
 
-- `tsk new`
+- `tsk new --ai`
 - `tsk pr`
 - `tsk pr edit`
 - `tsk summarize`
 - `tsk ask`
 - `tsk commit`
+
+`tsk new` is explicit opt-in. It only runs AI when you pass `--ai`; `config.ai.enabled`
+does not turn AI on by default for `tsk new`. Other AI-enabled commands still follow
+their normal config-driven defaults.
 
 ### Example configurations
 
@@ -636,7 +641,7 @@ ai:
 ### Usage
 
 ```bash
-tsk new --title "Refactor auth"
+tsk new --title "Refactor auth" --ai
 tsk pr
 tsk pr edit <ID>
 tsk pr edit <ID> --no-ai

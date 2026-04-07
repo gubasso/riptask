@@ -325,9 +325,9 @@ pub struct NewArgs {
     /// Template to use
     #[arg(short = 'T', long)]
     pub template: Option<String>,
-    /// Disable AI-assisted content generation
+    /// Enable AI-assisted content generation (off by default; not driven by config.ai.enabled)
     #[arg(long)]
-    pub no_ai: bool,
+    pub ai: bool,
     /// Open in $EDITOR after creation
     #[arg(short = 'e', long)]
     pub edit: bool,
@@ -853,13 +853,13 @@ mod tests {
     }
 
     #[test]
-    fn new_no_ai_parses() {
-        let cli = Cli::try_parse_from(["tsk", "new", "--no-ai", "my title"]).expect("parse");
+    fn new_ai_parses() {
+        let cli = Cli::try_parse_from(["tsk", "new", "--ai", "my title"]).expect("parse");
         let Commands::New(args) = cli.command.expect("command") else {
             panic!("expected new command");
         };
         assert_eq!(args.title_pos.as_deref(), Some("my title"));
-        assert!(args.no_ai);
+        assert!(args.ai);
     }
 
     #[test]
