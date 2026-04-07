@@ -84,7 +84,7 @@ pub enum Commands {
     Sync(SyncArgs),
     /// Start or end a work session
     Session(SessionArgs),
-    /// Commit tsk issue changes to git
+    /// AI-assisted git commit for your project
     Commit(CommitArgs),
     /// Manage recurring issue schedules
     Recur(RecurArgs),
@@ -98,8 +98,8 @@ pub enum Commands {
     Ask(AskArgs),
     /// View or update tsk configuration
     Config(ConfigArgs),
-    /// Manage git hooks for auto-commit
-    Hooks(HooksArgs),
+    /// Manage the riptsk task store (commits, hooks)
+    Store(StoreArgs),
     /// Generate shell completions
     #[command(hide = true)]
     Completions {
@@ -490,6 +490,33 @@ pub enum CompletionShell {
 
 #[derive(Debug, Clone, Args, Default)]
 pub struct CommitArgs {
+    /// Disable AI message generation
+    #[arg(long)]
+    pub no_ai: bool,
+    /// Open commit message in editor before committing
+    #[arg(short = 'e', long)]
+    pub edit: bool,
+    /// Provide commit message directly (skip AI)
+    #[arg(short = 'm', long)]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct StoreArgs {
+    #[command(subcommand)]
+    pub subcommand: StoreSubcommand,
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum StoreSubcommand {
+    /// Commit tsk issue changes to the task store
+    Commit(StoreCommitArgs),
+    /// Manage git hooks for the task store
+    Hooks(HooksArgs),
+}
+
+#[derive(Debug, Clone, Args, Default)]
+pub struct StoreCommitArgs {
     /// Open the commit message in an editor
     #[arg(short = 'e', long)]
     pub edit: bool,
