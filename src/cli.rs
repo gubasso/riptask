@@ -1,5 +1,80 @@
 use crate::adapters::backend::MergeMethod;
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
+
+/// Maps each top-level subcommand to a help-output section. The order here
+/// drives the section order and the order of commands within each section.
+/// Command descriptions are NOT duplicated here — they are pulled at runtime
+/// from each variant's doc-comment via `clap::Command::get_about()`.
+pub(crate) const HELP_GROUPS: &[(&str, &[&str])] = &[
+    (
+        "Issue Management",
+        &[
+            "close", "edit", "ls", "new", "path", "recur", "reopen", "rm", "show", "status",
+        ],
+    ),
+    (
+        "Branching & Work Clones",
+        &["branch", "commit", "pr", "session"],
+    ),
+    ("Workflows", &["clone", "done", "start", "unclone"]),
+    (
+        "Views & Boards",
+        &["board", "reorder", "reorder-down", "reorder-up", "view"],
+    ),
+    ("Sync & Backend", &["register", "store", "sync"]),
+    ("AI Assistance", &["ask", "summarize"]),
+    (
+        "Setup & Meta",
+        &["config", "help", "init", "template", "version"],
+    ),
+];
+
+/// Build a `clap::Command` with the grouped root help template applied.
+/// All call sites that need the root command (parsing, `tsk help`, completions)
+/// should use this so the rendered help is consistent.
+pub fn root_command() -> clap::Command {
+    let cmd = Cli::command();
+    let template = build_root_help_template(&cmd);
+    cmd.help_template(template)
+}
+
+fn build_root_help_template(cmd: &clap::Command) -> String {
+    // Width of the name column = longest visible name + 2 spaces of padding.
+    let max_name = HELP_GROUPS
+        .iter()
+        .flat_map(|(_, names)| names.iter())
+        .map(|n| n.len())
+        .max()
+        .unwrap_or(0);
+    let pad = max_name + 2;
+
+    let mut body = String::new();
+    body.push_str("{about-with-newline}");
+    body.push_str("Usage: {usage}\n\n");
+    for (heading, names) in HELP_GROUPS {
+        body.push_str(heading);
+        body.push_str(":\n");
+        let mut names: Vec<&str> = names.to_vec();
+        names.sort_unstable();
+        for name in &names {
+            let about = cmd
+                .find_subcommand(name)
+                .and_then(|s| s.get_about())
+                .map(|a| a.to_string())
+                .unwrap_or_default();
+            body.push_str("  ");
+            body.push_str(name);
+            for _ in name.len()..pad {
+                body.push(' ');
+            }
+            body.push_str(&about);
+            body.push('\n');
+        }
+        body.push('\n');
+    }
+    body.push_str("Options:\n{options}\n");
+    body
+}
 
 #[derive(Debug, Parser)]
 #[command(
@@ -35,84 +110,84 @@ pub struct IdArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum Commands {
-    /// Initialize a new tsk repository
-    Init,
-    /// Create a new issue
-    New(NewArgs),
+    /// Close an issue
+    Close(IdArgs),
     /// Edit an existing issue in your editor
     Edit(IdArgs),
+    /// List issues with optional filters
+    Ls(LsArgs),
+    /// Create a new issue
+    New(NewArgs),
+    /// Print the file path of an issue
+    Path(IdArgs),
+    /// Manage recurring issue schedules
+    Recur(RecurArgs),
+    /// Reopen a closed issue
+    Reopen(IdArgs),
+    /// Remove an issue permanently
+    Rm(IdArgs),
     /// Display issue details
     Show(IdArgs),
     /// Change the status of an issue
     #[command(name = "status")]
     Status(StatusArgs),
-    /// Close an issue
-    Close(IdArgs),
-    /// Reopen a closed issue
-    Reopen(IdArgs),
-    /// Remove an issue permanently
-    Rm(IdArgs),
-    /// List issues with optional filters
-    Ls(LsArgs),
-    /// Print the file path of an issue
-    Path(IdArgs),
     /// Create, switch to, or delete an issue branch
     Branch(BranchArgs),
     /// Create a work-clone for an issue
     Clone(CloneArgs),
-    /// Push changes and remove the current work-clone
-    Unclone(UncloneArgs),
-    /// Complete an issue: merge PR, clean up branches, close issue (convenience wrapper — see `tsk pr merge`, `tsk branch -D`, `tsk close`)
+    /// Create an AI-assisted git commit
+    Commit(CommitArgs),
+    /// Complete an issue: merge PR, delete branch, close issue
     Done(DoneArgs),
-    /// Start working on an issue: resolve existing or create new, then branch + PR
-    Start(StartArgs),
     /// Create, edit, or show a pull/merge request
     Pr(PrArgs),
-    /// Display or manage board views
+    /// Start or end a work session
+    Session(SessionArgs),
+    /// Start work on an issue (creates branch and draft PR)
+    Start(StartArgs),
+    /// Push changes and remove the current work-clone
+    Unclone(UncloneArgs),
+    /// Show or manage boards
     Board(BoardArgs),
-    /// Regenerate all board view files
-    View,
     /// Set the order of issues by status
     Reorder(ReorderArgs),
-    /// Move an issue one position up in its status
-    #[command(name = "reorder-up")]
-    ReorderUp(IdArgs),
     /// Move an issue one position down in its status
     #[command(name = "reorder-down")]
     ReorderDown(IdArgs),
-    /// Sync issues with a remote backend (GitHub/GitLab)
-    Sync(SyncArgs),
-    /// Start or end a work session
-    Session(SessionArgs),
-    /// AI-assisted git commit for your project
-    Commit(CommitArgs),
-    /// Manage recurring issue schedules
-    Recur(RecurArgs),
-    /// Manage issue templates
-    Template(TemplateArgs),
+    /// Move an issue one position up in its status
+    #[command(name = "reorder-up")]
+    ReorderUp(IdArgs),
+    /// Regenerate board views
+    View,
     /// Register a backend project (GitHub/GitLab)
     Register(RegisterArgs),
-    /// Generate an AI summary of issues
-    Summarize(SummarizeArgs),
+    /// Manage the task store (commits, hooks)
+    Store(StoreArgs),
+    /// Sync issues with a remote backend (GitHub/GitLab)
+    Sync(SyncArgs),
     /// Ask an AI question about your issues
     Ask(AskArgs),
+    /// Generate an AI summary of issues
+    Summarize(SummarizeArgs),
     /// View or update tsk configuration
     Config(ConfigArgs),
-    /// Manage the riptsk task store (commits, hooks)
-    Store(StoreArgs),
     /// Generate shell completions
     #[command(hide = true)]
     Completions {
         /// Target shell
         shell: CompletionShell,
     },
-    /// Print version information
-    Version,
     /// Show help for a command
     Help {
         /// Command name
         command: Option<String>,
     },
+    /// Initialize a new tsk repository
+    Init,
+    /// Manage issue templates
+    Template(TemplateArgs),
+    /// Print version information
+    Version,
 }
 
 #[derive(Debug, Clone, Args, Default)]
@@ -707,8 +782,48 @@ pub enum HooksSubcommand {
 
 #[cfg(test)]
 mod tests {
-    use super::{Cli, Commands, PrSubcommand, SessionSubcommand, SyncSubcommand};
-    use clap::Parser;
+    use super::{Cli, Commands, HELP_GROUPS, PrSubcommand, SessionSubcommand, SyncSubcommand};
+    use clap::{CommandFactory, Parser};
+
+    /// Guards against drift between `HELP_GROUPS` and the actual `Commands`
+    /// enum. Every visible top-level subcommand must appear in `HELP_GROUPS`
+    /// exactly once and be rendered in `tsk --help`; every entry in
+    /// `HELP_GROUPS` must correspond to a real visible subcommand.
+    #[test]
+    fn root_help_template_matches_visible_subcommands() {
+        let visible: Vec<String> = Cli::command()
+            .get_subcommands()
+            .filter(|s| !s.is_hide_set())
+            .map(|s| s.get_name().to_string())
+            .collect();
+        let mapped: Vec<&str> = HELP_GROUPS
+            .iter()
+            .flat_map(|(_, names)| names.iter().copied())
+            .collect();
+
+        for name in &visible {
+            let count = mapped.iter().filter(|m| **m == name.as_str()).count();
+            assert_eq!(
+                count, 1,
+                "subcommand `{name}` should appear exactly once in HELP_GROUPS (found {count})"
+            );
+        }
+        for entry in &mapped {
+            assert!(
+                visible.iter().any(|v| v == entry),
+                "HELP_GROUPS contains `{entry}` which is not a visible subcommand"
+            );
+        }
+
+        let rendered = super::root_command().render_help().to_string();
+        for name in &visible {
+            let prefix = format!("  {name} ");
+            assert!(
+                rendered.lines().any(|line| line.starts_with(&prefix)),
+                "tsk --help did not render `{name}` — check build_root_help_template"
+            );
+        }
+    }
 
     #[test]
     fn ls_short_all_projects_parses() {
