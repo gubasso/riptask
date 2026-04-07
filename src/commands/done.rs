@@ -1,10 +1,11 @@
+use crate::adapters::backend::VersionControl;
 use crate::adapters::git::{CliGit, GitBackend};
 use crate::adapters::prompts::DialoguerPrompts;
 use crate::cli::{DoneArgs, SyncArgs};
 use crate::commands::branch::{backend_issue_number, current_repo, cwd_utf8};
 use crate::commands::{pr, sync_cmd};
 use crate::config::load_config;
-use crate::domain::issue::IssueState;
+use crate::domain::issue::{IssueDocument, IssueState};
 use crate::error::RiptskError;
 use crate::models::Backend;
 use crate::paths::AppPaths;
@@ -16,6 +17,62 @@ use crate::services::id_resolution;
 use crate::services::issue_service::now_utc;
 use crate::services::view_builder::ViewBuilder;
 use crate::storage::{cache, frontmatter, issue_store};
+
+async fn ensure_pr_number<F, Fut>(
+    provider: &dyn VersionControl,
+    repo_name: &str,
+    issue_path: &camino::Utf8Path,
+    id: &str,
+    issue: &IssueDocument,
+    create_pr: F,
+) -> Result<(IssueDocument, u64), RiptskError>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<(), RiptskError>>,
+{
+    if let Some(number) = remote_pr_number_for_issue(provider, repo_name, issue).await? {
+        return Ok((issue.clone(), number));
+    }
+    crate::ui::info("no PR found, creating one...");
+    create_pr().await?;
+    let reloaded =
+        crate::commands::issues::load_issue_or_conflict_error(issue_path.as_std_path(), id)?;
+    let number = pr::resolve_pr_number(provider, repo_name, &reloaded).await?;
+    Ok((reloaded, number))
+}
+
+/// Returns the PR number for `issue` only if validated against the remote.
+/// Local frontmatter metadata is treated as a hint and re-checked via `get_pr`;
+/// if validation fails, falls back to `find_pr_by_branch`. Returns `Ok(None)`
+/// if no PR currently exists for the issue's branch on the remote.
+async fn remote_pr_number_for_issue(
+    provider: &dyn VersionControl,
+    repo_name: &str,
+    issue: &IssueDocument,
+) -> Result<Option<u64>, RiptskError> {
+    let Some(branch) = issue.frontmatter.branch.as_deref() else {
+        return Ok(None);
+    };
+    let base = provider.default_branch(repo_name).await?;
+    let local_hint = issue.frontmatter.pr_number.or_else(|| {
+        issue
+            .frontmatter
+            .pr_url
+            .as_deref()
+            .and_then(pr::parse_pr_number_from_url)
+    });
+    if let Some(number) = local_hint
+        && let Ok(record) = provider.get_pr(repo_name, number).await
+        && pr::pr_head_matches(&record.head, branch)
+        && record.base == base
+    {
+        return Ok(Some(record.number));
+    }
+    Ok(provider
+        .find_pr_by_branch(repo_name, branch, &base)
+        .await?
+        .map(|record| record.number))
+}
 
 pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
@@ -88,9 +145,9 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
     let backend = pr::resolve_hosted_backend(&config, &issue)?;
     let provider = build_provider_for_backend(backend)?;
     let repo_name = backend.repo.as_deref().unwrap_or_default();
-    let pr_number = pr::resolve_pr_number(provider.as_ref(), repo_name, &issue).await?;
     let git = CliGit::with_auth(resolve_git_auth(backend));
     let repo_dir = current_repo()?;
+    let original_branch = git.current_branch(repo_dir.as_path()).ok();
 
     let stashed = if git.has_working_tree_changes(repo_dir.as_path())? {
         let current_branch = git.current_branch(repo_dir.as_path()).unwrap_or_default();
@@ -107,6 +164,30 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
     };
 
     let result = async {
+        let (issue, pr_number) = ensure_pr_number(
+            provider.as_ref(),
+            repo_name,
+            issue_path.as_path(),
+            &id,
+            &issue,
+            || async {
+                // pr::create requires the working tree to be on the issue branch.
+                // Switch to it on demand so `tsk done` works from any branch.
+                if git.current_branch(repo_dir.as_path())? != branch_name {
+                    git.checkout(repo_dir.as_path(), &branch_name)?;
+                }
+                pr::create(
+                    paths,
+                    crate::cli::PrCreateArgs {
+                        scope: args.scope.clone(),
+                        id: Some(id.clone()),
+                        no_ai: false,
+                    },
+                )
+                .await
+            },
+        )
+        .await?;
         let merge_opts = pr::MergeOptions {
             merge_method: args.merge_method.unwrap_or_default(),
             auto_merge: args.auto_merge,
@@ -212,6 +293,17 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
         Ok(())
     }
     .await;
+    // On failure, restore the caller's original branch before popping the stash so that
+    // any stashed changes land back on the branch the user invoked `tsk done` from.
+    if result.is_err()
+        && let Some(orig) = original_branch.as_deref()
+        && git.current_branch(repo_dir.as_path()).ok().as_deref() != Some(orig)
+        && let Err(error) = git.checkout(repo_dir.as_path(), orig)
+    {
+        crate::ui::warn(&format!(
+            "failed to restore original branch {orig}: {error}"
+        ));
+    }
     if stashed {
         crate::adapters::git::try_stash_pop(&git, repo_dir.as_path());
     }
@@ -221,4 +313,278 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
 fn is_branch_not_found_error(error: &RiptskError) -> bool {
     let message = error.to_string().to_lowercase();
     message.contains("404") || message.contains("not found")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ensure_pr_number;
+    use crate::adapters::backend::{
+        BackendPrRecord, CiPresence, MergeMethod, PrChecksStatus, VersionControl,
+    };
+    use crate::domain::issue::IssueDocument;
+    use crate::error::RiptskError;
+    use crate::storage::frontmatter;
+    use async_trait::async_trait;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone)]
+    struct FakeProvider {
+        default_branch: String,
+        pr_number: Arc<Mutex<Option<u64>>>,
+        branch_error: Arc<Mutex<Option<String>>>,
+    }
+
+    impl FakeProvider {
+        fn with_pr_number(pr_number: Option<u64>) -> Self {
+            Self {
+                default_branch: "main".into(),
+                pr_number: Arc::new(Mutex::new(pr_number)),
+                branch_error: Arc::new(Mutex::new(None)),
+            }
+        }
+
+        fn with_branch_error(error: &str) -> Self {
+            Self {
+                default_branch: "main".into(),
+                pr_number: Arc::new(Mutex::new(None)),
+                branch_error: Arc::new(Mutex::new(Some(error.into()))),
+            }
+        }
+
+        fn set_pr_number(&self, pr_number: Option<u64>) {
+            *self.pr_number.lock().expect("lock") = pr_number;
+        }
+    }
+
+    #[async_trait]
+    impl VersionControl for FakeProvider {
+        async fn create_pr(
+            &self,
+            _repo: &str,
+            _head: &str,
+            _base: &str,
+            _title: &str,
+            _body: &str,
+        ) -> Result<BackendPrRecord, RiptskError> {
+            unimplemented!()
+        }
+
+        async fn get_pr(&self, _repo: &str, _number: u64) -> Result<BackendPrRecord, RiptskError> {
+            unimplemented!()
+        }
+
+        async fn update_pr(
+            &self,
+            _repo: &str,
+            _number: u64,
+            _title: &str,
+            _body: &str,
+        ) -> Result<BackendPrRecord, RiptskError> {
+            unimplemented!()
+        }
+
+        async fn find_pr_by_branch(
+            &self,
+            _repo: &str,
+            _head: &str,
+            _base: &str,
+        ) -> Result<Option<BackendPrRecord>, RiptskError> {
+            if let Some(error) = self.branch_error.lock().expect("lock").clone() {
+                return Err(RiptskError::General(error));
+            }
+            Ok(self
+                .pr_number
+                .lock()
+                .expect("lock")
+                .map(|number| BackendPrRecord {
+                    number,
+                    title: "Test PR".into(),
+                    body: String::new(),
+                    url: format!("https://example.com/pr/{number}"),
+                    state: "open".into(),
+                    head: "feature/test".into(),
+                    head_sha: None,
+                    base: self.default_branch.clone(),
+                    node_id: None,
+                    merged: false,
+                    updated_at: String::new(),
+                }))
+        }
+
+        async fn merge_pr(
+            &self,
+            _repo: &str,
+            _number: u64,
+            _method: MergeMethod,
+            _commit_title: Option<&str>,
+            _commit_message: Option<&str>,
+        ) -> Result<(), RiptskError> {
+            unimplemented!()
+        }
+
+        async fn get_pr_checks_status(
+            &self,
+            _repo: &str,
+            _number: u64,
+        ) -> Result<PrChecksStatus, RiptskError> {
+            unimplemented!()
+        }
+
+        async fn get_ci_presence(&self, _repo: &str) -> Result<CiPresence, RiptskError> {
+            unimplemented!()
+        }
+
+        async fn create_branch(
+            &self,
+            _repo: &str,
+            _branch_name: &str,
+            _base_ref: &str,
+            _issue_id: Option<u64>,
+        ) -> Result<(), RiptskError> {
+            unimplemented!()
+        }
+
+        async fn default_branch(&self, _repo: &str) -> Result<String, RiptskError> {
+            Ok(self.default_branch.clone())
+        }
+
+        async fn delete_branch(&self, _repo: &str, _branch_name: &str) -> Result<(), RiptskError> {
+            unimplemented!()
+        }
+    }
+
+    fn test_issue() -> IssueDocument {
+        frontmatter::parse_issue_str(
+            "test",
+            "---\n\
+id: TEST--1\n\
+title: Test issue\n\
+status: todo\n\
+board: personal\n\
+project: demo\n\
+local_updated_at: \"2026-04-07T00:00:00Z\"\n\
+labels: []\n\
+remote_deleted: false\n\
+branch: feature/test\n\
+---\n\
+body\n",
+        )
+        .expect("parse issue")
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn ensure_pr_number_returns_existing_pr_without_creating() {
+        let provider = FakeProvider::with_pr_number(Some(17));
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let issue_path = camino::Utf8PathBuf::from_path_buf(temp_dir.path().join("TEST--1.md"))
+            .expect("utf8 path");
+        let issue = test_issue();
+        frontmatter::save_issue(issue_path.as_std_path(), &issue).expect("save issue");
+        let create_calls = Arc::new(Mutex::new(0usize));
+        let create_calls_for_closure = Arc::clone(&create_calls);
+
+        let (reloaded, pr_number) = ensure_pr_number(
+            &provider,
+            "owner/repo",
+            issue_path.as_path(),
+            "TEST--1",
+            &issue,
+            move || {
+                let create_calls = Arc::clone(&create_calls_for_closure);
+                async move {
+                    *create_calls.lock().expect("lock") += 1;
+                    Ok(())
+                }
+            },
+        )
+        .await
+        .expect("existing pr");
+
+        assert_eq!(pr_number, 17);
+        assert_eq!(reloaded.frontmatter.id, issue.frontmatter.id);
+        assert_eq!(*create_calls.lock().expect("lock"), 0);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn ensure_pr_number_creates_and_reloads_issue_when_missing() {
+        let provider = FakeProvider::with_pr_number(None);
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let issue_path = camino::Utf8PathBuf::from_path_buf(temp_dir.path().join("TEST--1.md"))
+            .expect("utf8 path");
+        let issue = test_issue();
+        frontmatter::save_issue(issue_path.as_std_path(), &issue).expect("save issue");
+        let create_calls = Arc::new(Mutex::new(0usize));
+        let create_calls_for_closure = Arc::clone(&create_calls);
+        let provider_for_closure = provider.clone();
+        let issue_path_for_closure = issue_path.clone();
+
+        let (reloaded, pr_number) = ensure_pr_number(
+            &provider,
+            "owner/repo",
+            issue_path.as_path(),
+            "TEST--1",
+            &issue,
+            move || {
+                let create_calls = Arc::clone(&create_calls_for_closure);
+                let provider = provider_for_closure.clone();
+                let issue_path = issue_path_for_closure.clone();
+                async move {
+                    *create_calls.lock().expect("lock") += 1;
+                    let mut updated =
+                        frontmatter::load_issue(issue_path.as_std_path()).expect("load issue");
+                    updated.frontmatter.pr_number = Some(42);
+                    updated.frontmatter.pr_url = Some("https://example.com/pr/42".into());
+                    frontmatter::save_issue(issue_path.as_std_path(), &updated)
+                        .expect("save issue");
+                    provider.set_pr_number(Some(42));
+                    Ok(())
+                }
+            },
+        )
+        .await
+        .expect("created pr");
+
+        assert_eq!(pr_number, 42);
+        assert_eq!(reloaded.frontmatter.pr_number, Some(42));
+        assert_eq!(
+            reloaded.frontmatter.pr_url.as_deref(),
+            Some("https://example.com/pr/42")
+        );
+        assert_eq!(*create_calls.lock().expect("lock"), 1);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn ensure_pr_number_propagates_non_not_found_errors() {
+        let provider = FakeProvider::with_branch_error("backend exploded");
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let issue_path = camino::Utf8PathBuf::from_path_buf(temp_dir.path().join("TEST--1.md"))
+            .expect("utf8 path");
+        let issue = test_issue();
+        frontmatter::save_issue(issue_path.as_std_path(), &issue).expect("save issue");
+        let create_calls = Arc::new(Mutex::new(0usize));
+        let create_calls_for_closure = Arc::clone(&create_calls);
+
+        let error = ensure_pr_number(
+            &provider,
+            "owner/repo",
+            issue_path.as_path(),
+            "TEST--1",
+            &issue,
+            move || {
+                let create_calls = Arc::clone(&create_calls_for_closure);
+                async move {
+                    *create_calls.lock().expect("lock") += 1;
+                    Ok(())
+                }
+            },
+        )
+        .await
+        .expect_err("expected provider error");
+
+        match error {
+            RiptskError::General(message) => assert_eq!(message, "backend exploded"),
+            other => panic!("unexpected error: {other}"),
+        }
+        assert_eq!(*create_calls.lock().expect("lock"), 0);
+    }
 }
