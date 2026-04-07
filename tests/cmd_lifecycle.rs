@@ -162,7 +162,7 @@ fn new_ai_falls_back_to_template_body_when_backend_unavailable() {
         .current_dir(temp.path())
         .env("RIPTSK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
-        .args(["new", "--title", "AI fallback test", "--ai"])
+        .args(["new", "--title", "AI fallback test"])
         .assert()
         .success()
         .stderr(predicate::str::contains("AI body generation failed"));

@@ -41,7 +41,7 @@ pub async fn run(paths: &AppPaths, args: PrArgs) -> Result<(), RiptskError> {
                 PrCreateArgs {
                     scope: args.scope,
                     id: args.id,
-                    no_ai: false,
+                    no_ai: args.no_ai,
                 },
             )
             .await
@@ -132,7 +132,8 @@ pub(crate) async fn create(paths: &AppPaths, args: PrCreateArgs) -> Result<(), R
             default_body(issue_number),
         )
     };
-    if !args.no_ai && !skip_ai {
+    let use_ai = config.ai.enabled && !args.no_ai;
+    if use_ai && !skip_ai {
         if let Some(ai) = optional_backend(&config) {
             let context =
                 build_create_ai_context(&issue, &git, repo.as_path(), &default_branch, &branch)?;
@@ -144,7 +145,7 @@ pub(crate) async fn create(paths: &AppPaths, args: PrCreateArgs) -> Result<(), R
                 Ok(_) => {}
                 Err(error) => ui::warn(&format!("AI PR description unavailable: {error}")),
             }
-        } else if config.ai.enabled {
+        } else {
             ui::warn(&format!("AI unavailable: {AI_BACKEND_MISSING}"));
         }
     }
@@ -243,7 +244,7 @@ async fn edit(paths: &AppPaths, args: PrEditArgs) -> Result<(), RiptskError> {
         provider
             .update_pr(repo_name, pr_number, title, body)
             .await?
-    } else if args.no_ai {
+    } else if !config.ai.enabled || args.no_ai {
         let draft = edit_buffer(&current.title, &current.body)?;
         provider
             .update_pr(repo_name, pr_number, &draft.0, &draft.1)
