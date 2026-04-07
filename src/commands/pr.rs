@@ -855,7 +855,7 @@ fn open_in_editor(path: &Path) -> Result<(), RiptskError> {
 
 /// Check if a PR head ref matches a branch name. GitHub formats head as
 /// `owner:branch`, GitLab uses just `branch`.
-fn pr_head_matches(head: &str, branch: &str) -> bool {
+pub(crate) fn pr_head_matches(head: &str, branch: &str) -> bool {
     // GitHub: "owner:branch_name" — compare after the colon
     if let Some((_owner, head_branch)) = head.split_once(':') {
         head_branch == branch
@@ -864,7 +864,7 @@ fn pr_head_matches(head: &str, branch: &str) -> bool {
     }
 }
 
-fn parse_pr_number_from_url(url: &str) -> Option<u64> {
+pub(crate) fn parse_pr_number_from_url(url: &str) -> Option<u64> {
     url.trim_end_matches('/')
         .rsplit('/')
         .next()
