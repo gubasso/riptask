@@ -1,9 +1,7 @@
 use crate::adapters::git::{CliGit, GitBackend};
 use crate::adapters::prompts::DialoguerPrompts;
 use crate::cli::{DoneArgs, SyncArgs};
-use crate::commands::branch::{
-    backend_issue_number, current_repo, cwd_utf8, find_issue_for_branch,
-};
+use crate::commands::branch::{backend_issue_number, current_repo, cwd_utf8};
 use crate::commands::{pr, sync_cmd};
 use crate::config::load_config;
 use crate::domain::issue::IssueState;
@@ -23,22 +21,16 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
     let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
     let cwd = cwd_utf8();
-    let id = if let Some(input) = args.id.clone() {
-        id_resolution::resolve_id(paths, &config, &cwd, &input)?
-    } else {
-        match current_repo()
-            .and_then(|repo| CliGit::new().current_branch(repo.as_path()))
-            .and_then(|branch| find_issue_for_branch(paths, &branch))
-            .and_then(|path| {
-                let id = path.file_stem().unwrap_or_default().to_string();
-                crate::commands::issues::load_issue_or_conflict_error(path.as_std_path(), &id)
-            }) {
-            Ok(issue) => issue.frontmatter.id,
-            Err(_) => match id_resolution::require_id(paths, &config, &cwd, None, &args.scope)? {
-                Some(id) => id,
-                None => return Ok(()),
-            },
-        }
+    let id = match id_resolution::resolve_or_pick_id(
+        paths,
+        &config,
+        &cwd,
+        args.id.clone(),
+        args.pick,
+        &args.scope,
+    )? {
+        Some(id) => id,
+        None => return Ok(()),
     };
     let issue_path = issue_store::find_issue(paths, &id)?;
     let issue =

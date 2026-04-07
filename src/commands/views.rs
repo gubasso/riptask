@@ -240,7 +240,9 @@ fn shift(paths: &AppPaths, args: IdArgs, direction: ShiftDirection) -> Result<()
             .to_string(),
     );
     let service = IssueService::new(paths, &config);
-    let Some(id) = id_resolution::require_id(paths, &config, &cwd, args.id, &args.scope)? else {
+    let Some(id) =
+        id_resolution::resolve_or_pick_id(paths, &config, &cwd, args.id, args.pick, &args.scope)?
+    else {
         return Ok(());
     };
     service.shift_issue_order(&id, direction)

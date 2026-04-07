@@ -13,6 +13,8 @@ use crate::services::issue_service::generate_branch_slug;
 use crate::services::{id_resolution, project_detection};
 use crate::storage::{frontmatter, issue_store};
 
+pub(crate) use crate::services::id_resolution::{current_repo, cwd_utf8, find_issue_for_branch};
+
 pub async fn branch(paths: &AppPaths, args: BranchArgs) -> Result<(), RiptskError> {
     if args.delete || args.force_delete {
         return delete_branch(paths, args).await;
@@ -22,10 +24,13 @@ pub async fn branch(paths: &AppPaths, args: BranchArgs) -> Result<(), RiptskErro
 
 async fn create_branch(paths: &AppPaths, args: BranchArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    let BranchArgs { scope, id, .. } = args;
+    let BranchArgs {
+        scope, id, pick, ..
+    } = args;
     let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
     let cwd = cwd_utf8();
-    let Some(id) = id_resolution::require_id(paths, &config, &cwd, id, &scope)? else {
+    let Some(id) = id_resolution::resolve_or_pick_id(paths, &config, &cwd, id, pick, &scope)?
+    else {
         return Ok(());
     };
     let slug = create_branch_for_issue(paths, &id).await?;
@@ -320,55 +325,4 @@ pub(crate) fn is_protected_branch(branch: &str) -> bool {
         branch,
         "main" | "master" | "develop" | "devel" | "dev" | "trunk"
     )
-}
-
-pub(crate) fn current_repo() -> Result<std::path::PathBuf, RiptskError> {
-    std::env::current_dir().map_err(RiptskError::from)
-}
-
-pub(crate) fn cwd_utf8() -> camino::Utf8PathBuf {
-    camino::Utf8PathBuf::from(
-        std::env::current_dir()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string(),
-    )
-}
-
-pub(crate) fn find_issue_for_branch(
-    paths: &AppPaths,
-    branch: &str,
-) -> Result<camino::Utf8PathBuf, RiptskError> {
-    for path in issue_store::list_issues(paths)? {
-        match frontmatter::try_load_issue(path.as_std_path()) {
-            frontmatter::IssueLoadResult::Ok(issue) => {
-                if issue.frontmatter.branch.as_deref() == Some(branch)
-                    || issue.frontmatter.id_slug.as_deref() == Some(branch)
-                {
-                    return Ok(path);
-                }
-            }
-            frontmatter::IssueLoadResult::Conflict { id, .. } => {
-                for backup in [
-                    issue_store::local_backup_path(paths, &id),
-                    issue_store::remote_backup_path(paths, &id),
-                ] {
-                    if !backup.exists() {
-                        continue;
-                    }
-                    if let frontmatter::IssueLoadResult::Ok(issue) =
-                        frontmatter::try_load_issue(backup.as_std_path())
-                        && (issue.frontmatter.branch.as_deref() == Some(branch)
-                            || issue.frontmatter.id_slug.as_deref() == Some(branch))
-                    {
-                        return Ok(path.clone());
-                    }
-                }
-            }
-            frontmatter::IssueLoadResult::Err(error) => return Err(RiptskError::Other(error)),
-        }
-    }
-    Err(RiptskError::NotFound(format!(
-        "no issue found for branch {branch}"
-    )))
 }
