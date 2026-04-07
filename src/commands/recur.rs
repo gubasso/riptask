@@ -116,7 +116,7 @@ fn run_due(paths: &AppPaths, date: Option<String>) -> Result<(), RiptskError> {
                     .unwrap_or(&definition.template)
                     .to_owned(),
             ),
-            ai: false,
+            no_ai: true,
             edit: false,
         };
         let draft = service.prepare_issue_draft(new_args)?;

@@ -52,7 +52,7 @@ pub async fn run(paths: &AppPaths, args: StartArgs) -> Result<(), RiptskError> {
                 status: args.status,
                 priority: args.priority,
                 template: args.template,
-                ai: !args.no_ai,
+                no_ai: args.no_ai,
                 edit: args.edit,
             };
             let (issue, path) = issues::create_issue_from_args(paths, new_args).await?;

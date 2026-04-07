@@ -275,7 +275,7 @@ pub(crate) async fn create_issue_from_args(
     args.title = effective_title;
     let explicit_title_provided = args.title.is_some();
 
-    let ai = args.ai;
+    let ai = config.ai.enabled && !args.no_ai;
     let edit = args.edit;
     let prompts = DialoguerPrompts;
     let git = CliGit::new();

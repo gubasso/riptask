@@ -65,7 +65,7 @@ tsk completions fish > ~/.config/fish/completions/tsk.fish
 tsk new                                  # interactive new issue
 tsk new --title "Fix login bug"          # quick create with title
 tsk new --template bug --priority high   # use a template
-tsk new --title "Draft spec" --ai        # AI generates the body
+tsk new --title "Draft spec"             # AI generates body when ai.enabled
 
 tsk ls                                   # list issues (default: todo)
 tsk ls --status in-progress              # filter by status
@@ -462,7 +462,7 @@ ai:
   enabled: true
   command: "..."
   features:
-    new_body_gen: true   # tsk new --ai
+    new_body_gen: true   # tsk new (auto when enabled)
     triage: true         # tsk sync pull --auto-triage
     summarize: true      # tsk summarize
     ask: true            # tsk ask
@@ -471,7 +471,7 @@ ai:
 #### Usage
 
 ```bash
-tsk new --title "Refactor auth" --ai   # AI writes the issue body
+tsk new --title "Refactor auth"        # AI writes the issue body (when ai.enabled)
 tsk pr                                 # AI generates PR description
 tsk pr edit                            # AI updates PR description
 tsk summarize                          # summarize all issues

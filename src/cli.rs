@@ -164,6 +164,9 @@ pub struct PrArgs {
     pub scope: ScopeArgs,
     /// Issue ID (shorthand for `tsk pr create [ID]`)
     pub id: Option<String>,
+    /// Disable AI-assisted description generation
+    #[arg(long)]
+    pub no_ai: bool,
 }
 
 #[derive(Debug, Clone, Args, Default)]
@@ -218,7 +221,7 @@ pub struct StartArgs {
     /// Template to use (new issues only)
     #[arg(short = 'T', long)]
     pub template: Option<String>,
-    /// Disable AI-assisted content generation (AI is on by default)
+    /// Disable AI-assisted content generation
     #[arg(long)]
     pub no_ai: bool,
     /// Open in $EDITOR after creation (new issues only)
@@ -322,9 +325,9 @@ pub struct NewArgs {
     /// Template to use
     #[arg(short = 'T', long)]
     pub template: Option<String>,
-    /// Generate issue content with AI
+    /// Disable AI-assisted content generation
     #[arg(long)]
-    pub ai: bool,
+    pub no_ai: bool,
     /// Open in $EDITOR after creation
     #[arg(short = 'e', long)]
     pub edit: bool,
@@ -777,6 +780,16 @@ mod tests {
     }
 
     #[test]
+    fn pr_shorthand_no_ai_parses() {
+        let cli = Cli::try_parse_from(["tsk", "pr", "--no-ai", "42"]).expect("parse");
+        let Commands::Pr(args) = cli.command.expect("command") else {
+            panic!("expected pr command");
+        };
+        assert_eq!(args.id.as_deref(), Some("42"));
+        assert!(args.no_ai);
+    }
+
+    #[test]
     fn pr_create_no_ai_parses() {
         let cli = Cli::try_parse_from(["tsk", "pr", "create", "42", "--no-ai"]).expect("parse");
         let Commands::Pr(args) = cli.command.expect("command") else {
@@ -810,6 +823,16 @@ mod tests {
         };
         assert_eq!(args.title.as_deref(), Some("hello"));
         assert!(args.title_pos.is_none());
+    }
+
+    #[test]
+    fn new_no_ai_parses() {
+        let cli = Cli::try_parse_from(["tsk", "new", "--no-ai", "my title"]).expect("parse");
+        let Commands::New(args) = cli.command.expect("command") else {
+            panic!("expected new command");
+        };
+        assert_eq!(args.title_pos.as_deref(), Some("my title"));
+        assert!(args.no_ai);
     }
 
     #[test]
