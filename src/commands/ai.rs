@@ -85,7 +85,7 @@ pub fn ask(paths: &AppPaths, args: AskArgs) -> Result<(), RiptskError> {
 pub fn generate_body(paths: &AppPaths, title: &str, project: &str) -> Result<String, RiptskError> {
     paths.require_initialized()?;
     let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
-    if !config.ai.enabled || !config.ai.features.new_body_gen {
+    if !config.ai.features.new_body_gen {
         return Err(RiptskError::General("AI features disabled".into()));
     }
     let backend = backend(&config)?;
@@ -98,7 +98,7 @@ pub fn generate_issue_content(
 ) -> Result<GeneratedIssueContent, RiptskError> {
     paths.require_initialized()?;
     let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
-    if !config.ai.enabled || !config.ai.features.new_body_gen {
+    if !config.ai.features.new_body_gen {
         return Err(RiptskError::General("AI features disabled".into()));
     }
     let backend = backend(&config)?;
