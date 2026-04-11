@@ -106,7 +106,7 @@ impl CliGit {
         // Close the write fd so the OS allows exec (avoids ETXTBSY on Linux).
         let askpass_path = askpass.into_temp_path();
 
-        let mut command = Command::new("git");
+        let mut command = git_command();
         command
             .arg("-C")
             .arg(repo)
@@ -119,7 +119,7 @@ impl CliGit {
     }
 
     fn prepare_auth_command(&self) -> Result<(Command, Option<tempfile::TempPath>), RiptskError> {
-        let mut command = Command::new("git");
+        let mut command = git_command();
         let Some(auth) = self.auth.as_ref() else {
             return Ok((command, None));
         };
@@ -149,7 +149,7 @@ impl GitBackend for CliGit {
     }
 
     fn repo_root(&self, cwd: &Path) -> Result<std::path::PathBuf, RiptskError> {
-        let output = Command::new("git")
+        let output = git_command()
             .arg("-C")
             .arg(cwd)
             .args(["rev-parse", "--show-toplevel"])
@@ -166,7 +166,7 @@ impl GitBackend for CliGit {
     }
 
     fn add(&self, repo: &Path, files: &[&Path]) -> Result<(), RiptskError> {
-        let mut command = Command::new("git");
+        let mut command = git_command();
         command.arg("-C").arg(repo).arg("add");
         for file in files {
             command.arg(file);
@@ -179,7 +179,7 @@ impl GitBackend for CliGit {
     }
 
     fn merge_file(&self, local: &Path, base: &Path, remote: &Path) -> Result<String, RiptskError> {
-        let output = Command::new("git")
+        let output = git_command()
             .args([
                 "merge-file",
                 "-p",
@@ -208,7 +208,7 @@ impl GitBackend for CliGit {
     }
 
     fn has_uncommitted_changes(&self, repo: &Path) -> Result<bool, RiptskError> {
-        let output = Command::new("git")
+        let output = git_command()
             .arg("-C")
             .arg(repo)
             .args(["status", "--porcelain"])
@@ -237,7 +237,7 @@ impl GitBackend for CliGit {
 
     fn branch_exists(&self, repo: &Path, name: &str) -> Result<bool, RiptskError> {
         let refname = format!("refs/heads/{name}");
-        let status = Command::new("git")
+        let status = git_command()
             .arg("-C")
             .arg(repo)
             .args(["rev-parse", "--verify", &refname])
@@ -260,7 +260,7 @@ impl GitBackend for CliGit {
     }
 
     fn diff_names(&self, repo: &Path) -> Result<Vec<String>, RiptskError> {
-        let output = Command::new("git")
+        let output = git_command()
             .arg("-C")
             .arg(repo)
             .args(["diff", "--name-only"])
@@ -275,7 +275,7 @@ impl GitBackend for CliGit {
     }
 
     fn current_branch(&self, repo: &Path) -> Result<String, RiptskError> {
-        let output = Command::new("git")
+        let output = git_command()
             .arg("-C")
             .arg(repo)
             .arg("rev-parse")
@@ -292,7 +292,7 @@ impl GitBackend for CliGit {
     }
 
     fn remote_url(&self, repo: &Path, remote: &str) -> Result<String, RiptskError> {
-        let output = Command::new("git")
+        let output = git_command()
             .arg("-C")
             .arg(repo)
             .arg("remote")
@@ -309,7 +309,7 @@ impl GitBackend for CliGit {
     }
 
     fn head_sha(&self, repo: &Path) -> Result<String, RiptskError> {
-        let output = Command::new("git")
+        let output = git_command()
             .arg("-C")
             .arg(repo)
             .arg("rev-parse")
@@ -333,7 +333,7 @@ impl GitBackend for CliGit {
     }
 
     fn has_staged_changes(&self, repo: &Path) -> Result<bool, RiptskError> {
-        let output = Command::new("git")
+        let output = git_command()
             .arg("-C")
             .arg(repo)
             .args(["diff", "--cached", "--quiet"])
@@ -343,7 +343,7 @@ impl GitBackend for CliGit {
     }
 
     fn is_branch_merged(&self, repo: &Path, branch: &str, base: &str) -> Result<bool, RiptskError> {
-        let status = Command::new("git")
+        let status = git_command()
             .arg("-C")
             .arg(repo)
             .args(["merge-base", "--is-ancestor", branch, base])
@@ -362,7 +362,7 @@ impl GitBackend for CliGit {
         base: &str,
     ) -> Result<u64, RiptskError> {
         let range = format!("origin/{base}..{branch}");
-        let output = Command::new("git")
+        let output = git_command()
             .arg("-C")
             .arg(repo)
             .args(["rev-list", "--count", &range])
@@ -397,7 +397,7 @@ impl GitBackend for CliGit {
         subject: &str,
     ) -> Result<Option<String>, RiptskError> {
         let range = format!("origin/{base}..{branch}");
-        let output = Command::new("git")
+        let output = git_command()
             .arg("-C")
             .arg(repo)
             .args(["log", "--format=%H%n%s", &range])
@@ -429,7 +429,7 @@ impl GitBackend for CliGit {
         branch: &str,
     ) -> Result<(), RiptskError> {
         let onto = format!("{commit_sha}^");
-        let status = Command::new("git")
+        let status = git_command()
             .arg("-C")
             .arg(repo)
             .args(["rebase", "--onto", &onto, commit_sha, branch])
@@ -454,7 +454,7 @@ impl GitBackend for CliGit {
 
     fn log_between(&self, repo: &Path, base: &str, head: &str) -> Result<String, RiptskError> {
         let range = format!("origin/{base}..{head}");
-        let output = Command::new("git")
+        let output = git_command()
             .arg("-C")
             .arg(repo)
             .args(["log", "--oneline", &range])
@@ -467,7 +467,7 @@ impl GitBackend for CliGit {
 
     fn diff_between(&self, repo: &Path, base: &str, head: &str) -> Result<String, RiptskError> {
         let range = format!("origin/{base}..{head}");
-        let output = Command::new("git")
+        let output = git_command()
             .arg("-C")
             .arg(repo)
             .args(["diff", &range])
@@ -482,13 +482,13 @@ impl GitBackend for CliGit {
 
     fn working_tree_diff(&self, repo: &Path) -> Result<String, RiptskError> {
         let output = if has_head_commit(repo)? {
-            Command::new("git")
+            git_command()
                 .arg("-C")
                 .arg(repo)
                 .args(["diff", "HEAD"])
                 .output()?
         } else {
-            Command::new("git")
+            git_command()
                 .arg("-C")
                 .arg(repo)
                 .args(["diff", "--cached"])
@@ -505,7 +505,7 @@ impl GitBackend for CliGit {
     }
 
     fn staged_diff(&self, repo: &Path) -> Result<String, RiptskError> {
-        let output = Command::new("git")
+        let output = git_command()
             .arg("-C")
             .arg(repo)
             .args(["diff", "--cached"])
@@ -537,7 +537,7 @@ impl GitBackend for CliGit {
     }
 
     fn stash_push(&self, repo: &Path, message: &str) -> Result<bool, RiptskError> {
-        let output = Command::new("git")
+        let output = git_command()
             .arg("-C")
             .arg(repo)
             .args(["stash", "push", "--include-untracked", "-m", message])
@@ -550,7 +550,7 @@ impl GitBackend for CliGit {
     }
 
     fn stash_pop(&self, repo: &Path) -> Result<bool, RiptskError> {
-        let output = Command::new("git")
+        let output = git_command()
             .arg("-C")
             .arg(repo)
             .args(["stash", "pop"])
@@ -586,12 +586,41 @@ fn run_git<const N: usize>(repo: &Path, args: [&str; N]) -> Result<(), RiptskErr
 }
 
 fn run_git_dynamic(repo: &Path, args: &[&str]) -> Result<(), RiptskError> {
-    let mut command = Command::new("git");
+    let mut command = git_command();
     command.arg("-C").arg(repo);
     for arg in args {
         command.arg(arg);
     }
     status_to_result(command.status()?)
+}
+
+/// Build a `git` `Command` with inherited override environment variables
+/// removed.
+///
+/// When riptsk or its test suite runs inside a `git commit` context (for
+/// example under a pre-commit hook invoking `cargo nextest`), Git sets
+/// variables such as `GIT_DIR`, `GIT_INDEX_FILE`, `GIT_WORK_TREE`, and
+/// `GIT_OBJECT_DIRECTORY` to point at the outer repository. Those vars
+/// take precedence over any `-C <path>` we pass on the command line, so
+/// spawned `git` processes silently operate on the parent repo and hit
+/// "invalid object" / index-lock errors. Strip them so `-C <path>` is
+/// always authoritative for subprocess scope.
+fn git_command() -> Command {
+    let mut cmd = Command::new("git");
+    for var in [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_COMMON_DIR",
+        "GIT_NAMESPACE",
+        "GIT_PREFIX",
+        "GIT_CEILING_DIRECTORIES",
+    ] {
+        cmd.env_remove(var);
+    }
+    cmd
 }
 
 fn status_to_result(status: std::process::ExitStatus) -> Result<(), RiptskError> {
@@ -603,7 +632,7 @@ fn status_to_result(status: std::process::ExitStatus) -> Result<(), RiptskError>
 }
 
 fn has_head_commit(repo: &Path) -> Result<bool, RiptskError> {
-    let status = Command::new("git")
+    let status = git_command()
         .arg("-C")
         .arg(repo)
         .args(["rev-parse", "--verify", "HEAD"])
@@ -631,9 +660,8 @@ fn build_askpass_script(token: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{CliGit, GitBackend, build_askpass_script};
+    use super::{CliGit, GitBackend, build_askpass_script, git_command};
     use std::fs;
-    use std::process::Command;
     use tempfile::tempdir;
 
     #[test]
@@ -644,6 +672,69 @@ mod tests {
             script,
             "#!/bin/sh\ncase \"$1\" in\n  Username*) echo \"oauth2\" ;;\n  *) echo 'glpat-token'\\''with-quote' ;;\nesac\n"
         );
+    }
+
+    // Regression: when riptsk tests run under `git commit` (e.g. a
+    // pre-commit hook invoking cargo nextest), git exports override
+    // variables like GIT_DIR / GIT_INDEX_FILE pointing at the outer
+    // repository. If `git_command` does not scrub these, every
+    // subprocess `git` call silently targets the outer repo instead
+    // of the temp dir, producing "invalid object" and index-lock
+    // failures. This test forces the same conditions and asserts that
+    // a temp-repo workflow still succeeds.
+    #[test]
+    fn git_command_scrubs_inherited_git_env_vars() {
+        let outer = tempdir().expect("outer repo");
+        run_git(outer.path(), &["init"]);
+        run_git(outer.path(), &["config", "user.name", "Test User"]);
+        run_git(outer.path(), &["config", "user.email", "test@example.com"]);
+        fs::write(outer.path().join("a.txt"), "outer\n").expect("write a");
+        run_git(outer.path(), &["add", "a.txt"]);
+        run_git(outer.path(), &["commit", "-m", "outer initial"]);
+
+        // SAFETY: tests run in the same process; set the hostile env
+        // vars, invoke git_command(), and remove them afterwards. This
+        // mirrors how a pre-commit hook would launch us.
+        // `std::env::set_var` is !Send-hostile but cargo-nextest runs
+        // each test in its own process, so intra-test mutation is safe.
+        let outer_git_dir = outer.path().join(".git");
+        unsafe {
+            std::env::set_var("GIT_DIR", &outer_git_dir);
+            std::env::set_var("GIT_INDEX_FILE", outer_git_dir.join("index"));
+            std::env::set_var("GIT_WORK_TREE", outer.path());
+        }
+        let _cleanup = EnvCleanup;
+
+        let inner = tempdir().expect("inner repo");
+        run_git(inner.path(), &["init"]);
+        run_git(inner.path(), &["config", "user.name", "Test User"]);
+        run_git(inner.path(), &["config", "user.email", "test@example.com"]);
+        fs::write(inner.path().join("b.txt"), "inner\n").expect("write b");
+        run_git(inner.path(), &["add", "b.txt"]);
+        run_git(inner.path(), &["commit", "-m", "inner initial"]);
+
+        // The inner repo should have exactly one commit with `b.txt`,
+        // not the outer repo's `a.txt` from its index/work tree.
+        let ls_out = git_command()
+            .arg("-C")
+            .arg(inner.path())
+            .args(["ls-files"])
+            .output()
+            .expect("ls-files");
+        assert!(ls_out.status.success(), "ls-files failed");
+        let listed = String::from_utf8_lossy(&ls_out.stdout);
+        assert_eq!(listed.trim(), "b.txt", "inner repo index leaked to outer");
+
+        struct EnvCleanup;
+        impl Drop for EnvCleanup {
+            fn drop(&mut self) {
+                unsafe {
+                    std::env::remove_var("GIT_DIR");
+                    std::env::remove_var("GIT_INDEX_FILE");
+                    std::env::remove_var("GIT_WORK_TREE");
+                }
+            }
+        }
     }
 
     #[test]
@@ -779,7 +870,7 @@ mod tests {
     }
 
     fn run_git(repo: &std::path::Path, args: &[&str]) {
-        let status = Command::new("git")
+        let status = git_command()
             .arg("-C")
             .arg(repo)
             .args(args)
