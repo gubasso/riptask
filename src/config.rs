@@ -1,10 +1,10 @@
 use crate::domain::issue::{IssueState, Priority};
+use crate::error::RiptskError;
 use crate::models::{
     AiConfig, AiFeatures, BackendConfig, BoardConfig, DefaultsConfig, RecurringDef, SyncConfig,
     UiConfig,
 };
 use crate::services::issue_ids;
-use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
@@ -74,32 +74,53 @@ pub fn default_config() -> Config {
     }
 }
 
-pub fn load_config(path: &Path) -> Result<Config> {
-    let content =
-        fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
-    let config: Config = serde_yaml_ng::from_str(&content)
-        .with_context(|| format!("failed to parse {}", path.display()))?;
-    validate_config(&config)?;
+pub fn load_config(path: &Path) -> Result<Config, RiptskError> {
+    let content = fs::read_to_string(path)?;
+    let mut config: Config = serde_yaml_ng::from_str(&content).map_err(|error| {
+        RiptskError::Config(format!("failed to parse {}: {error}", path.display()))
+    })?;
+    validate_config(&mut config)?;
     Ok(config)
 }
 
-pub fn save_config(path: &Path, config: &Config) -> Result<()> {
-    validate_config(config)?;
-    let content = serde_yaml_ng::to_string(config).context("failed to serialize config")?;
-    let dir = path.parent().context("config path has no parent")?;
-    let mut file =
-        tempfile::NamedTempFile::new_in(dir).context("failed to create temp config file")?;
+pub fn save_config(path: &Path, config: &Config) -> Result<(), RiptskError> {
+    // `save_config` takes `&Config` to preserve callers that want to write out
+    // the exact struct they built. Callers that load via `load_config` already
+    // have a normalized `Config` in memory, and `config_set` normalizes before
+    // calling `save_config`.
+    let mut validation_view = config.clone();
+    validate_config(&mut validation_view)?;
+    let content = serde_yaml_ng::to_string(config)
+        .map_err(|error| RiptskError::Config(format!("failed to serialize config: {error}")))?;
+    let dir = path
+        .parent()
+        .ok_or_else(|| RiptskError::Config("config path has no parent".into()))?;
+    let mut file = tempfile::NamedTempFile::new_in(dir)?;
     use std::io::Write;
-    file.write_all(content.as_bytes())
-        .context("failed to write temp config file")?;
+    file.write_all(content.as_bytes())?;
     file.persist(path)
-        .map_err(|error| anyhow::Error::from(error.error))
-        .with_context(|| format!("failed to persist config to {}", path.display()))?;
+        .map_err(|error| RiptskError::Io(error.error))?;
     Ok(())
 }
 
-pub fn validate_config(config: &Config) -> Result<()> {
-    issue_ids::validate_no_scope_collisions(&config.backends)?;
+pub fn validate_config(config: &mut Config) -> Result<(), RiptskError> {
+    // Check explicit `key:` syntax before normalization so users get a clear
+    // error that names the offending backend instead of a downstream collision.
+    for backend in &config.backends {
+        if let Some(key) = backend.key.as_deref() {
+            issue_ids::validate_explicit_key_syntax(key).map_err(|message| {
+                RiptskError::Config(format!(
+                    "backend '{}' has invalid key: {message}",
+                    backend.name
+                ))
+            })?;
+        }
+    }
+    // Populate every group member with its canonical key so that downstream
+    // `effective_key` calls return a stable value regardless of which backend
+    // instance they are given.
+    issue_ids::normalize_backend_keys(&mut config.backends)?;
+    issue_ids::validate_no_key_collisions(&config.backends)?;
     require_unique(
         config.backends.iter().map(|backend| backend.name.as_str()),
         "duplicate backend name in riptsk.yaml",
@@ -117,7 +138,7 @@ pub fn validate_config(config: &Config) -> Result<()> {
 /// Validate Jira-specific config requirements:
 /// - `host` is required and must use HTTPS
 /// - `repo` must use `org/PROJECT_KEY` format (must contain `/`)
-fn validate_jira_backends(config: &Config) -> Result<()> {
+fn validate_jira_backends(config: &Config) -> Result<(), RiptskError> {
     use crate::models::Backend;
     for backend in &config.backends {
         if backend.backend != Backend::Jira {
@@ -125,25 +146,23 @@ fn validate_jira_backends(config: &Config) -> Result<()> {
         }
         let host = backend.host.as_deref().unwrap_or_default();
         if host.is_empty() {
-            return Err(anyhow::anyhow!(
+            return Err(RiptskError::Config(format!(
                 "Jira backend '{}' requires a 'host' field (e.g., https://myteam.atlassian.net)",
                 backend.name
-            ));
+            )));
         }
         if !host.starts_with("https://") {
-            return Err(anyhow::anyhow!(
+            return Err(RiptskError::Config(format!(
                 "Jira backend '{}' host must start with https:// (got: {})",
-                backend.name,
-                host
-            ));
+                backend.name, host
+            )));
         }
         let repo = backend.repo.as_deref().unwrap_or_default();
         if repo.is_empty() || !repo.contains('/') {
-            return Err(anyhow::anyhow!(
+            return Err(RiptskError::Config(format!(
                 "Jira backend '{}' requires 'repo' in org/PROJECT_KEY format (got: {:?})",
-                backend.name,
-                backend.repo
-            ));
+                backend.name, backend.repo
+            )));
         }
     }
     Ok(())
@@ -151,7 +170,7 @@ fn validate_jira_backends(config: &Config) -> Result<()> {
 
 /// Validate that `vc` fields reference existing GitHub or GitLab backends.
 /// Prevents referencing nonexistent backends or using Jira/Local as a VC target.
-fn validate_vc_references(config: &Config) -> Result<()> {
+fn validate_vc_references(config: &Config) -> Result<(), RiptskError> {
     use crate::models::Backend;
     for backend in &config.backends {
         if let Some(ref vc_name) = backend.vc {
@@ -160,82 +179,105 @@ fn validate_vc_references(config: &Config) -> Result<()> {
                 .iter()
                 .find(|b| &b.name == vc_name)
                 .ok_or_else(|| {
-                    anyhow::anyhow!(
+                    RiptskError::Config(format!(
                         "backend '{}' references vc '{}' which does not exist",
-                        backend.name,
-                        vc_name
-                    )
+                        backend.name, vc_name
+                    ))
                 })?;
             if !matches!(vc_backend.backend, Backend::Github | Backend::Gitlab) {
-                return Err(anyhow::anyhow!(
+                return Err(RiptskError::Config(format!(
                     "vc '{}' referenced by backend '{}' must be a github or gitlab backend (got: {})",
                     vc_name,
                     backend.name,
                     vc_backend.backend.as_str()
-                ));
+                )));
             }
         }
     }
     Ok(())
 }
 
-fn validate_ai_command(config: &Config) -> Result<()> {
+fn validate_ai_command(config: &Config) -> Result<(), RiptskError> {
     if let Some(command) = &config.ai.command {
         // Try to compile the template to catch syntax errors early
         let mut env = minijinja::Environment::new();
         env.set_undefined_behavior(minijinja::UndefinedBehavior::Strict);
-        env.add_template("cmd", command)
-            .with_context(|| format!("invalid ai.command template syntax: {command}"))?;
+        env.add_template("cmd", command).map_err(|error| {
+            RiptskError::Config(format!(
+                "invalid ai.command template syntax: {command}: {error}"
+            ))
+        })?;
 
         // Verify template contains at least one of the required input placeholders
         if !command.contains("{{input}}") && !command.contains("{{input_file}}") {
-            return Err(anyhow::anyhow!(
+            return Err(RiptskError::Config(
                 "ai.command must contain {{{{input}}}} or {{{{input_file}}}} placeholder\n\nExamples:\n  ai.command: \"my-ai-cli --system '{{{{system}}}}' --context '{{{{input}}}}'\"\n  ai.command: \"cat {{{{input_file}}}} | my-ai-cli --system '{{{{system}}}}'\""
+                    .into(),
             ));
         }
     }
     Ok(())
 }
 
-fn require_unique<'a>(iter: impl Iterator<Item = &'a str>, message: &str) -> Result<()> {
+fn require_unique<'a>(
+    iter: impl Iterator<Item = &'a str>,
+    message: &str,
+) -> Result<(), RiptskError> {
     let mut seen = HashSet::new();
     for item in iter {
         if !seen.insert(item.to_owned()) {
-            return Err(anyhow::anyhow!(message.to_owned()));
+            return Err(RiptskError::Config(message.to_owned()));
         }
     }
     Ok(())
 }
 
-pub fn config_set(config: &mut Config, key: &str, value: &str) -> Result<()> {
+pub fn config_set(config: &mut Config, key: &str, value: &str) -> Result<(), RiptskError> {
     match key {
         "auto_commit" => {
-            config.auto_commit = value.parse().context("auto_commit must be true or false")?
+            config.auto_commit = value
+                .parse()
+                .map_err(|_| RiptskError::Config("auto_commit must be true or false".into()))?
         }
         "defaults.board" => config.defaults.board = value.to_owned(),
-        "defaults.status" => config.defaults.status = parse_state(value)?,
-        "defaults.priority" => config.defaults.priority = parse_priority(value)?,
+        "defaults.status" => {
+            config.defaults.status =
+                parse_state(value).map_err(|error| RiptskError::Config(error.to_string()))?
+        }
+        "defaults.priority" => {
+            config.defaults.priority =
+                parse_priority(value).map_err(|error| RiptskError::Config(error.to_string()))?
+        }
         "defaults.assignee" => config.defaults.assignee = some_if_not_empty(value),
         "defaults.template" => config.defaults.template = some_if_not_empty(value),
         "ui.opener" => config.ui.opener = some_if_not_empty(value),
         "ui.tree_depth" => {
-            config.ui.tree_depth = if value.is_empty() {
-                None
-            } else {
-                Some(value.parse().context("ui.tree_depth must be a number")?)
-            }
+            config.ui.tree_depth =
+                if value.is_empty() {
+                    None
+                } else {
+                    Some(value.parse().map_err(|_| {
+                        RiptskError::Config("ui.tree_depth must be a number".into())
+                    })?)
+                }
         }
         "ui.fzf_opts" => config.ui.fzf_opts = some_if_not_empty(value),
         "ai.enabled" => {
-            config.ai.enabled = value.parse().context("ai.enabled must be true or false")?
+            config.ai.enabled = value
+                .parse()
+                .map_err(|_| RiptskError::Config("ai.enabled must be true or false".into()))?
         }
         "ai.command" => config.ai.command = some_if_not_empty(value),
         "sync.conflict_detection" => {
-            config.sync.conflict_detection = value
-                .parse()
-                .context("sync.conflict_detection must be true or false")?
+            config.sync.conflict_detection = value.parse().map_err(|_| {
+                RiptskError::Config("sync.conflict_detection must be true or false".into())
+            })?
         }
-        _ => return Err(anyhow::anyhow!("unsupported config key: {key}")),
+        _ => {
+            return Err(RiptskError::Config(format!(
+                "unsupported config key: {key}"
+            )));
+        }
     }
     validate_config(config)
 }
@@ -248,7 +290,7 @@ fn some_if_not_empty(value: &str) -> Option<String> {
     }
 }
 
-pub fn parse_state(value: &str) -> Result<IssueState> {
+pub fn parse_state(value: &str) -> anyhow::Result<IssueState> {
     match value {
         "backlog" => Ok(IssueState::Backlog),
         "todo" => Ok(IssueState::Todo),
@@ -259,7 +301,7 @@ pub fn parse_state(value: &str) -> Result<IssueState> {
     }
 }
 
-pub fn parse_priority(value: &str) -> Result<Priority> {
+pub fn parse_priority(value: &str) -> anyhow::Result<Priority> {
     match value {
         "low" => Ok(Priority::Low),
         "medium" => Ok(Priority::Medium),
@@ -272,6 +314,8 @@ pub fn parse_priority(value: &str) -> Result<Priority> {
 #[cfg(test)]
 mod tests {
     use super::{config_set, load_config, parse_priority, parse_state};
+    use crate::error::RiptskError;
+    use std::fs;
     use std::path::Path;
     use tempfile::NamedTempFile;
 
@@ -335,5 +379,93 @@ mod tests {
         let mut config = load_config(Path::new("tests/fixtures/riptsk.yaml")).expect("load");
         let result = config_set(&mut config, "ai.command", "echo hello");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn load_config_normalizes_legacy_key_without_rewriting_file() {
+        let file = NamedTempFile::new().expect("temp file");
+        let yaml = r#"version: 1
+defaults:
+  board: personal
+  status: todo
+  priority: medium
+  assignee: ~
+  template: task
+backends:
+  - name: demo
+    type: github
+    repo: owner/demo
+    default_board: personal
+boards:
+  - name: personal
+    statuses: [backlog, todo, in-progress, review, done]
+ui:
+  opener: "nvim -R"
+  tree_depth: 2
+  fzf_opts: "--border"
+ai:
+  enabled: false
+  features:
+    new_body_gen: true
+    triage: true
+    summarize: true
+    ask: true
+sync:
+  conflict_detection: true
+recurring: []
+"#;
+        fs::write(file.path(), yaml).expect("write yaml");
+        let before = fs::read_to_string(file.path()).expect("before");
+
+        let config = load_config(file.path()).expect("load");
+
+        // Normalization populates the in-memory key from the derived default.
+        assert_eq!(config.backends[0].key.as_deref(), Some("DEMO"));
+        // But loading must never rewrite the file on disk.
+        let after = fs::read_to_string(file.path()).expect("after");
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn load_config_returns_structured_key_collision() {
+        let file = NamedTempFile::new().expect("temp file");
+        let yaml = r#"version: 1
+defaults:
+  board: personal
+  status: todo
+  priority: medium
+  assignee: ~
+  template: task
+backends:
+  - name: alpha-one
+    type: github
+    repo: owner/alpha
+    default_board: personal
+  - name: alpha-two
+    type: github
+    repo: other/alpha
+    default_board: personal
+boards:
+  - name: personal
+    statuses: [backlog, todo, in-progress, review, done]
+ui:
+  opener: "nvim -R"
+  tree_depth: 2
+  fzf_opts: "--border"
+ai:
+  enabled: false
+  features:
+    new_body_gen: true
+    triage: true
+    summarize: true
+    ask: true
+sync:
+  conflict_detection: true
+recurring: []
+"#;
+        fs::write(file.path(), yaml).expect("write yaml");
+
+        let error = load_config(file.path()).expect_err("collision");
+        assert!(matches!(error, RiptskError::KeyCollision(_)));
     }
 }

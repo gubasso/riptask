@@ -10,17 +10,20 @@ backends:
     type: gitlab
     host: https://gitlab.example.com
     repo: chrono/wormhole-router
+    key: GL-CHR-WOR
     default_board: penguin-chrono-labs
     default_org: chrono
   - name: fish-from-the-future
     type: github
     repo: Penguin-Chrono-Labs/fish-from-the-future
+    key: GH-PEN-FIS
     default_board: penguin-chrono-labs
     default_org: chrono
   - name: penguin-scratch
     type: local
     repo: ~
     path: /tmp/penguin-scratch
+    key: LO-PEN
     default_board: personal
     default_org: ~
 boards:

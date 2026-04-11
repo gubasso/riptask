@@ -20,6 +20,12 @@ pub struct GeneratedIssueContent {
 pub trait AiBackend {
     fn generate_issue_content(&self, context: &str) -> Result<GeneratedIssueContent, RiptskError>;
     fn generate_body(&self, context: &str) -> Result<String, RiptskError>;
+    fn suggest_project_key(
+        &self,
+        repo_name: &str,
+        backend_type: &str,
+        existing_keys: &[String],
+    ) -> Result<String, RiptskError>;
     fn generate_pr_description(&self, context: &str) -> Result<String, RiptskError>;
     fn triage(&self, issue_context: &str) -> Result<TriageSuggestion, RiptskError>;
     fn summarize(&self, issues: &str) -> Result<String, RiptskError>;
@@ -56,6 +62,22 @@ impl AiBackend for TemplateAiBackend {
             &self.command_template,
             "Generate a concise issue body with a description and checklist.",
             context,
+        )
+    }
+
+    fn suggest_project_key(
+        &self,
+        repo_name: &str,
+        backend_type: &str,
+        existing_keys: &[String],
+    ) -> Result<String, RiptskError> {
+        run_ai(
+            &self.command_template,
+            &format!(
+                "You suggest a short project key for an issue tracker. Return a single uppercase ASCII token of 2 to 10 characters, matching [A-Z0-9]+, with no prefix, suffix, explanation, whitespace, or punctuation. Avoid any of these already-taken keys: {}.",
+                existing_keys.join(", ")
+            ),
+            &format!("repo: {repo_name}\nbackend: {backend_type}\n"),
         )
     }
 

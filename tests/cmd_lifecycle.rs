@@ -29,7 +29,7 @@ fn new_creates_issue_file() {
         .args(["new", "--title", "Test issue", "--project", "personal"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("LO-PER--1"));
+        .stdout(predicate::str::contains("PERSONAL--1"));
 }
 
 #[cfg(unix)]
@@ -75,7 +75,7 @@ fn new_edit_opens_editor_after_creation() {
         ])
         .assert()
         .success()
-        .stdout(predicate::str::contains("LO-PER--1"));
+        .stdout(predicate::str::contains("PERSONAL--1"));
 
     let issue_path = fs::read_dir(repo.join("issues"))
         .expect("issues dir")
@@ -119,7 +119,7 @@ fn new_auto_registers_unregistered_repo() {
         .args(["new", "--title", "Auto registered"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("LO-WOR--1"));
+        .stdout(predicate::str::contains("WORKTREE--1"));
 
     let config = fs::read_to_string(repo.join("riptsk.yaml")).expect("read config");
     assert!(config.contains("name: worktree"));
@@ -333,8 +333,8 @@ fn new_auto_registers_non_git_directory() {
         .assert()
         .success();
 
-    // Issue ID should be a Local-scoped ID
-    assert.stdout(predicate::str::starts_with("LO-"));
+    // Issue ID should use the derived local project key.
+    assert.stdout(predicate::str::starts_with("MYPROJ--"));
 
     // Config should contain the auto-registered backend
     let config = fs::read_to_string(repo.join("riptsk.yaml")).expect("read config");

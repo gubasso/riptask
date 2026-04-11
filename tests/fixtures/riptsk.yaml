@@ -10,6 +10,7 @@ backends:
     type: gitlab
     host: https://gitlab.example.com
     repo: chrono/wormhole-router
+    key: GL-CHR-WOR
     default_board: personal
     default_org: chrono
 boards:

@@ -28,6 +28,7 @@ fn run() -> Result<(), RiptskError> {
     riptsk::services::project_detection::ensure_registered(
         &paths,
         &riptsk::adapters::git::CliGit::new(),
+        &riptsk::adapters::prompts::DialoguerPrompts,
     )?;
 
     match cli.command.unwrap_or(Commands::Help { command: None }) {

@@ -27,7 +27,7 @@ async fn create_branch(paths: &AppPaths, args: BranchArgs) -> Result<(), RiptskE
     let BranchArgs {
         scope, id, pick, ..
     } = args;
-    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path())?;
     let cwd = cwd_utf8();
     let Some(id) = id_resolution::resolve_or_pick_id(paths, &config, &cwd, id, pick, &scope)?
     else {
@@ -43,7 +43,7 @@ pub(crate) async fn create_branch_for_issue(
     id: &str,
 ) -> Result<String, RiptskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path())?;
     let path = issue_store::find_issue(paths, id)?;
     let mut issue = crate::commands::issues::load_issue_or_conflict_error(path.as_std_path(), id)?;
 
@@ -121,7 +121,7 @@ pub(crate) async fn create_branch_for_issue(
 
 async fn delete_branch(paths: &AppPaths, args: BranchArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path())?;
     let cwd = cwd_utf8();
     let repo = current_repo()?;
     let current = CliGit::new().current_branch(repo.as_path())?;

@@ -1,3 +1,4 @@
+use crate::adapters::ai::AiBackend;
 use crate::adapters::git::GitBackend;
 use crate::adapters::prompts::PromptBackend;
 use crate::config::{Config, load_config, save_config};
@@ -5,16 +6,22 @@ use crate::error::RiptskError;
 use crate::models::{Backend, BackendConfig};
 use crate::paths::AppPaths;
 use crate::services::auto_commit::maybe_auto_commit;
+use crate::services::issue_ids;
 use anyhow::Context;
 use camino::Utf8Path;
+use std::io::IsTerminal;
 use std::process::Command;
 
-pub fn ensure_registered(paths: &AppPaths, git: &dyn GitBackend) -> Result<(), RiptskError> {
+pub fn ensure_registered(
+    paths: &AppPaths,
+    git: &dyn GitBackend,
+    prompts: &dyn PromptBackend,
+) -> Result<(), RiptskError> {
     let config_path = paths.config_path();
     if !config_path.exists() {
         return Ok(());
     }
-    let mut config = load_config(config_path.as_std_path()).map_err(RiptskError::Other)?;
+    let mut config = load_config(config_path.as_std_path())?;
     let cwd = camino::Utf8PathBuf::from(
         std::env::current_dir()
             .unwrap_or_default()
@@ -30,12 +37,25 @@ pub fn ensure_registered(paths: &AppPaths, git: &dyn GitBackend) -> Result<(), R
     if detected.is_some() {
         return Ok(());
     }
-    let registered = match register_project_auto(&cwd, &mut config) {
+    let ai_backend = if config.ai.enabled {
+        crate::commands::ai::optional_backend(&config)
+    } else {
+        None
+    };
+    // Best-effort: if auto-registration fails (e.g. a derived-key collision in
+    // a non-interactive environment), skip silently so unrelated commands still
+    // run. Commands that require a registered project raise their own errors.
+    let registered = match register_project_auto(
+        &cwd,
+        &mut config,
+        Some(prompts),
+        ai_backend.as_ref().map(|backend| backend as &dyn AiBackend),
+    ) {
         Ok(result) => result,
         Err(_) => return Ok(()),
     };
     if registered.is_some() {
-        save_config(config_path.as_std_path(), &config).map_err(RiptskError::Other)?;
+        save_config(config_path.as_std_path(), &config)?;
         maybe_auto_commit(
             &config,
             git,
@@ -156,6 +176,8 @@ pub fn normalized_backend(backend: &BackendConfig) -> String {
 pub fn register_project_auto(
     cwd: &Utf8Path,
     config: &mut Config,
+    prompts: Option<&dyn PromptBackend>,
+    ai: Option<&dyn AiBackend>,
 ) -> Result<Option<BackendConfig>, RiptskError> {
     // Never auto-register $HOME itself as a project.
     if is_home_dir(cwd) {
@@ -176,7 +198,7 @@ pub fn register_project_auto(
             else {
                 return Ok(None);
             };
-            let backend = BackendConfig {
+            let mut backend = BackendConfig {
                 name,
                 backend: infer_type(host),
                 host: Some(format!("https://{}", host.trim_end_matches('/'))),
@@ -186,7 +208,9 @@ pub fn register_project_auto(
                 path: None,
                 vc: None,
                 default_issue_type: None,
+                key: None,
             };
+            finalize_backend_registration(config, &mut backend, prompts, ai)?;
             config.backends.push(backend.clone());
             return Ok(Some(backend));
         }
@@ -200,7 +224,7 @@ pub fn register_project_auto(
             let path = std::fs::canonicalize(cwd.as_std_path())
                 .map(|value| value.to_string_lossy().to_string())
                 .unwrap_or_else(|_| cwd.as_str().to_owned());
-            let backend = BackendConfig {
+            let mut backend = BackendConfig {
                 name,
                 backend: Backend::Local,
                 host: None,
@@ -210,7 +234,9 @@ pub fn register_project_auto(
                 path: Some(path),
                 vc: None,
                 default_issue_type: None,
+                key: None,
             };
+            finalize_backend_registration(config, &mut backend, prompts, ai)?;
             config.backends.push(backend.clone());
             return Ok(Some(backend));
         }
@@ -223,7 +249,7 @@ pub fn register_project_auto(
     let path = std::fs::canonicalize(cwd.as_std_path())
         .map(|value| value.to_string_lossy().to_string())
         .unwrap_or_else(|_| cwd.as_str().to_owned());
-    let backend = BackendConfig {
+    let mut backend = BackendConfig {
         name,
         backend: Backend::Local,
         host: None,
@@ -233,7 +259,9 @@ pub fn register_project_auto(
         path: Some(path),
         vc: None,
         default_issue_type: None,
+        key: None,
     };
+    finalize_backend_registration(config, &mut backend, prompts, ai)?;
     config.backends.push(backend.clone());
     Ok(Some(backend))
 }
@@ -287,6 +315,7 @@ fn git_origin_url(cwd: &Utf8Path) -> Result<Option<String>, RiptskError> {
 pub fn register_project_interactive(
     config: &mut Config,
     prompts: &dyn PromptBackend,
+    ai: Option<&dyn AiBackend>,
     cwd: &Utf8Path,
 ) -> Result<BackendConfig, RiptskError> {
     if let Some(existing) = detect_from_cwd(cwd, config)? {
@@ -371,7 +400,7 @@ pub fn register_project_interactive(
     } else {
         None
     };
-    let backend_config = BackendConfig {
+    let mut backend_config = BackendConfig {
         name,
         backend,
         host,
@@ -381,10 +410,223 @@ pub fn register_project_interactive(
         path,
         vc: None,
         default_issue_type: None,
+        key: None,
     };
     validate_new_backend(config, &backend_config)?;
+    finalize_backend_registration(config, &mut backend_config, Some(prompts), ai)?;
     config.backends.push(backend_config.clone());
     Ok(backend_config)
+}
+
+pub(crate) fn suggest_key_with_ai(
+    ai: &dyn AiBackend,
+    repo_name: &str,
+    backend_type: &str,
+    existing_keys: &[String],
+) -> Option<String> {
+    let raw = ai
+        .suggest_project_key(repo_name, backend_type, existing_keys)
+        .ok()?;
+    let sanitized = issue_ids::sanitize_key_candidate(&raw);
+    if sanitized == issue_ids::FALLBACK_KEY {
+        return None;
+    }
+    if existing_keys.iter().any(|existing| existing == &sanitized) {
+        return None;
+    }
+    Some(sanitized)
+}
+
+pub(crate) fn resolve_key_conflict_interactive(
+    prompts: &dyn PromptBackend,
+    new_backend: &BackendConfig,
+    conflicting: &BackendConfig,
+    attempted: &str,
+    ai_default: Option<&str>,
+    existing_keys: &[String],
+) -> Result<String, RiptskError> {
+    crate::ui::error(&format!(
+        "project key collision: attempted \"{attempted}\" is already used by '{}'",
+        conflicting.name
+    ));
+    eprintln!("Conflicting project:");
+    eprintln!("  name:  {}", conflicting.name);
+    eprintln!("  type:  {}", conflicting.backend.as_str());
+    if let Some(host) = &conflicting.host {
+        eprintln!("  host:  {host}");
+    }
+    if let Some(repo) = &conflicting.repo {
+        eprintln!("  repo:  {repo}");
+    }
+    if let Some(path) = &conflicting.path {
+        eprintln!("  path:  {path}");
+    }
+    if let Some(key) = &conflicting.key {
+        eprintln!("  key:   {key}");
+    }
+    eprintln!("New project:");
+    eprintln!("  name:  {}", new_backend.name);
+    eprintln!("  type:  {}", new_backend.backend.as_str());
+    if let Some(host) = &new_backend.host {
+        eprintln!("  host:  {host}");
+    }
+    if let Some(repo) = &new_backend.repo {
+        eprintln!("  repo:  {repo}");
+    }
+    if let Some(path) = &new_backend.path {
+        eprintln!("  path:  {path}");
+    }
+
+    let fallback_suggestion = numeric_suffix_suggestion(attempted, existing_keys);
+    let default_value = ai_default.unwrap_or(&fallback_suggestion);
+
+    loop {
+        let input = prompts.input("Enter a unique project key", Some(default_value))?;
+        match validate_user_key(&input, existing_keys) {
+            Ok(key) => return Ok(key),
+            Err(message) => crate::ui::error(&format!("invalid key: {message}")),
+        }
+    }
+}
+
+fn finalize_backend_registration(
+    config: &Config,
+    new_backend: &mut BackendConfig,
+    prompts: Option<&dyn PromptBackend>,
+    ai: Option<&dyn AiBackend>,
+) -> Result<(), RiptskError> {
+    let new_group = issue_ids::logical_group_identity(new_backend);
+
+    // If the new backend belongs to the same logical project as an existing
+    // one, reuse that project's key so every entry resolves to the same
+    // effective key at runtime.
+    if let Some(sibling) = config
+        .backends
+        .iter()
+        .find(|backend| issue_ids::logical_group_identity(backend) == new_group)
+    {
+        new_backend.key = Some(issue_ids::effective_key(sibling));
+        return Ok(());
+    }
+
+    let derived = issue_ids::derive_default_key(new_backend);
+    let mut existing_keys = Vec::new();
+    let mut conflicting = None;
+    for backend in &config.backends {
+        if issue_ids::logical_group_identity(backend) == new_group {
+            continue;
+        }
+        let key = issue_ids::effective_key(backend);
+        if key == derived && conflicting.is_none() {
+            conflicting = Some(backend);
+        }
+        existing_keys.push(key);
+    }
+    if conflicting.is_none() {
+        new_backend.key = Some(derived);
+        return Ok(());
+    }
+
+    let conflicting = conflicting.expect("checked");
+    if let Some(prompts) = prompts
+        && stdin_is_terminal()
+        && stdout_is_terminal()
+    {
+        let ai_default = ai.and_then(|backend| {
+            suggest_key_with_ai(
+                backend,
+                backend_key_source_name(new_backend),
+                new_backend.backend.as_str(),
+                &existing_keys,
+            )
+        });
+        let resolved = resolve_key_conflict_interactive(
+            prompts,
+            new_backend,
+            conflicting,
+            &derived,
+            ai_default.as_deref(),
+            &existing_keys,
+        )?;
+        new_backend.key = Some(resolved);
+        return Ok(());
+    }
+
+    Err(RiptskError::KeyCollision(Box::new(
+        crate::error::ProjectKeyCollision {
+            attempted_key: derived,
+            new_project: crate::error::ProjectKeyProjectMeta {
+                name: new_backend.name.clone(),
+                backend: new_backend.backend.as_str().to_owned(),
+                host: new_backend.host.clone(),
+                repo: new_backend.repo.clone(),
+                path: new_backend.path.clone(),
+                existing_key: new_backend.key.clone(),
+            },
+            conflicting_project: crate::error::ProjectKeyProjectMeta {
+                name: conflicting.name.clone(),
+                backend: conflicting.backend.as_str().to_owned(),
+                host: conflicting.host.clone(),
+                repo: conflicting.repo.clone(),
+                path: conflicting.path.clone(),
+                existing_key: conflicting.key.clone(),
+            },
+        },
+    )))
+}
+
+fn backend_key_source_name(backend: &BackendConfig) -> &str {
+    match backend.backend {
+        Backend::Github | Backend::Gitlab | Backend::Jira => backend
+            .repo
+            .as_deref()
+            .and_then(|repo| repo.rsplit('/').next())
+            .filter(|value| !value.is_empty())
+            .unwrap_or(backend.name.as_str()),
+        Backend::Local => backend.name.as_str(),
+    }
+}
+
+fn stdin_is_terminal() -> bool {
+    std::io::stdin().is_terminal()
+}
+
+fn stdout_is_terminal() -> bool {
+    std::io::stdout().is_terminal()
+}
+
+fn numeric_suffix_suggestion(attempted: &str, existing: &[String]) -> String {
+    // Reserve room for `-N` (up to three digits) so the suggested value still
+    // fits inside `MAX_KEY_LEN` once the suffix is appended.
+    let reserved = "-999".len();
+    let max_prefix_len = issue_ids::MAX_KEY_LEN.saturating_sub(reserved);
+    let mut prefix = attempted;
+    if prefix.len() > max_prefix_len {
+        prefix = &prefix[..max_prefix_len];
+    }
+    // Trim any trailing '-' that a naive slice may leave behind so the result
+    // still passes `validate_user_key`.
+    let prefix = prefix.trim_end_matches('-');
+    for number in 2u32..1000 {
+        let candidate = format!("{prefix}-{number}");
+        if !existing.iter().any(|key| key == &candidate) {
+            return candidate;
+        }
+    }
+    format!("{prefix}-X")
+}
+
+fn validate_user_key(raw: &str, existing: &[String]) -> Result<String, String> {
+    // Silently trim the user's input so enter-at-the-prompt typos don't count
+    // as hard errors, then delegate syntactic validation to the shared helper
+    // so that interactively accepted keys cannot be rejected later by
+    // `save_config()`.
+    let trimmed = raw.trim();
+    issue_ids::validate_explicit_key_syntax(trimmed).map_err(|message| message.to_string())?;
+    if existing.iter().any(|key| key == trimmed) {
+        return Err(format!("key '{trimmed}' is already in use"));
+    }
+    Ok(trimmed.to_owned())
 }
 
 /// Returns true if `cwd` is exactly `$HOME` (canonicalized comparison).
@@ -462,13 +704,123 @@ fn validate_new_backend(config: &Config, backend: &BackendConfig) -> Result<(), 
 #[cfg(test)]
 mod tests {
     use super::{
-        deduplicate_name, detect_from_cwd, infer_type, is_home_dir, normalize_url, path_is_same,
-        register_project_auto, split_host_repo,
+        deduplicate_name, detect_from_cwd, finalize_backend_registration, infer_type, is_home_dir,
+        normalize_url, numeric_suffix_suggestion, path_is_same, register_project_auto,
+        resolve_key_conflict_interactive, split_host_repo, suggest_key_with_ai,
     };
+    use crate::adapters::ai::{AiBackend, GeneratedIssueContent, TriageSuggestion};
+    use crate::adapters::prompts::PromptBackend;
     use crate::config::default_config;
+    use crate::error::RiptskError;
     use crate::models::{Backend, BackendConfig};
     use camino::Utf8PathBuf;
+    use std::cell::RefCell;
+    use std::collections::VecDeque;
     use tempfile::tempdir;
+
+    struct FakePrompts {
+        inputs: RefCell<VecDeque<String>>,
+    }
+
+    impl FakePrompts {
+        fn new(inputs: Vec<&str>) -> Self {
+            Self {
+                inputs: RefCell::new(inputs.into_iter().map(str::to_owned).collect()),
+            }
+        }
+    }
+
+    impl PromptBackend for FakePrompts {
+        fn input(&self, _prompt: &str, _default: Option<&str>) -> Result<String, RiptskError> {
+            self.inputs
+                .borrow_mut()
+                .pop_front()
+                .ok_or_else(|| RiptskError::General("missing prompt input".into()))
+        }
+
+        fn confirm(&self, _prompt: &str, _default: bool) -> Result<bool, RiptskError> {
+            unimplemented!()
+        }
+
+        fn select(
+            &self,
+            _prompt: &str,
+            _items: &[String],
+            _default: usize,
+        ) -> Result<String, RiptskError> {
+            unimplemented!()
+        }
+    }
+
+    struct FakeAiBackend {
+        suggestion: Option<String>,
+        should_error: bool,
+    }
+
+    impl AiBackend for FakeAiBackend {
+        fn generate_issue_content(
+            &self,
+            _context: &str,
+        ) -> Result<GeneratedIssueContent, RiptskError> {
+            unimplemented!()
+        }
+
+        fn generate_body(&self, _context: &str) -> Result<String, RiptskError> {
+            unimplemented!()
+        }
+
+        fn suggest_project_key(
+            &self,
+            _repo_name: &str,
+            _backend_type: &str,
+            _existing_keys: &[String],
+        ) -> Result<String, RiptskError> {
+            if self.should_error {
+                Err(RiptskError::General("nope".into()))
+            } else {
+                Ok(self.suggestion.clone().unwrap_or_default())
+            }
+        }
+
+        fn generate_pr_description(&self, _context: &str) -> Result<String, RiptskError> {
+            unimplemented!()
+        }
+
+        fn triage(&self, _issue_context: &str) -> Result<TriageSuggestion, RiptskError> {
+            unimplemented!()
+        }
+
+        fn summarize(&self, _issues: &str) -> Result<String, RiptskError> {
+            unimplemented!()
+        }
+
+        fn ask(&self, _question: &str, _context: &str) -> Result<String, RiptskError> {
+            unimplemented!()
+        }
+
+        fn update_pr_description(&self, _context: &str) -> Result<String, RiptskError> {
+            unimplemented!()
+        }
+
+        fn generate_commit_message(&self, _diff: &str) -> Result<String, RiptskError> {
+            unimplemented!()
+        }
+    }
+
+    fn backend(kind: Backend, name: &str, repo: Option<&str>, key: Option<&str>) -> BackendConfig {
+        BackendConfig {
+            name: name.into(),
+            backend: kind,
+            host: None,
+            repo: repo.map(str::to_owned),
+            default_board: Some("personal".into()),
+            default_org: None,
+            path: None,
+            vc: None,
+            default_issue_type: None,
+            key: key.map(str::to_owned),
+        }
+    }
 
     #[test]
     fn normalizes_ssh_and_https_urls() {
@@ -546,7 +898,7 @@ mod tests {
         let cwd = Utf8PathBuf::from_path_buf(plain_dir.clone()).expect("utf8");
         let mut config = default_config();
 
-        let result = register_project_auto(&cwd, &mut config).expect("register");
+        let result = register_project_auto(&cwd, &mut config, None, None).expect("register");
 
         assert!(result.is_some());
         let backend = result.unwrap();
@@ -555,6 +907,7 @@ mod tests {
         assert!(backend.path.is_some());
         assert!(backend.host.is_none());
         assert!(backend.repo.is_none());
+        assert_eq!(backend.key.as_deref(), Some("MYPROJ"));
     }
 
     #[test]
@@ -567,7 +920,7 @@ mod tests {
         let old_home = std::env::var("HOME").ok();
         // SAFETY: test is single-threaded; restoring HOME immediately after.
         unsafe { std::env::set_var("HOME", temp.path()) };
-        let result = register_project_auto(&cwd, &mut config).expect("register");
+        let result = register_project_auto(&cwd, &mut config, None, None).expect("register");
         match old_home {
             Some(h) => unsafe { std::env::set_var("HOME", h) },
             None => unsafe { std::env::remove_var("HOME") },
@@ -598,6 +951,7 @@ mod tests {
             path: Some(canon),
             vc: None,
             default_issue_type: None,
+            key: None,
         });
 
         let detected = detect_from_cwd(&cwd, &config).expect("detect");
@@ -651,6 +1005,7 @@ mod tests {
             path: Some(parent_canon),
             vc: None,
             default_issue_type: None,
+            key: None,
         });
         // Remote backend registered by URL — should win over parent path
         config.backends.push(BackendConfig {
@@ -663,6 +1018,7 @@ mod tests {
             path: None,
             vc: None,
             default_issue_type: None,
+            key: None,
         });
 
         let cwd = Utf8PathBuf::from_path_buf(child_dir).expect("utf8");
@@ -690,6 +1046,7 @@ mod tests {
             path: Some("/some/other/myapp".into()),
             vc: None,
             default_issue_type: None,
+            key: None,
         });
 
         let name = deduplicate_name("myapp", &cwd, &config);
@@ -714,6 +1071,7 @@ mod tests {
             path: Some("/some/other/myapp".into()),
             vc: None,
             default_issue_type: None,
+            key: None,
         });
         config.backends.push(BackendConfig {
             name: "parent-myapp".into(),
@@ -725,9 +1083,146 @@ mod tests {
             path: Some("/some/other/parent-myapp".into()),
             vc: None,
             default_issue_type: None,
+            key: None,
         });
 
         let name = deduplicate_name("myapp", &cwd, &config);
         assert_eq!(name, None);
+    }
+
+    #[test]
+    fn suggest_key_with_ai_accepts_clean_value() {
+        let ai = FakeAiBackend {
+            suggestion: Some("RIPTSK".into()),
+            should_error: false,
+        };
+        let existing = vec!["OTHER".into()];
+        assert_eq!(
+            suggest_key_with_ai(&ai, "riptsk", "github", &existing),
+            Some("RIPTSK".into())
+        );
+    }
+
+    #[test]
+    fn suggest_key_with_ai_sanitizes_output() {
+        let ai = FakeAiBackend {
+            suggestion: Some("riptsk!!!".into()),
+            should_error: false,
+        };
+        assert_eq!(
+            suggest_key_with_ai(&ai, "riptsk", "github", &[]),
+            Some("RIPTSK".into())
+        );
+    }
+
+    #[test]
+    fn suggest_key_with_ai_rejects_collision_and_invalid() {
+        let taken = vec!["ALREADYTAKEN".into()];
+        let collision = FakeAiBackend {
+            suggestion: Some("ALREADY_TAKEN".into()),
+            should_error: false,
+        };
+        let invalid = FakeAiBackend {
+            suggestion: Some("!!!".into()),
+            should_error: false,
+        };
+        let erroring = FakeAiBackend {
+            suggestion: None,
+            should_error: true,
+        };
+        assert_eq!(
+            suggest_key_with_ai(&collision, "repo", "github", &taken),
+            None
+        );
+        assert_eq!(suggest_key_with_ai(&invalid, "repo", "github", &[]), None);
+        assert_eq!(suggest_key_with_ai(&erroring, "repo", "github", &[]), None);
+    }
+
+    #[test]
+    fn resolve_key_conflict_interactive_accepts_ai_default_value() {
+        let prompts = FakePrompts::new(vec!["RIPTSK"]);
+        let new_backend = backend(Backend::Github, "new", Some("owner/riptsk"), None);
+        let conflicting = backend(
+            Backend::Github,
+            "existing",
+            Some("other/riptsk"),
+            Some("RIPTSK"),
+        );
+        let resolved = resolve_key_conflict_interactive(
+            &prompts,
+            &new_backend,
+            &conflicting,
+            "RIPTSK",
+            Some("RIPTSK"),
+            &["OTHER".into()],
+        )
+        .expect("resolve");
+        assert_eq!(resolved, "RIPTSK");
+    }
+
+    #[test]
+    fn resolve_key_conflict_interactive_loops_on_invalid_inputs() {
+        let prompts = FakePrompts::new(vec!["lower-case", "UPPERCASE"]);
+        let new_backend = backend(Backend::Github, "new", Some("owner/new"), None);
+        let conflicting = backend(Backend::Github, "existing", Some("other/new"), Some("NEW"));
+        let resolved = resolve_key_conflict_interactive(
+            &prompts,
+            &new_backend,
+            &conflicting,
+            "NEW",
+            None,
+            &["NEW".into()],
+        )
+        .expect("resolve");
+        assert_eq!(resolved, "UPPERCASE");
+    }
+
+    #[test]
+    fn resolve_key_conflict_interactive_retries_on_duplicate() {
+        let prompts = FakePrompts::new(vec!["USED", "UNUSED"]);
+        let new_backend = backend(Backend::Github, "new", Some("owner/new"), None);
+        let conflicting = backend(Backend::Github, "existing", Some("other/new"), Some("NEW"));
+        let resolved = resolve_key_conflict_interactive(
+            &prompts,
+            &new_backend,
+            &conflicting,
+            "NEW",
+            None,
+            &["USED".into()],
+        )
+        .expect("resolve");
+        assert_eq!(resolved, "UNUSED");
+    }
+
+    #[test]
+    fn numeric_suffix_suggestion_uses_next_free_number() {
+        let existing = vec!["RIPTSK".into(), "RIPTSK-2".into()];
+        assert_eq!(numeric_suffix_suggestion("RIPTSK", &existing), "RIPTSK-3");
+    }
+
+    #[test]
+    fn finalize_backend_registration_sets_derived_key_when_free() {
+        let config = default_config();
+        let mut new_backend = backend(Backend::Github, "riptsk", Some("owner/riptsk"), None);
+        finalize_backend_registration(&config, &mut new_backend, None, None).expect("finalize");
+        assert_eq!(new_backend.key.as_deref(), Some("RIPTSK"));
+    }
+
+    #[test]
+    fn finalize_backend_registration_returns_collision_without_prompts() {
+        let mut config = default_config();
+        config.backends.push(backend(
+            Backend::Github,
+            "existing",
+            Some("owner/riptsk"),
+            None,
+        ));
+        let before = config.backends.len();
+        let mut new_backend = backend(Backend::Github, "new", Some("other/riptsk"), None);
+        let error = finalize_backend_registration(&config, &mut new_backend, None, None)
+            .expect_err("collision");
+        assert!(matches!(error, RiptskError::KeyCollision(_)));
+        assert!(new_backend.key.is_none());
+        assert_eq!(config.backends.len(), before);
     }
 }

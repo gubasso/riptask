@@ -28,7 +28,7 @@ pub fn resolve_id(
     let mut detected_candidate = None;
 
     if let Some(backend) = project_detection::detect_from_cwd(cwd, config)? {
-        let scope = issue_ids::derive_scope_from_backend(&backend);
+        let scope = issue_ids::effective_key(&backend);
         let full_id = issue_ids::format_id(&scope, number);
         if crate::storage::issue_store::find_issue(paths, &full_id).is_ok() {
             return Ok(full_id);
@@ -220,6 +220,7 @@ mod tests {
             path: Some(cwd.to_string()),
             vc: None,
             default_issue_type: None,
+            key: Some("GH-GUB-DEV".into()),
         }]);
 
         let resolved = resolve_id(&paths, &config, &cwd, "61").expect("resolve numeric id");

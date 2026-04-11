@@ -16,7 +16,7 @@ use crate::storage::{frontmatter, issue_store, work_clone};
 
 pub async fn run(paths: &AppPaths, args: CloneArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path())?;
     let cwd = cwd_utf8();
     let Some(id) =
         id_resolution::resolve_or_pick_id(paths, &config, &cwd, args.id, args.pick, &args.scope)?

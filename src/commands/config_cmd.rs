@@ -13,10 +13,9 @@ pub fn run(paths: &AppPaths, args: ConfigArgs) -> Result<(), RiptskError> {
             Ok(())
         }
         Some(ConfigSubcommand::Set { key, value }) => {
-            let mut config =
-                load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
-            config_set(&mut config, &key, &value).map_err(RiptskError::Other)?;
-            save_config(paths.config_path().as_std_path(), &config).map_err(RiptskError::Other)
+            let mut config = load_config(paths.config_path().as_std_path())?;
+            config_set(&mut config, &key, &value)?;
+            save_config(paths.config_path().as_std_path(), &config)
         }
     }
 }

@@ -16,7 +16,7 @@ fn validate_template_name(name: &str) -> Result<(), RiptskError> {
 
 pub fn run(paths: &AppPaths, args: TemplateArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path())?;
     let service = TemplateService::new(paths, &config);
     match args.subcommand.unwrap_or(TemplateSubcommand::List) {
         TemplateSubcommand::List => {
