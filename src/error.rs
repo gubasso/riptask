@@ -1,5 +1,22 @@
 use thiserror::Error;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectKeyProjectMeta {
+    pub name: String,
+    pub backend: String,
+    pub host: Option<String>,
+    pub repo: Option<String>,
+    pub path: Option<String>,
+    pub existing_key: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectKeyCollision {
+    pub attempted_key: String,
+    pub new_project: ProjectKeyProjectMeta,
+    pub conflicting_project: ProjectKeyProjectMeta,
+}
+
 #[derive(Debug, Error)]
 pub enum RiptskError {
     #[error("{0}")]
@@ -14,6 +31,12 @@ pub enum RiptskError {
     Auth(String),
     #[error("configuration error: {0}")]
     Config(String),
+    #[error(
+        "project key collision: {} conflicts with existing project '{}'",
+        .0.attempted_key,
+        .0.conflicting_project.name
+    )]
+    KeyCollision(Box<ProjectKeyCollision>),
     #[error("project not registered: {0}")]
     Unregistered(String),
     #[error(transparent)]
@@ -33,7 +56,7 @@ impl RiptskError {
             Self::NotFound(_) => 2,
             Self::Conflict(_) => 3,
             Self::Unreachable(_) => 4,
-            Self::Config(_) | Self::Frontmatter(_) => 5,
+            Self::Config(_) | Self::KeyCollision(_) | Self::Frontmatter(_) => 5,
             Self::Unregistered(_) => 6,
             Self::Auth(_) => 7,
         }
@@ -58,7 +81,7 @@ pub enum StoreError {
 
 #[cfg(test)]
 mod tests {
-    use super::RiptskError;
+    use super::{ProjectKeyCollision, ProjectKeyProjectMeta, RiptskError};
 
     #[test]
     fn exit_codes_match_contract() {
@@ -67,6 +90,29 @@ mod tests {
         assert_eq!(RiptskError::Conflict("x".into()).exit_code(), 3);
         assert_eq!(RiptskError::Unreachable("x".into()).exit_code(), 4);
         assert_eq!(RiptskError::Config("x".into()).exit_code(), 5);
+        assert_eq!(
+            RiptskError::KeyCollision(Box::new(ProjectKeyCollision {
+                attempted_key: "X".into(),
+                new_project: ProjectKeyProjectMeta {
+                    name: "new".into(),
+                    backend: "github".into(),
+                    host: None,
+                    repo: None,
+                    path: None,
+                    existing_key: None,
+                },
+                conflicting_project: ProjectKeyProjectMeta {
+                    name: "existing".into(),
+                    backend: "github".into(),
+                    host: None,
+                    repo: None,
+                    path: None,
+                    existing_key: Some("X".into()),
+                },
+            }))
+            .exit_code(),
+            5
+        );
         assert_eq!(RiptskError::Unregistered("x".into()).exit_code(), 6);
         assert_eq!(RiptskError::Auth("x".into()).exit_code(), 7);
     }

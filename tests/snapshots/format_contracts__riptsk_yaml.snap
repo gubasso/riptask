@@ -17,6 +17,7 @@ backends:
   repo: chrono/wormhole-router
   default_board: personal
   default_org: chrono
+  key: GL-CHR-WOR
 boards:
 - name: personal
   statuses:

@@ -74,4 +74,8 @@ pub struct BackendConfig {
     /// Set this to avoid the extra API call on every issue creation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_issue_type: Option<String>,
+    /// Project key used to build issue IDs (`{KEY}--{number}`).
+    /// When absent, the key is derived from `repo`/`name` at runtime.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
 }

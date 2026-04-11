@@ -13,7 +13,7 @@ use std::io::IsTerminal;
 
 pub fn view(paths: &AppPaths) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path())?;
     ViewBuilder::new(paths, &config)
         .regenerate_all(None)
         .map_err(RiptskError::Other)
@@ -21,7 +21,7 @@ pub fn view(paths: &AppPaths) -> Result<(), RiptskError> {
 
 pub fn board(paths: &AppPaths, args: BoardArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path())?;
     let cwd = camino::Utf8PathBuf::from(
         std::env::current_dir()
             .unwrap_or_default()
@@ -167,7 +167,7 @@ fn color_issue_file(name: &str) -> String {
 
 pub fn reorder(paths: &AppPaths, args: ReorderArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path())?;
     let cwd = camino::Utf8PathBuf::from(
         std::env::current_dir()
             .unwrap_or_default()
@@ -232,7 +232,7 @@ pub fn reorder_down(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
 }
 
 fn shift(paths: &AppPaths, args: IdArgs, direction: ShiftDirection) -> Result<(), RiptskError> {
-    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path())?;
     let cwd = camino::Utf8PathBuf::from(
         std::env::current_dir()
             .unwrap_or_default()

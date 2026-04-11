@@ -9,7 +9,7 @@ pub(crate) const AI_BACKEND_MISSING: &str = "ai.command is not configured";
 
 pub fn summarize(paths: &AppPaths, args: SummarizeArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path())?;
     if !config.ai.enabled || !config.ai.features.summarize {
         println!("AI features disabled");
         return Ok(());
@@ -54,7 +54,7 @@ pub fn summarize(paths: &AppPaths, args: SummarizeArgs) -> Result<(), RiptskErro
 
 pub fn ask(paths: &AppPaths, args: AskArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path())?;
     if !config.ai.enabled || !config.ai.features.ask {
         println!("AI features disabled");
         return Ok(());
@@ -84,7 +84,7 @@ pub fn ask(paths: &AppPaths, args: AskArgs) -> Result<(), RiptskError> {
 
 pub fn generate_body(paths: &AppPaths, title: &str, project: &str) -> Result<String, RiptskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path())?;
     if !config.ai.features.new_body_gen {
         return Err(RiptskError::General("AI features disabled".into()));
     }
@@ -97,7 +97,7 @@ pub fn generate_issue_content(
     context: &str,
 ) -> Result<GeneratedIssueContent, RiptskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path())?;
     if !config.ai.features.new_body_gen {
         return Err(RiptskError::General("AI features disabled".into()));
     }

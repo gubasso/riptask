@@ -10,7 +10,7 @@ use crate::storage::issue_store;
 
 pub async fn run(paths: &AppPaths, args: StartArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path())?;
     let cwd = id_resolution::cwd_utf8();
 
     // Determine mode: existing issue or new issue

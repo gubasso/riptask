@@ -17,15 +17,18 @@ backends:
   repo: chrono/wormhole-router
   default_board: penguin-chrono-labs
   default_org: chrono
+  key: GL-CHR-WOR
 - name: fish-from-the-future
   type: github
   repo: Penguin-Chrono-Labs/fish-from-the-future
   default_board: penguin-chrono-labs
   default_org: chrono
+  key: GH-PEN-FIS
 - name: penguin-scratch
   type: local
   default_board: personal
   path: /tmp/penguin-scratch
+  key: LO-PEN
 boards:
 - name: penguin-chrono-labs
   statuses:

@@ -38,7 +38,7 @@ async fn pull(
     args: &SyncArgs,
     subargs: &SyncPullPushArgs,
 ) -> Result<(), RiptskError> {
-    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path())?;
     let engine = SyncEngine::new(paths, &config);
     for backend in resolve_sync_backends(args, &config)? {
         let provider = build_issue_tracker(backend)?;
@@ -86,7 +86,7 @@ async fn push(
     args: &SyncArgs,
     subargs: &SyncPullPushArgs,
 ) -> Result<(), RiptskError> {
-    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path())?;
     let engine = SyncEngine::new(paths, &config);
     let cwd = camino::Utf8PathBuf::from(
         std::env::current_dir()
@@ -145,7 +145,7 @@ async fn push(
 }
 
 fn status(paths: &AppPaths, args: &SyncArgs) -> Result<(), RiptskError> {
-    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path())?;
     let backends = resolve_sync_backends(args, &config)?;
     let backend_names = backends
         .iter()
@@ -310,7 +310,7 @@ fn resolve_pull_filter_ids(ids: &[String], backend: &BackendConfig) -> HashSet<S
             if id.chars().all(|character| character.is_ascii_digit()) {
                 let number = id.parse::<u64>().unwrap_or_default();
                 return crate::services::issue_ids::format_id(
-                    &crate::services::issue_ids::derive_scope_from_backend(backend),
+                    &crate::services::issue_ids::effective_key(backend),
                     number,
                 );
             }
@@ -391,7 +391,7 @@ pub fn resolve(paths: &AppPaths, args: ResolveArgs) -> Result<(), RiptskError> {
             "cannot specify both --take-remote and --take-local".into(),
         ));
     }
-    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path())?;
     let cwd = camino::Utf8PathBuf::from(
         std::env::current_dir()
             .unwrap_or_default()
@@ -496,7 +496,7 @@ fn session_start(paths: &AppPaths, args: SessionStartArgs) -> Result<(), RiptskE
         return Err(RiptskError::Conflict("session already active".into()));
     }
     let SessionStartArgs { scope, id } = args;
-    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path())?;
     let cwd = camino::Utf8PathBuf::from(
         std::env::current_dir()
             .unwrap_or_default()

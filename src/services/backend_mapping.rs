@@ -289,10 +289,7 @@ pub fn issue_to_upsert(doc: &IssueDocument) -> BackendIssueUpsert {
 /// For Jira, extracts the issue key from the browse URL and stores assignee identity.
 pub fn backend_to_local(record: &BackendIssueRecord, backend: &BackendConfig) -> IssueDocument {
     let state = state_from_backend(record);
-    let issue_id = issue_ids::format_id(
-        &issue_ids::derive_scope_from_backend(backend),
-        record.issue_id,
-    );
+    let issue_id = issue_ids::format_id(&issue_ids::effective_key(backend), record.issue_id);
     IssueDocument {
         frontmatter: IssueFrontmatter {
             id: issue_id.clone(),
@@ -924,6 +921,7 @@ mod tests {
             path: None,
             vc: None,
             default_issue_type: None,
+            key: None,
         };
 
         assert!(resolve_git_auth(&backend).is_none());
@@ -1059,6 +1057,7 @@ mod tests {
             path: None,
             vc: None,
             default_issue_type: None,
+            key: None,
         };
 
         assert!(resolve_git_auth(&backend).is_none());
@@ -1126,6 +1125,7 @@ mod tests {
             path: None,
             vc: None,
             default_issue_type: None,
+            key: None,
         };
         let config = crate::config::Config {
             backends: vec![backend.clone()],
@@ -1161,6 +1161,7 @@ mod tests {
             path: None,
             vc: Some("nonexistent".into()),
             default_issue_type: None,
+            key: None,
         };
         let config = crate::config::Config {
             backends: vec![backend.clone()],
@@ -1186,6 +1187,7 @@ mod tests {
             path: None,
             vc: Some("jira-other".into()),
             default_issue_type: None,
+            key: None,
         };
         let jira_other = BackendConfig {
             name: "jira-other".into(),
@@ -1197,6 +1199,7 @@ mod tests {
             path: None,
             vc: None,
             default_issue_type: None,
+            key: None,
         };
         let config = crate::config::Config {
             backends: vec![jira_backend.clone(), jira_other],

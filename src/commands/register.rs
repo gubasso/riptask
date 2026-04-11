@@ -8,7 +8,7 @@ use std::io::IsTerminal;
 
 pub fn run(paths: &AppPaths, args: RegisterArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path())?;
     if args.list {
         if std::io::stdout().is_terminal() {
             let mut table = Table::new();
@@ -53,12 +53,20 @@ pub fn run(paths: &AppPaths, args: RegisterArgs) -> Result<(), RiptskError> {
             .to_string(),
     );
     let mut config = config;
+    let ai_backend = if config.ai.enabled {
+        crate::commands::ai::optional_backend(&config)
+    } else {
+        None
+    };
     let backend = crate::services::project_detection::register_project_interactive(
         &mut config,
         &DialoguerPrompts,
+        ai_backend
+            .as_ref()
+            .map(|backend| backend as &dyn crate::adapters::ai::AiBackend),
         &cwd,
     )?;
-    save_config(paths.config_path().as_std_path(), &config).map_err(RiptskError::Other)?;
+    save_config(paths.config_path().as_std_path(), &config)?;
     crate::ui::success(&format!(
         "registered {} ({})",
         backend.name,
