@@ -76,7 +76,7 @@ async fn remote_pr_number_for_issue(
 
 pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path())?;
     let cwd = cwd_utf8();
     let id = match id_resolution::resolve_or_pick_id(
         paths,

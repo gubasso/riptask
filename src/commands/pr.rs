@@ -51,7 +51,7 @@ pub async fn run(paths: &AppPaths, args: PrArgs) -> Result<(), RiptskError> {
 
 pub(crate) async fn create(paths: &AppPaths, args: PrCreateArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path())?;
     let repo = current_repo()?;
     let current_branch = CliGit::new().current_branch(repo.as_path())?;
     let (path, mut issue) = resolve_issue(paths, &config, &args.scope, args.id.as_deref())?;
@@ -171,7 +171,7 @@ pub(crate) async fn create(paths: &AppPaths, args: PrCreateArgs) -> Result<(), R
 
 async fn show(paths: &AppPaths, args: PrShowArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path())?;
     let (_path, issue) = resolve_issue(paths, &config, &args.scope, args.id.as_deref())?;
     let backend = resolve_hosted_backend(&config, &issue)?;
     let provider = build_provider_for_backend(backend)?;
@@ -198,7 +198,7 @@ async fn show(paths: &AppPaths, args: PrShowArgs) -> Result<(), RiptskError> {
 
 async fn merge(paths: &AppPaths, args: PrMergeArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path())?;
     let (_path, issue) = resolve_issue(paths, &config, &args.scope, args.id.as_deref())?;
     let backend = resolve_hosted_backend(&config, &issue)?;
     let git = CliGit::with_auth(resolve_git_auth(backend));
@@ -247,7 +247,7 @@ async fn merge(paths: &AppPaths, args: PrMergeArgs) -> Result<(), RiptskError> {
 
 async fn edit(paths: &AppPaths, args: PrEditArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path())?;
     let (path, mut issue) = resolve_issue(paths, &config, &args.scope, args.id.as_deref())?;
     let backend = resolve_hosted_backend(&config, &issue)?;
     let provider = build_provider_for_backend(backend)?;

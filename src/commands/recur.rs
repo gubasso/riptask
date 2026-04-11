@@ -23,7 +23,7 @@ pub fn run(paths: &AppPaths, args: RecurArgs) -> Result<(), RiptskError> {
 }
 
 fn list(paths: &AppPaths) -> Result<(), RiptskError> {
-    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path())?;
     if std::io::stdout().is_terminal() {
         let mut table = Table::new();
         table
@@ -66,7 +66,7 @@ fn list(paths: &AppPaths) -> Result<(), RiptskError> {
 }
 
 fn run_due(paths: &AppPaths, date: Option<String>) -> Result<(), RiptskError> {
-    let mut config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let mut config = load_config(paths.config_path().as_std_path())?;
     let today = date
         .as_deref()
         .map(str::parse::<NaiveDate>)
@@ -147,7 +147,7 @@ fn run_due(paths: &AppPaths, date: Option<String>) -> Result<(), RiptskError> {
 
         update_last_run(&mut config, &definition.id, today);
     }
-    save_config(paths.config_path().as_std_path(), &config).map_err(RiptskError::Other)?;
+    save_config(paths.config_path().as_std_path(), &config)?;
     if let Some((id, title)) = last_issue {
         let files = changed_paths
             .iter()
@@ -166,14 +166,14 @@ fn run_due(paths: &AppPaths, date: Option<String>) -> Result<(), RiptskError> {
 
 fn skip(paths: &AppPaths, recur_id: Option<String>) -> Result<(), RiptskError> {
     let recur_id = recur_id.ok_or_else(|| RiptskError::General("missing recurrence id".into()))?;
-    let mut config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let mut config = load_config(paths.config_path().as_std_path())?;
     let today = Utc::now().date_naive();
     update_last_run(&mut config, &recur_id, today);
-    save_config(paths.config_path().as_std_path(), &config).map_err(RiptskError::Other)
+    save_config(paths.config_path().as_std_path(), &config)
 }
 
 fn new_recur(paths: &AppPaths, args: RecurNewArgs) -> Result<(), RiptskError> {
-    let mut config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let mut config = load_config(paths.config_path().as_std_path())?;
     if config
         .recurring
         .iter()
@@ -276,7 +276,7 @@ fn new_recur(paths: &AppPaths, args: RecurNewArgs) -> Result<(), RiptskError> {
         last_run: None,
     };
     config.recurring.push(definition);
-    save_config(paths.config_path().as_std_path(), &config).map_err(RiptskError::Other)?;
+    save_config(paths.config_path().as_std_path(), &config)?;
     crate::ui::success(&format!("added recurrence {}", args.id));
     Ok(())
 }

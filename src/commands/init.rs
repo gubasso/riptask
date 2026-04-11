@@ -14,8 +14,7 @@ pub fn run(paths: &AppPaths) -> Result<(), RiptskError> {
     }
 
     paths.ensure_repo_dirs().map_err(RiptskError::Other)?;
-    save_config(paths.config_path().as_std_path(), &default_config())
-        .map_err(RiptskError::Other)?;
+    save_config(paths.config_path().as_std_path(), &default_config())?;
 
     for (name, content) in embedded_templates() {
         fs::write(paths.templates_dir().join(name), content)

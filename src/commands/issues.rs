@@ -28,7 +28,7 @@ use std::io::IsTerminal;
 pub fn show(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
     let IdArgs { scope, id, pick } = args;
-    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path())?;
     let cwd = camino::Utf8PathBuf::from(
         std::env::current_dir()
             .unwrap_or_default()
@@ -53,7 +53,7 @@ pub fn show(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
 pub fn path(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
     let IdArgs { scope, id, pick } = args;
-    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path())?;
     let cwd = camino::Utf8PathBuf::from(
         std::env::current_dir()
             .unwrap_or_default()
@@ -70,7 +70,7 @@ pub fn path(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
 
 pub fn list(paths: &AppPaths, args: LsArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path())?;
     let cwd = camino::Utf8PathBuf::from(
         std::env::current_dir()
             .unwrap_or_default()
@@ -258,7 +258,7 @@ pub(crate) async fn create_issue_from_args(
     args: NewArgs,
 ) -> Result<(IssueDocument, camino::Utf8PathBuf), RiptskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path())?;
     let mut args = args;
     let cwd = camino::Utf8PathBuf::from(
         std::env::current_dir()
@@ -486,7 +486,7 @@ fn style_with_color(text: String, color: Color) -> console::StyledObject<String>
 pub fn edit(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
     let IdArgs { scope, id, pick } = args;
-    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path())?;
     let cwd = camino::Utf8PathBuf::from(
         std::env::current_dir()
             .unwrap_or_default()
@@ -527,7 +527,7 @@ pub fn set_status(paths: &AppPaths, args: StatusArgs) -> Result<(), RiptskError>
         status,
         pick,
     } = args;
-    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path())?;
     let cwd = camino::Utf8PathBuf::from(
         std::env::current_dir()
             .unwrap_or_default()
@@ -586,7 +586,7 @@ pub fn reopen(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
 pub fn remove(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
     let IdArgs { scope, id, pick } = args;
-    let config = load_config(paths.config_path().as_std_path()).map_err(RiptskError::Other)?;
+    let config = load_config(paths.config_path().as_std_path())?;
     let cwd = camino::Utf8PathBuf::from(
         std::env::current_dir()
             .unwrap_or_default()
@@ -644,7 +644,7 @@ async fn create_backend_issue(
         assignee_name: None,
     };
     let record = provider.create_issue(repo, &upsert).await?;
-    let scope = issue_ids::derive_scope_from_backend(backend);
+    let scope = issue_ids::effective_key(backend);
     let id = issue_ids::format_id(&scope, record.issue_id);
     let document = IssueDocument {
         frontmatter: IssueFrontmatter {

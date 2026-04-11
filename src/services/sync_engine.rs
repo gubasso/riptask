@@ -68,10 +68,8 @@ impl<'a> SyncEngine<'a> {
         let mut seen_ids = HashSet::new();
 
         for record in records {
-            let record_id = issue_ids::format_id(
-                &issue_ids::derive_scope_from_backend(backend),
-                record.issue_id,
-            );
+            let record_id =
+                issue_ids::format_id(&issue_ids::effective_key(backend), record.issue_id);
             if filter_ids.is_some_and(|ids| !ids.contains(&record_id)) {
                 continue;
             }
@@ -363,8 +361,7 @@ impl<'a> SyncEngine<'a> {
         backend: &BackendConfig,
         issue_id: u64,
     ) -> Result<Option<camino::Utf8PathBuf>, RiptskError> {
-        let exact_id =
-            issue_ids::format_id(&issue_ids::derive_scope_from_backend(backend), issue_id);
+        let exact_id = issue_ids::format_id(&issue_ids::effective_key(backend), issue_id);
         if let Ok(path) = issue_store::find_issue(self.paths, &exact_id) {
             return Ok(Some(path));
         }
@@ -1326,6 +1323,7 @@ mod tests {
             path: None,
             vc: None,
             default_issue_type: None,
+            key: Some("GH-OWN-REP".into()),
         };
         let mut config = default_config();
         config.backends = vec![backend.clone()];

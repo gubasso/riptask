@@ -128,7 +128,7 @@ impl<'a> IssueService<'a> {
         &self,
         draft: &IssueDraft,
     ) -> Result<IssueDocument, RiptskError> {
-        let scope = issue_ids::derive_scope(&Backend::Local, None, &draft.project);
+        let scope = self.project_effective_key(&draft.project);
         let sequence =
             issue_ids::next_local_sequence(self.paths, &scope).map_err(RiptskError::Other)?;
         let id = issue_ids::format_id(&scope, sequence);
@@ -265,11 +265,7 @@ impl<'a> IssueService<'a> {
     }
 
     pub fn next_local_sequence(&self, project: &str) -> Result<u64> {
-        let scope = issue_ids::derive_scope(
-            &self.project_backend(project).unwrap_or(Backend::Local),
-            self.project_repo(project).as_deref(),
-            project,
-        );
+        let scope = self.project_effective_key(project);
         issue_ids::next_local_sequence(self.paths, &scope)
     }
 
@@ -401,6 +397,15 @@ impl<'a> IssueService<'a> {
             .iter()
             .find(|backend| backend.name == project)
             .and_then(|backend| backend.default_org.clone())
+    }
+
+    fn project_effective_key(&self, project: &str) -> String {
+        self.config
+            .backends
+            .iter()
+            .find(|backend| backend.name == project)
+            .map(issue_ids::effective_key)
+            .unwrap_or_else(|| issue_ids::sanitize_key_candidate(project))
     }
 
     fn load_lane(
