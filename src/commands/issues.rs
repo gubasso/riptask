@@ -298,7 +298,9 @@ pub(crate) async fn create_issue_from_args(
                 prompt_for_ai_context()?
             }
         };
-        match crate::commands::ai::generate_issue_content(paths, &ai_context) {
+        match crate::ui::spin_on("Generating issue content", || {
+            crate::commands::ai::generate_issue_content(paths, &ai_context)
+        }) {
             Ok(generated) => {
                 args.title = Some(generated.title);
                 if description.is_none() {
@@ -319,7 +321,9 @@ pub(crate) async fn create_issue_from_args(
     if let Some(description) = description.as_ref() {
         draft.body = description.clone();
     } else if should_generate_body {
-        match crate::commands::ai::generate_body(paths, &draft.title, &draft.project) {
+        match crate::ui::spin_on("Generating issue description", || {
+            crate::commands::ai::generate_body(paths, &draft.title, &draft.project)
+        }) {
             Ok(body) => generated_body = Some(body),
             Err(error) => {
                 crate::ui::warn(&format!(
@@ -648,7 +652,10 @@ async fn create_backend_issue(
         assignee_account_id: None,
         assignee_name: None,
     };
-    let record = provider.create_issue(repo, &upsert).await?;
+    let record = crate::ui::spin_on_async("Creating issue on remote", async {
+        provider.create_issue(repo, &upsert).await
+    })
+    .await?;
     let scope = issue_ids::effective_key(backend);
     let id = issue_ids::format_id(&scope, record.issue_id);
     let document = IssueDocument {
@@ -728,6 +735,12 @@ async fn create_backend_issue(
     service.persist_issue(&document)?;
     cache::seed_backend_state_entry(paths, provider_name(backend), repo, &record)
         .map_err(RiptskError::Other)?;
+    tracing::info!(
+        issue_id = %document.frontmatter.id,
+        project = %document.frontmatter.project,
+        backend = %backend.name,
+        "created issue"
+    );
     Ok(document)
 }
 

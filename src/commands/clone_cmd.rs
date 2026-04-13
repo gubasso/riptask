@@ -58,18 +58,26 @@ pub async fn run(paths: &AppPaths, args: CloneArgs) -> Result<(), RiptskError> {
     let auth = resolve_git_auth(&vc_backend);
     let git = CliGit::with_auth(auth);
     let repo_name = vc_backend.repo.as_deref().unwrap_or_default();
-    let base = vc_provider.default_branch(repo_name).await?;
+    let base = crate::ui::spin_on_async("Fetching default branch", async {
+        vc_provider.default_branch(repo_name).await
+    })
+    .await?;
 
-    match vc_provider
+    let branch_spinner = crate::ui::spinner("Creating remote branch".to_owned());
+    let create_branch_result = vc_provider
         .create_branch(repo_name, &slug, &base, vc_issue_id)
-        .await
-    {
+        .await;
+    if let Some(ref pb) = branch_spinner {
+        pb.finish_and_clear();
+    }
+    match create_branch_result {
         Ok(()) => {}
         Err(ref error) if error.to_string().to_lowercase().contains("already exists") => {
             crate::ui::info("remote branch already exists, continuing with work-clone creation");
         }
         Err(error) => return Err(error),
     }
+    tracing::info!(branch = %slug, backend = %vc_backend.name, "ensured remote branch exists for clone");
 
     issue.frontmatter.id_slug = Some(slug.clone());
     issue.frontmatter.branch = Some(slug.clone());
@@ -104,8 +112,12 @@ pub async fn run(paths: &AppPaths, args: CloneArgs) -> Result<(), RiptskError> {
         )));
     }
 
-    git.clone_with_reference(repo_root.as_path(), &remote_url, target_path.as_path())?;
-    git.fetch_and_checkout_tracking(target_path.as_path(), &slug)?;
+    crate::ui::spin_on("Cloning repository", || {
+        git.clone_with_reference(repo_root.as_path(), &remote_url, target_path.as_path())
+    })?;
+    crate::ui::spin_on("Checking out branch", || {
+        git.fetch_and_checkout_tracking(target_path.as_path(), &slug)
+    })?;
     work_clone::save_marker(
         target_path.as_path(),
         &WorkCloneMarker {
@@ -118,5 +130,6 @@ pub async fn run(paths: &AppPaths, args: CloneArgs) -> Result<(), RiptskError> {
 
     crate::ui::success(&format!("created work-clone at {}", target_path.display()));
     crate::ui::info(&format!("cd {}", target_path.display()));
+    tracing::info!(branch = %slug, target = %target_path.display(), "created work clone");
     Ok(())
 }
