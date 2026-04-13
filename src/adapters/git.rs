@@ -115,7 +115,7 @@ impl CliGit {
         for arg in args {
             command.arg(arg);
         }
-        status_to_result(command.status()?)
+        status_to_result(command.output()?.status)
     }
 
     fn prepare_auth_command(&self) -> Result<(Command, Option<tempfile::TempPath>), RiptskError> {
@@ -533,7 +533,7 @@ impl GitBackend for CliGit {
             .arg(reference_repo)
             .arg(remote_url)
             .arg(target_dir);
-        status_to_result(command.status()?)
+        status_to_result(command.output()?.status)
     }
 
     fn stash_push(&self, repo: &Path, message: &str) -> Result<bool, RiptskError> {
@@ -591,7 +591,7 @@ fn run_git_dynamic(repo: &Path, args: &[&str]) -> Result<(), RiptskError> {
     for arg in args {
         command.arg(arg);
     }
-    status_to_result(command.status()?)
+    status_to_result(command.output()?.status)
 }
 
 /// Build a `git` `Command` with inherited override environment variables
