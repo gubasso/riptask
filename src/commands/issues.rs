@@ -271,62 +271,67 @@ pub(crate) async fn create_issue_from_args(
     {
         args.project = Some(backend.name);
     }
-    let effective_title = args.title_pos.take().or(args.title.take());
-    args.title = effective_title;
-    let explicit_title_provided = args.title.is_some();
-
-    let ai = args.ai;
     let edit = args.edit;
     let prompts = DialoguerPrompts;
     let git = CliGit::new();
     let mut generated_body = None;
+    let description = args.description.clone();
+    let mut should_generate_body = false;
+    let prompt_for_ai_context = || {
+        prompts
+            .input("Describe the task for AI", None)
+            .map_err(|error| {
+                RiptskError::General(format!(
+                    "AI issue generation failed and no --title provided\n{error}"
+                ))
+            })
+    };
 
-    if ai && args.title.is_none() {
+    if args.title.is_none() {
         let ai_context = match resolve_ai_context(&git, &config, args.project.as_deref(), &cwd) {
             Ok(Some(diff)) => diff,
-            Ok(None) => prompts.input("Describe the task for AI", None)?,
+            Ok(None) => prompt_for_ai_context()?,
             Err(error) => {
                 crate::ui::warn(&format!(
                     "AI context detection failed, falling back to prompt: {error}"
                 ));
-                prompts.input("Describe the task for AI", None)?
+                prompt_for_ai_context()?
             }
         };
         match crate::commands::ai::generate_issue_content(paths, &ai_context) {
             Ok(generated) => {
                 args.title = Some(generated.title);
-                generated_body = Some(generated.body);
+                if description.is_none() {
+                    generated_body = Some(generated.body);
+                }
             }
             Err(error) => {
+                return Err(RiptskError::General(format!(
+                    "AI issue generation failed and no --title provided\n{error}"
+                )));
+            }
+        }
+    } else if description.is_none() {
+        should_generate_body = true;
+    }
+    let service = IssueService::new(paths, &config);
+    let mut draft = service.prepare_issue_draft(args)?;
+    if let Some(description) = description.as_ref() {
+        draft.body = description.clone();
+    } else if should_generate_body {
+        match crate::commands::ai::generate_body(paths, &draft.title, &draft.project) {
+            Ok(body) => generated_body = Some(body),
+            Err(error) => {
                 crate::ui::warn(&format!(
-                    "AI issue generation failed, falling back to manual input\n{error}"
+                    "AI body generation failed, using template body\n{error}"
                 ));
             }
         }
     }
-
-    if args.title.is_none() && std::io::stdin().is_terminal() {
-        let title = prompts.input("Title", None)?;
-        args.title = Some(title);
-    }
-    let service = IssueService::new(paths, &config);
-    let mut draft = service.prepare_issue_draft(args)?;
-    if ai {
-        draft.body = if let Some(body) = generated_body {
-            body
-        } else if explicit_title_provided {
-            match crate::commands::ai::generate_body(paths, &draft.title, &draft.project) {
-                Ok(body) => body,
-                Err(error) => {
-                    crate::ui::warn(&format!(
-                        "AI body generation failed, using template body\n{error}"
-                    ));
-                    draft.body.clone()
-                }
-            }
-        } else {
-            draft.body.clone()
-        };
+    if description.is_none()
+        && let Some(body) = generated_body
+    {
+        draft.body = body;
     }
     let issue = if draft
         .backend

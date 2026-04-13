@@ -135,7 +135,7 @@ fn new_auto_registers_unregistered_repo() {
 }
 
 #[test]
-fn new_does_not_run_ai_without_flag_even_when_config_enabled() {
+fn new_with_title_attempts_ai_body_by_default() {
     let temp = tempdir().expect("temp dir");
     let repo = temp.path().join("repo");
     let cache = temp.path().join("cache");
@@ -148,21 +148,50 @@ fn new_does_not_run_ai_without_flag_even_when_config_enabled() {
         .assert()
         .success();
 
-    // Enable AI in config
-    let config_path = repo.join("riptsk.yaml");
-    let config = fs::read_to_string(&config_path).expect("read config");
-    fs::write(
-        &config_path,
-        config.replace("enabled: false", "enabled: true"),
-    )
-    .expect("write config");
+    Command::cargo_bin("tsk")
+        .expect("binary")
+        .current_dir(temp.path())
+        .env("RIPTSK_REPO", &repo)
+        .env("XDG_CACHE_HOME", &cache)
+        .args(["new", "--title", "ai test"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("AI body generation failed"));
+
+    let issues: Vec<_> = fs::read_dir(repo.join("issues"))
+        .expect("issues dir")
+        .filter_map(Result::ok)
+        .filter(|e| e.path().extension().and_then(|ext| ext.to_str()) == Some("md"))
+        .collect();
+    assert_eq!(issues.len(), 1, "expected exactly one issue file");
+
+    let issue_content = fs::read_to_string(issues[0].path()).expect("read issue");
+    assert!(
+        issue_content.contains("## Description"),
+        "issue body should contain template content"
+    );
+}
+
+#[test]
+fn new_with_title_and_description_skips_ai() {
+    let temp = tempdir().expect("temp dir");
+    let repo = temp.path().join("repo");
+    let cache = temp.path().join("cache");
+
+    Command::cargo_bin("tsk")
+        .expect("binary")
+        .env("RIPTSK_REPO", &repo)
+        .env("XDG_CACHE_HOME", &cache)
+        .arg("init")
+        .assert()
+        .success();
 
     Command::cargo_bin("tsk")
         .expect("binary")
         .current_dir(temp.path())
         .env("RIPTSK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
-        .args(["new", "--title", "no ai test"])
+        .args(["new", "--title", "manual test", "--description", "my desc"])
         .assert()
         .success()
         .stderr(predicate::str::contains("AI body generation failed").not());
@@ -176,93 +205,8 @@ fn new_does_not_run_ai_without_flag_even_when_config_enabled() {
 
     let issue_content = fs::read_to_string(issues[0].path()).expect("read issue");
     assert!(
-        issue_content.contains("## Description"),
-        "issue body should contain template content"
-    );
-}
-
-#[test]
-fn new_with_ai_flag_falls_back_to_template_when_backend_unavailable() {
-    let temp = tempdir().expect("temp dir");
-    let repo = temp.path().join("repo");
-    let cache = temp.path().join("cache");
-
-    Command::cargo_bin("tsk")
-        .expect("binary")
-        .env("RIPTSK_REPO", &repo)
-        .env("XDG_CACHE_HOME", &cache)
-        .arg("init")
-        .assert()
-        .success();
-
-    let config_path = repo.join("riptsk.yaml");
-    let config = fs::read_to_string(&config_path).expect("read config");
-    fs::write(
-        &config_path,
-        config.replace("enabled: false", "enabled: true"),
-    )
-    .expect("write config");
-
-    Command::cargo_bin("tsk")
-        .expect("binary")
-        .current_dir(temp.path())
-        .env("RIPTSK_REPO", &repo)
-        .env("XDG_CACHE_HOME", &cache)
-        .args(["new", "--title", "ai test", "--ai"])
-        .assert()
-        .success()
-        .stderr(predicate::str::contains("AI body generation failed"));
-
-    let issues: Vec<_> = fs::read_dir(repo.join("issues"))
-        .expect("issues dir")
-        .filter_map(Result::ok)
-        .filter(|e| e.path().extension().and_then(|ext| ext.to_str()) == Some("md"))
-        .collect();
-    assert_eq!(issues.len(), 1, "expected exactly one issue file");
-
-    let issue_content = fs::read_to_string(issues[0].path()).expect("read issue");
-    assert!(
-        issue_content.contains("## Description"),
-        "issue body should contain template content"
-    );
-}
-
-#[test]
-fn new_with_ai_flag_runs_ai_even_when_config_disabled() {
-    let temp = tempdir().expect("temp dir");
-    let repo = temp.path().join("repo");
-    let cache = temp.path().join("cache");
-
-    Command::cargo_bin("tsk")
-        .expect("binary")
-        .env("RIPTSK_REPO", &repo)
-        .env("XDG_CACHE_HOME", &cache)
-        .arg("init")
-        .assert()
-        .success();
-
-    // Leave ai.enabled: false (default). --ai must still trigger AI attempt.
-    Command::cargo_bin("tsk")
-        .expect("binary")
-        .current_dir(temp.path())
-        .env("RIPTSK_REPO", &repo)
-        .env("XDG_CACHE_HOME", &cache)
-        .args(["new", "--title", "config disabled ai test", "--ai"])
-        .assert()
-        .success()
-        .stderr(predicate::str::contains("AI body generation failed"));
-
-    let issues: Vec<_> = fs::read_dir(repo.join("issues"))
-        .expect("issues dir")
-        .filter_map(Result::ok)
-        .filter(|e| e.path().extension().and_then(|ext| ext.to_str()) == Some("md"))
-        .collect();
-    assert_eq!(issues.len(), 1, "expected exactly one issue file");
-
-    let issue_content = fs::read_to_string(issues[0].path()).expect("read issue");
-    assert!(
-        issue_content.contains("## Description"),
-        "issue body should contain template content"
+        issue_content.contains("my desc"),
+        "issue body should contain the provided description"
     );
 }
 
@@ -285,7 +229,7 @@ fn new_requires_initialization() {
 }
 
 #[test]
-fn new_without_title_non_tty_errors() {
+fn new_without_args_non_tty_errors_clearly() {
     let temp = tempdir().expect("temp dir");
     let repo = temp.path().join("repo");
     let cache = temp.path().join("cache");
@@ -305,7 +249,25 @@ fn new_without_title_non_tty_errors() {
         .arg("new")
         .assert()
         .failure()
-        .stderr(predicate::str::contains("missing title"));
+        .stderr(predicate::str::contains(
+            "AI issue generation failed and no --title provided",
+        ));
+}
+
+#[test]
+fn new_ai_flag_rejected_by_clap() {
+    let temp = tempdir().expect("temp dir");
+    let repo = temp.path().join("repo");
+    let cache = temp.path().join("cache");
+
+    Command::cargo_bin("tsk")
+        .expect("binary")
+        .env("RIPTSK_REPO", &repo)
+        .env("XDG_CACHE_HOME", &cache)
+        .args(["new", "--ai"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--ai"));
 }
 
 #[test]
