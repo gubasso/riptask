@@ -23,6 +23,10 @@ pub fn run(paths: &AppPaths, args: CommitArgs) -> Result<(), RiptskError> {
     let git = CliGit::new();
     let repo = git.repo_root(&cwd)?;
 
+    if args.all {
+        git.stage_all(&repo)?;
+    }
+
     if !git.has_staged_changes(&repo)? {
         return Err(RiptskError::General("no staged changes to commit".into()));
     }
@@ -59,7 +63,7 @@ pub fn run(paths: &AppPaths, args: CommitArgs) -> Result<(), RiptskError> {
         backend.generate_commit_message(&diff)
     }) {
         Ok(message) => {
-            let trimmed = message.trim().to_owned();
+            let trimmed = strip_markdown_fences(&message);
             if trimmed.is_empty() {
                 tracing::info!("AI commit message generation returned empty output");
                 crate::ui::warn("AI returned an empty commit message; opening editor");
@@ -77,6 +81,10 @@ pub fn run(paths: &AppPaths, args: CommitArgs) -> Result<(), RiptskError> {
 
     if args.edit {
         return run_git_commit_edit(&repo, &generated);
+    }
+
+    if args.yes {
+        return run_git_commit(&repo, &generated);
     }
 
     match confirm_message(&generated) {
@@ -154,4 +162,22 @@ fn run_git_commit_edit(repo: &std::path::Path, message: &str) -> Result<(), Ript
         return Err(RiptskError::General("git commit failed".into()));
     }
     Ok(())
+}
+
+/// Strip markdown code fences that LLMs sometimes wrap around output.
+/// Applies repeatedly in case of nested fences.
+fn strip_markdown_fences(text: &str) -> String {
+    let mut result = text.trim().to_owned();
+    loop {
+        let lines: Vec<&str> = result.lines().collect();
+        if lines.len() >= 2
+            && lines[0].trim().starts_with("```")
+            && lines.last().is_some_and(|l| l.trim() == "```")
+        {
+            result = lines[1..lines.len() - 1].join("\n").trim().to_owned();
+        } else {
+            break;
+        }
+    }
+    result
 }
