@@ -568,6 +568,12 @@ pub struct CommitArgs {
     /// Provide commit message directly (skip AI)
     #[arg(short = 'm', long)]
     pub message: Option<String>,
+    /// Accept AI-generated commit message without confirmation
+    #[arg(short = 'y', long)]
+    pub yes: bool,
+    /// Stage all changes before committing (like git commit -a)
+    #[arg(short = 'a', long)]
+    pub all: bool,
 }
 
 #[derive(Debug, Clone, Args)]

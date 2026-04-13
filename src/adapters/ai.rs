@@ -147,7 +147,28 @@ impl AiBackend for TemplateAiBackend {
     fn generate_commit_message(&self, diff: &str) -> Result<String, RiptskError> {
         run_ai(
             &self.command_template,
-            "Generate a single conventional commit message for the given diff. Use the format: type(scope): description. Types: feat, fix, refactor, docs, test, chore, ci, style, perf, build. Keep the subject line under 72 characters. Add a blank line and a concise body only if the change is non-trivial. Output only the commit message, nothing else.",
+            concat!(
+                "Generate a conventional commit message for the given diff.\n",
+                "\n",
+                "FORMAT (output ONLY the raw commit message — no fences, no markdown, no commentary):\n",
+                "\n",
+                "Line 1: subject in the form type(scope): imperative description\n",
+                "Line 2: blank\n",
+                "Line 3+: body (required if change is non-trivial)\n",
+                "\n",
+                "SUBJECT RULES:\n",
+                "- type: feat|fix|refactor|docs|test|chore|ci|style|perf|build\n",
+                "- scope: lowercase module or area, hierarchical with / (e.g. cli/commit, adapters/git)\n",
+                "- description: imperative mood, lowercase start, no trailing period\n",
+                "- HARD LIMIT: 72 characters total for the subject line\n",
+                "\n",
+                "BODY RULES:\n",
+                "- 1-2 sentence summary of why, then 2-6 bullet points of what changed\n",
+                "- HARD LIMIT: every body line must be at most 72 characters\n",
+                "- Do NOT mention AI, generated, automated, or similar\n",
+                "\n",
+                "CRITICAL: Output the raw commit message text only. Do NOT wrap in ``` or any other formatting.",
+            ),
             diff,
         )
     }
