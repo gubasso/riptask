@@ -30,6 +30,7 @@ pub trait GitBackend {
         force: bool,
     ) -> Result<(), RiptskError>;
     fn has_staged_changes(&self, repo: &Path) -> Result<bool, RiptskError>;
+    fn stage_all(&self, repo: &Path) -> Result<(), RiptskError>;
     fn is_branch_merged(&self, repo: &Path, branch: &str, base: &str) -> Result<bool, RiptskError>;
     fn fetch(&self, repo: &Path) -> Result<(), RiptskError>;
     fn commits_ahead_of_base(
@@ -340,6 +341,10 @@ impl GitBackend for CliGit {
             .status()?;
         // exit 0 = no staged changes, exit 1 = staged changes exist
         Ok(!output.success())
+    }
+
+    fn stage_all(&self, repo: &Path) -> Result<(), RiptskError> {
+        run_git_dynamic(repo, &["add", "-A"])
     }
 
     fn is_branch_merged(&self, repo: &Path, branch: &str, base: &str) -> Result<bool, RiptskError> {
