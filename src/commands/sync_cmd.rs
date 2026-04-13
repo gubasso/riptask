@@ -44,15 +44,25 @@ async fn pull(
         let provider = build_issue_tracker(backend)?;
         let pull_ids = resolve_pull_filter_ids(&subargs.ids, backend);
         let force_ids = resolve_pull_filter_ids(&args.force_pull_ids, backend);
-        let summary = engine
-            .pull(
+        let summary = crate::ui::spin_on_async(
+            &format!("Pulling issues from {}", backend.name),
+            engine.pull(
                 provider.as_ref(),
                 backend,
                 args.force,
                 (!pull_ids.is_empty()).then_some(&pull_ids),
                 (!force_ids.is_empty()).then_some(&force_ids),
-            )
-            .await?;
+            ),
+        )
+        .await?;
+        tracing::info!(
+            backend = %backend.name,
+            created = summary.created.len(),
+            updated = summary.updated.len(),
+            deleted = summary.deleted.len(),
+            conflicts = summary.conflicts.len(),
+            "pull completed"
+        );
         if std::io::stderr().is_terminal() {
             eprintln!(
                 "pull  {} created  {} updated  {} deleted  {} conflicts",
@@ -103,12 +113,26 @@ async fn push(
         let provider = build_issue_tracker(backend)?;
         let issue_paths = collect_push_paths(paths, backend, &resolved_ids)?;
         let summary = if resolved_ids.is_empty() {
-            engine.push(provider.as_ref(), backend).await?
+            crate::ui::spin_on_async(
+                &format!("Pushing issues to {}", backend.name),
+                engine.push(provider.as_ref(), backend),
+            )
+            .await?
         } else {
-            engine
-                .push_issues(provider.as_ref(), backend, &issue_paths)
-                .await?
+            crate::ui::spin_on_async(
+                &format!("Pushing issues to {}", backend.name),
+                engine.push_issues(provider.as_ref(), backend, &issue_paths),
+            )
+            .await?
         };
+        tracing::info!(
+            backend = %backend.name,
+            created = summary.created.len(),
+            updated = summary.updated.len(),
+            deleted = summary.deleted.len(),
+            skipped = summary.skipped.len(),
+            "push completed"
+        );
         if std::io::stderr().is_terminal() {
             eprintln!(
                 "push  {} created  {} updated  {} deleted  {} skipped",

@@ -14,9 +14,11 @@ use std::io::IsTerminal;
 pub fn view(paths: &AppPaths) -> Result<(), RiptskError> {
     paths.require_initialized()?;
     let config = load_config(paths.config_path().as_std_path())?;
-    ViewBuilder::new(paths, &config)
-        .regenerate_all(None)
-        .map_err(RiptskError::Other)
+    crate::ui::spin_on("Regenerating views", || {
+        ViewBuilder::new(paths, &config)
+            .regenerate_all(None)
+            .map_err(RiptskError::Other)
+    })
 }
 
 pub fn board(paths: &AppPaths, args: BoardArgs) -> Result<(), RiptskError> {
@@ -31,9 +33,11 @@ pub fn board(paths: &AppPaths, args: BoardArgs) -> Result<(), RiptskError> {
     let scope =
         crate::scope::resolve_scope(&args.scope.projects, args.scope.all_projects, &cwd, &config)?;
     let builder = ViewBuilder::new(paths, &config);
-    builder
-        .regenerate_all(Some(&scope))
-        .map_err(RiptskError::Other)?;
+    crate::ui::spin_on("Regenerating views", || {
+        builder
+            .regenerate_all(Some(&scope))
+            .map_err(RiptskError::Other)
+    })?;
     let path = builder.board_path(args.board.as_deref(), args.all);
 
     if args.path {

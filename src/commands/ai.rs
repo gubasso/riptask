@@ -48,7 +48,11 @@ pub fn summarize(paths: &AppPaths, args: SummarizeArgs) -> Result<(), RiptskErro
             issue.frontmatter.id, issue.frontmatter.title
         ));
     }
-    println!("{}", backend.summarize(&context)?);
+    tracing::debug!(context_len = context.len(), "requesting issue summary");
+    println!(
+        "{}",
+        crate::ui::spin_on("Summarizing issues", || backend.summarize(&context))?
+    );
     Ok(())
 }
 
@@ -78,7 +82,15 @@ pub fn ask(paths: &AppPaths, args: AskArgs) -> Result<(), RiptskError> {
             issue.frontmatter.id, issue.frontmatter.title, issue.body
         ));
     }
-    println!("{}", backend.ask(&args.question, &context)?);
+    tracing::debug!(
+        question_len = args.question.len(),
+        context_len = context.len(),
+        "requesting AI answer"
+    );
+    println!(
+        "{}",
+        crate::ui::spin_on("Thinking", || backend.ask(&args.question, &context))?
+    );
     Ok(())
 }
 

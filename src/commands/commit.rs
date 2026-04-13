@@ -55,17 +55,21 @@ pub fn run(paths: &AppPaths, args: CommitArgs) -> Result<(), RiptskError> {
         ));
     }
 
-    crate::ui::info("Generating commit message...");
-    let generated = match backend.generate_commit_message(&diff) {
+    let generated = match crate::ui::spin_on("Generating commit message", || {
+        backend.generate_commit_message(&diff)
+    }) {
         Ok(message) => {
             let trimmed = message.trim().to_owned();
             if trimmed.is_empty() {
+                tracing::info!("AI commit message generation returned empty output");
                 crate::ui::warn("AI returned an empty commit message; opening editor");
                 return open_editor_commit(&repo, "");
             }
+            tracing::info!("generated AI commit message");
             trimmed
         }
         Err(error) => {
+            tracing::info!(error = %error, "AI commit message generation unavailable");
             crate::ui::warn(&format!("AI commit message unavailable: {error}"));
             return open_editor_commit(&repo, "");
         }

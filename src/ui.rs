@@ -23,6 +23,44 @@ pub fn spinner(msg: impl Into<Cow<'static, str>>) -> Option<ProgressBar> {
     Some(pb)
 }
 
+pub fn spin_on<T, E, F>(msg: &str, f: F) -> Result<T, E>
+where
+    F: FnOnce() -> Result<T, E>,
+    E: std::fmt::Display,
+{
+    let started = std::time::Instant::now();
+    let pb = spinner(msg.to_owned());
+    let result = f();
+    if let Some(ref pb) = pb {
+        pb.finish_and_clear();
+    }
+    let elapsed = format_elapsed(started.elapsed());
+    match &result {
+        Ok(_) => success(&format!("{msg} done ({elapsed})")),
+        Err(_) => error(&format!("{msg} failed ({elapsed})")),
+    }
+    result
+}
+
+pub async fn spin_on_async<T, E, F>(msg: &str, fut: F) -> Result<T, E>
+where
+    F: std::future::Future<Output = Result<T, E>>,
+    E: std::fmt::Display,
+{
+    let started = std::time::Instant::now();
+    let pb = spinner(msg.to_owned());
+    let result = fut.await;
+    if let Some(ref pb) = pb {
+        pb.finish_and_clear();
+    }
+    let elapsed = format_elapsed(started.elapsed());
+    match &result {
+        Ok(_) => success(&format!("{msg} done ({elapsed})")),
+        Err(_) => error(&format!("{msg} failed ({elapsed})")),
+    }
+    result
+}
+
 pub fn format_elapsed(d: Duration) -> String {
     let secs = d.as_secs();
     if secs < 60 {

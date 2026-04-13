@@ -134,9 +134,11 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
             },
         )
         .await?;
-        ViewBuilder::new(paths, &config)
-            .regenerate_all(None)
-            .map_err(RiptskError::Other)?;
+        crate::ui::spin_on("Regenerating views", || {
+            ViewBuilder::new(paths, &config)
+                .regenerate_all(None)
+                .map_err(RiptskError::Other)
+        })?;
         return Ok(());
     }
 
@@ -213,7 +215,12 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
             .zip(Some(repo_name))
         {
             Some((backend_issue_id, repo)) => {
-                match provider.get_issue(repo, backend_issue_id).await {
+                let issue_spinner = crate::ui::spinner("Fetching issue status".to_owned());
+                let issue_result = provider.get_issue(repo, backend_issue_id).await;
+                if let Some(ref pb) = issue_spinner {
+                    pb.finish_and_clear();
+                }
+                match issue_result {
                     Ok(record) if record.state.eq_ignore_ascii_case("closed") => Some(record),
                     Ok(_) | Err(_) => None,
                 }
@@ -221,17 +228,28 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
             None => None,
         };
 
-        let default_branch = provider.default_branch(repo_name).await?;
-        git.checkout(repo_dir.as_path(), &default_branch)?;
-        git.pull(repo_dir.as_path())?;
+        let default_branch = crate::ui::spin_on_async("Fetching default branch", async {
+            provider.default_branch(repo_name).await
+        })
+        .await?;
+        crate::ui::spin_on("Switching to default branch", || {
+            git.checkout(repo_dir.as_path(), &default_branch)
+        })?;
+        crate::ui::spin_on("Pulling latest changes", || git.pull(repo_dir.as_path()))?;
 
-        match provider.delete_branch(repo_name, &branch_name).await {
+        let delete_spinner = crate::ui::spinner("Deleting remote branch".to_owned());
+        let delete_result = provider.delete_branch(repo_name, &branch_name).await;
+        if let Some(ref pb) = delete_spinner {
+            pb.finish_and_clear();
+        }
+        match delete_result {
             Ok(()) => crate::ui::success(&format!("deleted remote branch: {branch_name}")),
             Err(error) if is_branch_not_found_error(&error) => {
                 crate::ui::info("remote branch not found, continuing with local cleanup");
             }
             Err(error) => return Err(error),
         }
+        tracing::info!(branch = %branch_name, "finished remote branch cleanup");
 
         if git.branch_exists(repo_dir.as_path(), &branch_name)? {
             match git.delete_local_branch(repo_dir.as_path(), &branch_name, true) {
@@ -287,9 +305,12 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
             },
         )
         .await?;
-        ViewBuilder::new(paths, &config)
-            .regenerate_all(None)
-            .map_err(RiptskError::Other)?;
+        crate::ui::spin_on("Regenerating views", || {
+            ViewBuilder::new(paths, &config)
+                .regenerate_all(None)
+                .map_err(RiptskError::Other)
+        })?;
+        tracing::info!(issue_id = %id, "completed done workflow");
         Ok(())
     }
     .await;

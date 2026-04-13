@@ -282,6 +282,7 @@ mod tests {
         AppPaths {
             riptsk_repo: repo.to_string_lossy().as_ref().into(),
             cache_root: cache.to_string_lossy().as_ref().into(),
+            state_root: root.join("state").to_string_lossy().as_ref().into(),
         }
     }
 

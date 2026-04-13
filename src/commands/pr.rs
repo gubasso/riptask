@@ -70,7 +70,10 @@ pub(crate) async fn create(paths: &AppPaths, args: PrCreateArgs) -> Result<(), R
     let git = CliGit::with_auth(resolve_git_auth(backend));
     let provider = build_provider_for_backend(backend)?;
     let repo_name = backend.repo.as_deref().unwrap_or_default();
-    let default_branch = provider.default_branch(repo_name).await?;
+    let default_branch = ui::spin_on_async("Fetching default branch", async {
+        provider.default_branch(repo_name).await
+    })
+    .await?;
 
     // Check local metadata first, then remote, for idempotent create
     let local_pr_number = issue.frontmatter.pr_number.or_else(|| {
@@ -80,25 +83,32 @@ pub(crate) async fn create(paths: &AppPaths, args: PrCreateArgs) -> Result<(), R
             .as_deref()
             .and_then(parse_pr_number_from_url)
     });
-    let existing_pr = if let Some(pr_number) = local_pr_number
-        && let Ok(existing) = provider.get_pr(repo_name, pr_number).await
-        && pr_head_matches(&existing.head, &branch)
-        && existing.base == default_branch
-    {
-        Some(existing)
-    } else {
-        provider
-            .find_pr_by_branch(repo_name, &branch, &default_branch)
-            .await?
-    };
+    let existing_pr = ui::spin_on_async("Checking for existing PR", async {
+        let existing_pr = if let Some(pr_number) = local_pr_number
+            && let Ok(existing) = provider.get_pr(repo_name, pr_number).await
+            && pr_head_matches(&existing.head, &branch)
+            && existing.base == default_branch
+        {
+            Some(existing)
+        } else {
+            provider
+                .find_pr_by_branch(repo_name, &branch, &default_branch)
+                .await?
+        };
+        Ok::<_, RiptskError>(existing_pr)
+    })
+    .await?;
     if let Some(existing) = existing_pr {
+        tracing::info!(pr_number = existing.number, branch = %branch, "reused existing PR");
         sync_and_commit_pr(&config, &git, paths, &path, &mut issue, &existing)?;
         println!("{}", existing.url);
         return Ok(());
     }
 
-    git.fetch(repo.as_path())?;
-    git.push_with_upstream(repo.as_path(), &branch)?;
+    ui::spin_on("Fetching from remote", || git.fetch(repo.as_path()))?;
+    ui::spin_on("Pushing to remote", || {
+        git.push_with_upstream(repo.as_path(), &branch)
+    })?;
 
     let mut skip_ai = false;
     if backend.backend == Backend::Github
@@ -111,7 +121,9 @@ pub(crate) async fn create(paths: &AppPaths, args: PrCreateArgs) -> Result<(), R
         }
         ui::info("branch has no commits; creating empty commit for PR...");
         git.create_empty_commit(repo.as_path(), EMPTY_BRANCH_COMMIT_MESSAGE)?;
-        git.push_with_upstream(repo.as_path(), &branch)?;
+        ui::spin_on("Pushing to remote", || {
+            git.push_with_upstream(repo.as_path(), &branch)
+        })?;
         skip_ai = true;
     }
 
@@ -137,8 +149,9 @@ pub(crate) async fn create(paths: &AppPaths, args: PrCreateArgs) -> Result<(), R
         if let Some(ai) = optional_backend(&config) {
             let context =
                 build_create_ai_context(&issue, &git, repo.as_path(), &default_branch, &branch)?;
-            ui::info("generating AI PR description...");
-            match ai.generate_pr_description(&context) {
+            match ui::spin_on("Generating PR description", || {
+                ai.generate_pr_description(&context)
+            }) {
                 Ok(description) if !description.trim().is_empty() => {
                     body = format!("{body}\n\n{}", description.trim());
                 }
@@ -150,9 +163,13 @@ pub(crate) async fn create(paths: &AppPaths, args: PrCreateArgs) -> Result<(), R
         }
     }
 
-    let record = provider
-        .create_pr(repo_name, &branch, &default_branch, &title, &body)
-        .await?;
+    let record = ui::spin_on_async("Creating pull request", async {
+        provider
+            .create_pr(repo_name, &branch, &default_branch, &title, &body)
+            .await
+    })
+    .await?;
+    tracing::info!(pr_number = record.number, branch = %branch, "created pull request");
 
     issue.frontmatter.pr_url = Some(record.url.clone());
     issue.frontmatter.pr_number = Some(record.number);
@@ -177,7 +194,10 @@ async fn show(paths: &AppPaths, args: PrShowArgs) -> Result<(), RiptskError> {
     let provider = build_provider_for_backend(backend)?;
     let repo_name = backend.repo.as_deref().unwrap_or_default();
     let pr_number = resolve_pr_number(provider.as_ref(), repo_name, &issue).await?;
-    let record = provider.get_pr(repo_name, pr_number).await?;
+    let record = ui::spin_on_async("Fetching PR details", async {
+        provider.get_pr(repo_name, pr_number).await
+    })
+    .await?;
 
     if args.json {
         let payload = serde_json::to_string_pretty(&record).map_err(|error| {
@@ -253,22 +273,35 @@ async fn edit(paths: &AppPaths, args: PrEditArgs) -> Result<(), RiptskError> {
     let provider = build_provider_for_backend(backend)?;
     let repo_name = backend.repo.as_deref().unwrap_or_default();
     let pr_number = resolve_pr_number(provider.as_ref(), repo_name, &issue).await?;
-    let current = provider.get_pr(repo_name, pr_number).await?;
+    let current = ui::spin_on_async("Fetching PR details", async {
+        provider.get_pr(repo_name, pr_number).await
+    })
+    .await?;
 
     let record = if args.title.is_some() || args.description.is_some() {
         let title = args.title.as_deref().unwrap_or(&current.title);
         let body = args.description.as_deref().unwrap_or(&current.body);
-        provider
-            .update_pr(repo_name, pr_number, title, body)
-            .await?
+        ui::spin_on_async("Updating pull request", async {
+            provider.update_pr(repo_name, pr_number, title, body).await
+        })
+        .await?
     } else if !config.ai.enabled || args.no_ai {
         let draft = edit_buffer(&current.title, &current.body)?;
-        provider
-            .update_pr(repo_name, pr_number, &draft.0, &draft.1)
-            .await?
+        ui::spin_on_async("Updating pull request", async {
+            provider
+                .update_pr(repo_name, pr_number, &draft.0, &draft.1)
+                .await
+        })
+        .await?
     } else {
         let ai_context = if let Some(branch) = issue.frontmatter.branch.as_deref() {
-            match (provider.default_branch(repo_name).await, current_repo()) {
+            match (
+                ui::spin_on_async("Fetching default branch", async {
+                    provider.default_branch(repo_name).await
+                })
+                .await,
+                current_repo(),
+            ) {
                 (Ok(default_branch), Ok(repo)) => {
                     let git = CliGit::new();
                     build_update_ai_context(&current, &git, repo.as_path(), &default_branch, branch)
@@ -282,8 +315,9 @@ async fn edit(paths: &AppPaths, args: PrEditArgs) -> Result<(), RiptskError> {
         let draft_body = if let Some(context) = ai_context {
             match optional_backend(&config) {
                 Some(ai) => {
-                    ui::info("generating AI PR description update...");
-                    match ai.update_pr_description(&context) {
+                    match ui::spin_on("Generating PR description update", || {
+                        ai.update_pr_description(&context)
+                    }) {
                         Ok(description) => description,
                         Err(error) => {
                             ui::warn(&format!("AI PR update unavailable: {error}"));
@@ -308,13 +342,17 @@ async fn edit(paths: &AppPaths, args: PrEditArgs) -> Result<(), RiptskError> {
         } else {
             edit_buffer(&current.title, draft_body.trim())?
         };
-        provider
-            .update_pr(repo_name, pr_number, &draft.0, &draft.1)
-            .await?
+        ui::spin_on_async("Updating pull request", async {
+            provider
+                .update_pr(repo_name, pr_number, &draft.0, &draft.1)
+                .await
+        })
+        .await?
     };
 
     sync_issue_pr_metadata(&path, &mut issue, &record)?;
     ui::success(&format!("updated PR #{}", record.number));
+    tracing::info!(pr_number = record.number, "updated pull request");
     Ok(())
 }
 
@@ -338,7 +376,10 @@ pub(crate) async fn merge_pr_workflow(
     issue: &IssueDocument,
     opts: &MergeOptions,
 ) -> Result<(), RiptskError> {
-    let initial_pr = provider.get_pr(repo_name, pr_number).await?;
+    let initial_pr = ui::spin_on_async("Fetching PR details", async {
+        provider.get_pr(repo_name, pr_number).await
+    })
+    .await?;
     let mut expected_head_sha: Option<String> = None;
 
     if initial_pr.merged || initial_pr.state == "merged" {
@@ -355,7 +396,10 @@ pub(crate) async fn merge_pr_workflow(
     if backend_kind == Backend::Github
         && let Some(branch) = issue.frontmatter.branch.as_deref()
     {
-        let default_branch = provider.default_branch(repo_name).await?;
+        let default_branch = ui::spin_on_async("Fetching default branch", async {
+            provider.default_branch(repo_name).await
+        })
+        .await?;
         let subject = EMPTY_BRANCH_COMMIT_MESSAGE
             .lines()
             .next()
@@ -377,18 +421,20 @@ pub(crate) async fn merge_pr_workflow(
                 ));
             }
 
-            if opts.force_push {
-                git.force_push(repo_path, branch)?;
-            } else {
-                git.force_push_with_lease(repo_path, branch)?;
-            }
+            ui::spin_on("Force-pushing rebased branch", || {
+                if opts.force_push {
+                    git.force_push(repo_path, branch)
+                } else {
+                    git.force_push_with_lease(repo_path, branch)
+                }
+            })?;
             expected_head_sha = Some(git.head_sha(repo_path)?);
         }
     }
 
     // Push to ensure remote has all local commits before checking CI status
     if issue.frontmatter.branch.is_some() {
-        git.push(repo_path)?;
+        ui::spin_on("Pushing to remote", || git.push(repo_path))?;
     }
 
     if let Some(ref sha) = expected_head_sha {
@@ -415,9 +461,13 @@ pub(crate) async fn merge_pr_workflow(
         )
         .await?;
     }
-    provider
-        .merge_pr(repo_name, pr_number, opts.merge_method, None, None)
-        .await?;
+    ui::spin_on_async("Merging pull request", async {
+        provider
+            .merge_pr(repo_name, pr_number, opts.merge_method, None, None)
+            .await
+    })
+    .await?;
+    tracing::info!(pr_number, "merged pull request");
 
     Ok(())
 }

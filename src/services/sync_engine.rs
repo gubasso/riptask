@@ -1311,6 +1311,7 @@ mod tests {
         let paths = AppPaths {
             riptsk_repo: repo.to_string_lossy().as_ref().into(),
             cache_root: cache_root.to_string_lossy().as_ref().into(),
+            state_root: root.join("state").to_string_lossy().as_ref().into(),
         };
         paths.ensure_repo_dirs().expect("repo dirs");
         let backend = BackendConfig {
