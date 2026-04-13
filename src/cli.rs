@@ -296,9 +296,6 @@ pub struct StartArgs {
     /// Template to use (new issues only)
     #[arg(short = 'T', long)]
     pub template: Option<String>,
-    /// Disable AI-assisted content generation
-    #[arg(long)]
-    pub no_ai: bool,
     /// Open in $EDITOR after creation (new issues only)
     #[arg(short = 'e', long)]
     pub edit: bool,
@@ -379,12 +376,12 @@ pub struct PrMergeArgs {
 
 #[derive(Debug, Clone, Args, Default)]
 pub struct NewArgs {
-    /// Issue title (positional)
-    #[arg(conflicts_with = "title")]
-    pub title_pos: Option<String>,
-    /// Issue title (or enter interactively)
+    /// Issue title (skip AI title generation)
     #[arg(short = 't', long)]
     pub title: Option<String>,
+    /// Issue description (skip AI body generation)
+    #[arg(short = 'd', long)]
+    pub description: Option<String>,
     /// Target project
     #[arg(short = 'p', long)]
     pub project: Option<String>,
@@ -400,9 +397,6 @@ pub struct NewArgs {
     /// Template to use
     #[arg(short = 'T', long)]
     pub template: Option<String>,
-    /// Enable AI-assisted content generation (off by default; not driven by config.ai.enabled)
-    #[arg(long)]
-    pub ai: bool,
     /// Open in $EDITOR after creation
     #[arg(short = 'e', long)]
     pub edit: bool,
@@ -964,35 +958,40 @@ mod tests {
             panic!("expected new command");
         };
         assert_eq!(args.title.as_deref(), Some("hello"));
-        assert!(args.title_pos.is_none());
     }
 
     #[test]
-    fn new_ai_parses() {
-        let cli = Cli::try_parse_from(["tsk", "new", "--ai", "my title"]).expect("parse");
+    fn new_description_parses() {
+        let cli = Cli::try_parse_from(["tsk", "new", "-t", "hello", "-d", "desc"]).expect("parse");
         let Commands::New(args) = cli.command.expect("command") else {
             panic!("expected new command");
         };
-        assert_eq!(args.title_pos.as_deref(), Some("my title"));
-        assert!(args.ai);
+        assert_eq!(args.title.as_deref(), Some("hello"));
+        assert_eq!(args.description.as_deref(), Some("desc"));
     }
 
     #[test]
-    fn new_positional_title_parses() {
-        let cli = Cli::try_parse_from(["tsk", "new", "hello"]).expect("parse");
+    fn new_short_description_parses() {
+        let cli = Cli::try_parse_from(["tsk", "new", "-d", "desc"]).expect("parse");
         let Commands::New(args) = cli.command.expect("command") else {
             panic!("expected new command");
         };
-        assert_eq!(args.title_pos.as_deref(), Some("hello"));
+        assert_eq!(args.description.as_deref(), Some("desc"));
         assert!(args.title.is_none());
     }
 
     #[test]
-    fn new_positional_and_flag_title_conflict() {
-        let err = Cli::try_parse_from(["tsk", "new", "pos", "-t", "flag"]).expect_err("conflict");
+    fn new_ai_flag_rejected() {
+        let err = Cli::try_parse_from(["tsk", "new", "--ai"]).expect_err("reject --ai");
         let rendered = err.to_string();
-        assert!(rendered.contains("--title"));
-        assert!(rendered.contains("cannot be used"));
+        assert!(rendered.contains("--ai"));
+    }
+
+    #[test]
+    fn new_positional_rejected() {
+        let err = Cli::try_parse_from(["tsk", "new", "hello"]).expect_err("reject positional");
+        let rendered = err.to_string();
+        assert!(rendered.contains("hello"));
     }
 
     #[test]
@@ -1021,16 +1020,6 @@ mod tests {
         };
         assert_eq!(args.title_pos.as_deref(), Some("my title"));
         assert!(args.title.is_none());
-    }
-
-    #[test]
-    fn start_no_ai_parses() {
-        let cli = Cli::try_parse_from(["tsk", "start", "--no-ai", "my title"]).expect("parse");
-        let Commands::Start(args) = cli.command.expect("command") else {
-            panic!("expected start command");
-        };
-        assert_eq!(args.title_pos.as_deref(), Some("my title"));
-        assert!(args.no_ai);
     }
 
     #[test]

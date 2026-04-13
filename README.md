@@ -32,6 +32,7 @@ make install
 
 tsk init
 tsk new --title "My first issue"
+tsk new --title "My first issue" --description "manual body"
 tsk ls
 tsk board
 ```
@@ -88,7 +89,7 @@ AI command pipeline:
 
 ```mermaid
 flowchart LR
-    Cmd[tsk new --ai, pr, pr edit, summarize, ask, commit] --> Gate{command opt-in or ai enabled, plus feature flag}
+    Cmd[tsk new, pr, pr edit, summarize, ask, commit] --> Gate{command default or ai enabled, plus feature flag}
     Gate -->|yes| Tmpl[ai.command template]
     Tmpl --> Subst[substitute system, input or input_file]
     Subst --> Shell[sh -c]
@@ -159,9 +160,10 @@ Create, inspect, and manage issues:
 ```bash
 tsk new
 tsk new --title "Fix login bug"
+tsk new --title "Fix login bug" --description "manual body"
 tsk new --template bug --priority high
 tsk new --title "Write spec" --edit
-tsk new --title "Refactor auth" --ai
+tsk new --title "Refactor auth"
 
 tsk ls
 tsk ls --status backlog
@@ -229,6 +231,7 @@ The main remote workflow is issue first, then branch, then PR:
 
 ```bash
 tsk new --title "Fix login bug"
+tsk new --title "Fix login bug" --description "manual body"
 tsk branch <ID>
 # work in the project repo
 tsk pr
@@ -597,16 +600,17 @@ ai:
 
 Current AI-gated commands:
 
-- `tsk new --ai`
+- `tsk new`
 - `tsk pr`
 - `tsk pr edit`
 - `tsk summarize`
 - `tsk ask`
 - `tsk commit`
 
-`tsk new` is explicit opt-in. It only runs AI when you pass `--ai`; `config.ai.enabled`
-does not turn AI on by default for `tsk new`. Other AI-enabled commands still follow
-their normal config-driven defaults.
+`tsk new` is AI-by-default. If you omit `--title`, it generates title and body. If you
+pass `--title`, it keeps that title and still tries to generate the body unless you also
+pass `--description`. Other AI-enabled commands still follow their normal config-driven
+defaults.
 
 ### Example configurations
 
@@ -641,7 +645,8 @@ ai:
 ### Usage
 
 ```bash
-tsk new --title "Refactor auth" --ai
+tsk new --title "Refactor auth"
+tsk new --title "Refactor auth" --description "manual body"
 tsk pr
 tsk pr edit <ID>
 tsk pr edit <ID> --no-ai
