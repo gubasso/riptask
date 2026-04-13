@@ -84,21 +84,31 @@ pub(crate) async fn create_branch_for_issue(
     let auth = resolve_git_auth(&vc_backend);
     let git = CliGit::with_auth(auth);
     let repo_name = vc_backend.repo.as_deref().unwrap_or_default();
-    let base = vc_provider.default_branch(repo_name).await?;
+    let base = crate::ui::spin_on_async("Fetching default branch", async {
+        vc_provider.default_branch(repo_name).await
+    })
+    .await?;
 
-    match vc_provider
+    let branch_spinner = crate::ui::spinner("Creating remote branch".to_owned());
+    let create_branch_result = vc_provider
         .create_branch(repo_name, &slug, &base, vc_issue_id)
-        .await
-    {
+        .await;
+    if let Some(ref pb) = branch_spinner {
+        pb.finish_and_clear();
+    }
+    match create_branch_result {
         Ok(()) => {}
         Err(ref e) if e.to_string().to_lowercase().contains("already exists") => {
             crate::ui::info("remote branch already exists, continuing with local checkout");
         }
         Err(e) => return Err(e),
     }
+    tracing::info!(branch = %slug, backend = %vc_backend.name, "ensured remote branch exists");
 
     if !git.branch_exists(repo.as_path(), &slug)? {
-        git.fetch_and_checkout_tracking(repo.as_path(), &slug)?;
+        crate::ui::spin_on("Checking out branch", || {
+            git.fetch_and_checkout_tracking(repo.as_path(), &slug)
+        })?;
     } else {
         git.checkout(repo.as_path(), &slug)?;
     }
@@ -157,7 +167,12 @@ async fn delete_branch(paths: &AppPaths, args: BranchArgs) -> Result<(), RiptskE
     let provider = build_version_control(&vc_backend)?;
     let repo_name = vc_backend.repo.as_deref().unwrap_or_default();
 
-    let _ = git.fetch(repo.as_path());
+    let fetch_spinner = crate::ui::spinner("Fetching remote branches".to_owned());
+    let fetch_result = git.fetch(repo.as_path());
+    if let Some(ref pb) = fetch_spinner {
+        pb.finish_and_clear();
+    }
+    let _ = fetch_result;
 
     if !force {
         let local_exists = git.branch_exists(repo.as_path(), &target_branch)?;
@@ -185,7 +200,12 @@ async fn delete_branch(paths: &AppPaths, args: BranchArgs) -> Result<(), RiptskE
         }
     }
 
-    match provider.delete_branch(repo_name, &target_branch).await {
+    let delete_spinner = crate::ui::spinner("Deleting remote branch".to_owned());
+    let delete_result = provider.delete_branch(repo_name, &target_branch).await;
+    if let Some(ref pb) = delete_spinner {
+        pb.finish_and_clear();
+    }
+    match delete_result {
         Ok(()) => crate::ui::success(&format!("deleted remote branch: {target_branch}")),
         Err(ref e)
             if e.to_string().contains("404")
@@ -195,6 +215,7 @@ async fn delete_branch(paths: &AppPaths, args: BranchArgs) -> Result<(), RiptskE
         }
         Err(e) => return Err(e),
     }
+    tracing::info!(branch = %target_branch, backend = %vc_backend.name, "remote branch deletion finished");
 
     if deleting_current && let Err(e) = git.checkout(repo.as_path(), &default_branch) {
         return Err(RiptskError::General(format!(

@@ -602,6 +602,7 @@ mod tests {
         let paths = AppPaths {
             riptsk_repo: repo.to_string_lossy().as_ref().into(),
             cache_root: cache.to_string_lossy().as_ref().into(),
+            state_root: temp.path().join("state").to_string_lossy().as_ref().into(),
         };
         let config = load_config(paths.config_path().as_std_path()).expect("config");
         let service = IssueService::new(&paths, &config);
