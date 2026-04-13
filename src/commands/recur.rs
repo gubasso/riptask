@@ -101,8 +101,8 @@ fn run_due(paths: &AppPaths, date: Option<String>) -> Result<(), RiptskError> {
         // Create the recurring issue
         let service = IssueService::new(paths, &config);
         let new_args = NewArgs {
-            title_pos: None,
             title: Some(expanded_title.clone()),
+            description: None,
             project: definition.project.clone(),
             board: definition.board.clone(),
             status: definition.status.as_ref().map(|s| s.as_str().to_owned()),
@@ -116,7 +116,6 @@ fn run_due(paths: &AppPaths, date: Option<String>) -> Result<(), RiptskError> {
                     .unwrap_or(&definition.template)
                     .to_owned(),
             ),
-            ai: false,
             edit: false,
         };
         let draft = service.prepare_issue_draft(new_args)?;

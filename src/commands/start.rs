@@ -45,14 +45,13 @@ pub async fn run(paths: &AppPaths, args: StartArgs) -> Result<(), RiptskError> {
             // New issue mode: create from title
             let project = args.scope.projects.first().cloned();
             let new_args = NewArgs {
-                title_pos: args.title_pos,
-                title: args.title,
+                title: args.title_pos.or(args.title),
+                description: None,
                 project,
                 board: args.board,
                 status: args.status,
                 priority: args.priority,
                 template: args.template,
-                ai: config.ai.enabled && !args.no_ai,
                 edit: args.edit,
             };
             let (issue, path) = issues::create_issue_from_args(paths, new_args).await?;
@@ -103,7 +102,7 @@ pub async fn run(paths: &AppPaths, args: StartArgs) -> Result<(), RiptskError> {
         PrCreateArgs {
             scope: ScopeArgs::default(),
             id: Some(id),
-            no_ai: args.no_ai,
+            no_ai: false,
         },
     )
     .await?;
