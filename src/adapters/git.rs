@@ -171,7 +171,7 @@ impl GitBackend for CliGit {
         for file in files {
             command.arg(file);
         }
-        status_to_result(command.status()?)
+        status_to_result(command.output()?.status)
     }
 
     fn commit(&self, repo: &Path, message: &str) -> Result<(), RiptskError> {
@@ -636,7 +636,8 @@ fn has_head_commit(repo: &Path) -> Result<bool, RiptskError> {
         .arg("-C")
         .arg(repo)
         .args(["rev-parse", "--verify", "HEAD"])
-        .status()?;
+        .output()?
+        .status;
     Ok(status.success())
 }
 
