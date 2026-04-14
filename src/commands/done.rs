@@ -197,7 +197,7 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
             timeout: args.timeout,
             force_push: args.force_push,
         };
-        pr::merge_pr_workflow(
+        let outcome = pr::merge_pr_workflow(
             provider.as_ref(),
             &DialoguerPrompts,
             &git,
@@ -209,6 +209,11 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
             &merge_opts,
         )
         .await?;
+        if matches!(outcome, pr::MergeOutcome::Aborted) {
+            // User declined the merge confirmation; skip all post-merge cleanup
+            // (branch deletion, issue close, sync, view regen).
+            return Ok(());
+        }
 
         let closed_record = match backend_issue_number(backend, &issue)
             .ok()
