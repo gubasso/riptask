@@ -47,6 +47,7 @@ pub async fn run(paths: &AppPaths, args: StartArgs) -> Result<(), RiptskError> {
             let new_args = NewArgs {
                 title: args.title_pos.or(args.title),
                 description: None,
+                ai: false,
                 project,
                 board: args.board,
                 status: args.status,

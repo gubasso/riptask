@@ -103,6 +103,7 @@ fn run_due(paths: &AppPaths, date: Option<String>) -> Result<(), RiptskError> {
         let new_args = NewArgs {
             title: Some(expanded_title.clone()),
             description: None,
+            ai: false,
             project: definition.project.clone(),
             board: definition.board.clone(),
             status: definition.status.as_ref().map(|s| s.as_str().to_owned()),

@@ -382,6 +382,9 @@ pub struct NewArgs {
     /// Issue description (skip AI body generation)
     #[arg(short = 'd', long)]
     pub description: Option<String>,
+    /// Force AI helper to fill missing fields (e.g. description) when --title is set
+    #[arg(long)]
+    pub ai: bool,
     /// Target project
     #[arg(short = 'p', long)]
     pub project: Option<String>,
@@ -987,10 +990,23 @@ mod tests {
     }
 
     #[test]
-    fn new_ai_flag_rejected() {
-        let err = Cli::try_parse_from(["tsk", "new", "--ai"]).expect_err("reject --ai");
-        let rendered = err.to_string();
-        assert!(rendered.contains("--ai"));
+    fn new_ai_flag_parses() {
+        let cli = Cli::try_parse_from(["tsk", "new", "--ai"]).expect("parse");
+        let Commands::New(args) = cli.command.expect("command") else {
+            panic!("expected new command");
+        };
+        assert!(args.ai);
+        assert!(args.title.is_none());
+    }
+
+    #[test]
+    fn new_title_with_ai_flag_parses() {
+        let cli = Cli::try_parse_from(["tsk", "new", "-t", "hello", "--ai"]).expect("parse");
+        let Commands::New(args) = cli.command.expect("command") else {
+            panic!("expected new command");
+        };
+        assert_eq!(args.title.as_deref(), Some("hello"));
+        assert!(args.ai);
     }
 
     #[test]
