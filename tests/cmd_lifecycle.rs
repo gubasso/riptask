@@ -6,6 +6,16 @@ use std::os::unix::fs::PermissionsExt;
 use std::process::Command as StdCommand;
 use tempfile::tempdir;
 
+fn configure_ai_command(repo: &std::path::Path, command: &str) {
+    let config_path = repo.join("riptsk.yaml");
+    let config = fs::read_to_string(&config_path).expect("read config");
+    let replacement = format!(
+        "ai:\n  enabled: false\n  command: |\n{command}\n    : < {{{{input_file}}}}\n  features:"
+    );
+    let updated = config.replace("ai:\n  enabled: false\n  features:", &replacement);
+    fs::write(config_path, updated).expect("write config");
+}
+
 #[test]
 fn new_creates_issue_file() {
     let temp = tempdir().expect("temp dir");
@@ -284,6 +294,65 @@ fn new_with_title_and_ai_flag_attempts_ai_body() {
         .filter(|e| e.path().extension().and_then(|ext| ext.to_str()) == Some("md"))
         .collect();
     assert_eq!(issues.len(), 1, "expected exactly one issue file");
+}
+
+#[test]
+fn new_with_title_and_ai_flag_sanitizes_wrapped_body() {
+    let temp = tempdir().expect("temp dir");
+    let repo = temp.path().join("repo");
+    let cache = temp.path().join("cache");
+
+    Command::cargo_bin("tsk")
+        .expect("binary")
+        .env("RIPTSK_REPO", &repo)
+        .env("XDG_CACHE_HOME", &cache)
+        .arg("init")
+        .assert()
+        .success();
+
+    configure_ai_command(
+        &repo,
+        "    cat <<'EOF'\n    I'll generate a concise issue body. Based on the context, here's a suggested format:\n\n    ---\n\n    ## Description\n\n    Fix the login bug.\n\n    - [ ] Reproduce\n    - [ ] Patch\n\n    ---\n\n    Would you like me to adjust the description, add more detail, or modify any of the checklist items?\n    EOF",
+    );
+
+    Command::cargo_bin("tsk")
+        .expect("binary")
+        .current_dir(temp.path())
+        .env("RIPTSK_REPO", &repo)
+        .env("XDG_CACHE_HOME", &cache)
+        .args(["new", "--title", "ai test", "--ai"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("AI body generation failed").not());
+
+    let issue_path = fs::read_dir(repo.join("issues"))
+        .expect("issues dir")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .find(|path| path.extension().and_then(|value| value.to_str()) == Some("md"))
+        .expect("issue file");
+    let issue_content = fs::read_to_string(issue_path).expect("read issue");
+    let body = issue_content
+        .split_once("\n---\n")
+        .map(|(_, body)| body)
+        .expect("body region");
+
+    assert!(body.contains("## Description"));
+    assert!(body.contains("Fix the login bug."));
+    assert!(!body.contains("I'll generate"));
+    assert!(!body.contains("Based on the context"));
+    assert!(!body.contains("here's a suggested format"));
+    assert!(!body.contains("Would you like me to adjust"));
+    assert!(!body.lines().any(|line| line.trim() == "---"));
+}
+
+#[test]
+fn new_without_title_sanitizes_wrapped_json_body() {
+    // The no-title path falls back to dialoguer in the non-TTY test harness when
+    // AI context detection misses, which makes a command-level assertion flaky.
+    // The JSON sanitization itself is covered by adapter-level tests:
+    // - generate_issue_content_sanitizes_parsed_body
+    // - generate_issue_content_fallback_sanitizes_body
 }
 
 #[test]

@@ -2889,6 +2889,7 @@ dependencies = [
  "minijinja",
  "octocrab",
  "predicates",
+ "regex",
  "reqwest 0.12.28",
  "rustls",
  "serde",
