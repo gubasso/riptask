@@ -10,12 +10,12 @@ This project is pre-1.0.0. There is NO backward compatibility requirement. Break
 
 ## Linting & Testing
 
-The Makefile wraps the primary local checks directly:
+The justfile wraps the primary local checks directly:
 
 ```bash
-make lint   # cargo fmt --check + cargo clippy --all-targets --all-features -- -D warnings
-make test   # cargo nextest run
-make check  # runs both lint and test
+just lint   # cargo fmt --check + cargo clippy --all-targets --all-features -- -D warnings
+just test   # cargo nextest run
+just check  # runs both lint and test
 ```
 
 - `.pre-commit-config.yaml` still defines commit-time and pre-push hooks for formatting, linting, and security checks.

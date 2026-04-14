@@ -99,7 +99,7 @@ First publish **cannot** be automated.
 
 After merge, the `Publish & Sync` workflow triggers automatically. Check:
 
-- [ ] `make check` passes in the workflow
+- [ ] `just check` passes in the workflow
 - [ ] Crate published to crates.io (check crates.io/crates/riptsk)
 - [ ] Git tag `v0.1.1` created on the repo
 - [ ] GitHub Release `v0.1.1` created with auto-generated notes

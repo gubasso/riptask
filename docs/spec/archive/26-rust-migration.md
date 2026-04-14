@@ -95,20 +95,20 @@ The migration introduces four key traits to isolate volatile boundaries:
 See [[22-testing]] for the full testing strategy. In summary:
 
 - Pre-commit handles linting (cargo fmt, clippy, taplo, typos) and security checks (cargo audit, cargo deny).
-- `make test` runs `cargo nextest run` directly — not through pre-commit.
-- `make lint` runs `cargo fmt --check` and `cargo clippy` directly.
+- `just test` runs `cargo nextest run` directly — not through pre-commit.
+- `just lint` runs `cargo fmt --check` and `cargo clippy` directly.
 - The legacy BATS suite and Bash pre-commit config have been removed.
 
 ### Build and distribution changes
 
-See [[23-makefile]] for the full target list. Key targets:
+See [[23-justfile]] for the full target list. Key targets:
 
-- `make build` — `cargo build --release`
-- `make install` — `cargo install --path .` (installs to `~/.cargo/bin/`)
-- `make uninstall` — `cargo uninstall riptsk`
-- `make test` — `cargo nextest run`
-- `make lint` — `cargo fmt --check` + `cargo clippy`
-- `make check` — lint + test
+- `just build` — `cargo build --release`
+- `just install` — `cargo install --path .` (installs to `~/.cargo/bin/`)
+- `just uninstall` — `cargo uninstall riptsk`
+- `just test` — `cargo nextest run`
+- `just lint` — `cargo fmt --check` + `cargo clippy`
+- `just check` — lint + test
 
 **Dev workflow** (idiomatic Rust):
 
