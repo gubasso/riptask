@@ -262,7 +262,7 @@ async fn merge(paths: &AppPaths, args: PrMergeArgs) -> Result<(), RiptskError> {
     if stashed {
         crate::adapters::git::try_stash_pop(&git, repo_path.as_path());
     }
-    result
+    result.map(|_| ())
 }
 
 async fn edit(paths: &AppPaths, args: PrEditArgs) -> Result<(), RiptskError> {
@@ -364,6 +364,15 @@ pub(crate) struct MergeOptions {
     pub force_push: bool,
 }
 
+/// Outcome of `merge_pr_workflow`, signaling whether callers should proceed
+/// with post-merge cleanup (branch deletion, issue close, etc.) or stop.
+pub(crate) enum MergeOutcome {
+    /// PR was merged in this call or was already merged — cleanup should proceed.
+    Completed,
+    /// User declined the confirmation prompt — caller must abort all further work.
+    Aborted,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn merge_pr_workflow(
     provider: &dyn VersionControl,
@@ -375,7 +384,7 @@ pub(crate) async fn merge_pr_workflow(
     pr_number: u64,
     issue: &IssueDocument,
     opts: &MergeOptions,
-) -> Result<(), RiptskError> {
+) -> Result<MergeOutcome, RiptskError> {
     let initial_pr = ui::spin_on_async("Fetching PR details", async {
         provider.get_pr(repo_name, pr_number).await
     })
@@ -384,12 +393,12 @@ pub(crate) async fn merge_pr_workflow(
 
     if initial_pr.merged || initial_pr.state == "merged" {
         ui::info("PR already merged, continuing with cleanup");
-        return Ok(());
+        return Ok(MergeOutcome::Completed);
     }
 
     if !opts.yes && !confirm_merge(prompts, issue, &initial_pr, opts.merge_method)? {
         ui::warn("aborted");
-        return Ok(());
+        return Ok(MergeOutcome::Aborted);
     }
 
     // Cleanup empty bootstrap commit for GitHub before merge
@@ -469,7 +478,7 @@ pub(crate) async fn merge_pr_workflow(
     .await?;
     tracing::info!(pr_number, "merged pull request");
 
-    Ok(())
+    Ok(MergeOutcome::Completed)
 }
 
 fn resolve_issue(
