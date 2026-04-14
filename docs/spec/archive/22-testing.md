@@ -58,7 +58,7 @@ Pre-commit is therefore a lint/security gate, not the complete test runner.
 
 ### Execution targets
 
-- `make test` runs the Rust suite with `cargo nextest run`
+- `just test` runs the Rust suite with `cargo nextest run`
 - `cargo test` remains useful for local iteration and contract checks
 
 ### Migration policy

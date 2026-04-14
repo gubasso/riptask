@@ -1,28 +1,29 @@
-# Makefile
+# Justfile
 
 Status: archived
 
 > Source of truth has moved to code and tests. This document is retained as historical record.
 
-The Makefile is a thin wrapper around Cargo commands for building, testing, linting, and installing the Rust implementation of `riptsk`.
+The `justfile` is a thin wrapper around Cargo commands for building, testing, linting, and installing the Rust implementation of `riptsk`.
 
 ---
 
-### Targets
+### Recipes
 
-| Target | Description |
+| Recipe | Description |
 |---|---|
+| `default` | Print available recipes via `just --list` |
 | `build` | Build the release binary |
 | `test` | Run the Rust test suite with `cargo nextest` |
 | `lint` | Run `cargo fmt --check` and `cargo clippy --all-targets --all-features -- -D warnings` |
 | `install` | Install `riptsk` from the current source tree |
 | `uninstall` | Remove the installed `riptsk` cargo package |
+| `clean` | Remove the local riptsk data directory |
 | `check` | Run lint and test |
-| `help` | Print available targets |
 
 ---
 
-### `build` target
+### `build` recipe
 
 Builds the release binary:
 
@@ -32,7 +33,7 @@ cargo build --release
 
 ---
 
-### `test` target
+### `test` recipe
 
 Runs the Rust test suite using `cargo nextest`:
 
@@ -42,7 +43,7 @@ cargo nextest run
 
 ---
 
-### `lint` target
+### `lint` recipe
 
 Runs Rust formatting and lint checks:
 
@@ -53,70 +54,62 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 ---
 
-### `install` target
+### `install` recipe
 
 Installs `riptsk` from the current path:
 
 ```bash
-cargo install --path .
+cargo install --path . --force
 ```
 
 ---
 
-### `check` target
+### `check` recipe
 
-Runs lint and test in sequence:
+Runs lint and test in sequence via recipe dependencies:
 
 ```bash
-make lint
-make test
+just lint
+just test
 ```
 
 ---
 
-### Full Makefile
+### Full justfile
 
-```makefile
-.POSIX:
-
-.PHONY: help build test lint install uninstall check
-
-help:
-	@echo "targets:"
-	@echo "  build       Build the release binary"
-	@echo "  test        Run cargo nextest"
-	@echo "  lint        Run cargo fmt and cargo clippy"
-	@echo "  install     Install riptsk from the current path"
-	@echo "  uninstall   Uninstall riptsk"
-	@echo "  check       Run lint and test"
+```just
+default:
+  @just --list
 
 build:
-	cargo build --release
+  cargo build --release
 
 test:
-	cargo nextest run
+  cargo nextest run
 
 lint:
-	cargo fmt --check
-	cargo clippy --all-targets --all-features -- -D warnings
+  cargo fmt --check
+  cargo clippy --all-targets --all-features -- -D warnings
 
 install:
-	cargo install --path .
+  cargo install --path . --force
 
 uninstall:
-	cargo uninstall riptsk
+  cargo uninstall riptsk
 
-check:
-	$(MAKE) lint
-	$(MAKE) test
+clean:
+  rm -rf "${HOME}/.local/share/riptsk"
+
+check: lint test
 ```
 
 ---
 
 ### Notes
 
-- All targets are declared `.PHONY`.
-- The Makefile is intentionally a thin wrapper; Cargo remains the source of truth for build behavior.
+- The `justfile` is intentionally a thin wrapper; Cargo remains the source of truth for build behavior.
+- `default` delegates to `just --list` instead of maintaining a manual help block.
+- `check` uses native just dependencies instead of recursive self-invocation.
 - `cargo nextest` is the default test runner for faster and more reliable Rust test execution.
 - Linting is Rust-native: formatting is enforced with `cargo fmt`, and warnings are treated as errors via `cargo clippy --all-targets --all-features -- -D warnings`.
 - Installation produces a single binary rather than copying a Bash runtime tree.

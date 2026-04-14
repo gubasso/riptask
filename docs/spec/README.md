@@ -32,7 +32,7 @@ Implemented behavioral specs are archived per the [Spec Lifecycle Policy](00-spe
 15. [18. Implementation Roadmap](archive/18-implementation-roadmap.md)
 16. [21. fzf Interactive Selection](archive/21-fzf-interactive-selection.md)
 17. [22. Testing](archive/22-testing.md)
-18. [23. Makefile](archive/23-makefile.md)
+18. [23. Justfile](archive/23-justfile.md)
 19. [24. Templates](archive/24-templates.md)
 20. [25. RIPTSK_REPO Data Repository Hooks](archive/25-tsk-repo-hooks.md)
 21. [26. Rust Migration](archive/26-rust-migration.md)

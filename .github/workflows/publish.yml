@@ -17,11 +17,13 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Install cargo-nextest
-        run: cargo install cargo-nextest --locked
+      - name: Install cargo-nextest and just
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest,just
 
       - name: Run checks
-        run: make check
+        run: just check
 
       - name: Extract version
         id: version
