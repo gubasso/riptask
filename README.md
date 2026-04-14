@@ -28,7 +28,7 @@ A plaintext issue tracker for the terminal.
 ## Quick start
 
 ```bash
-make install
+just install
 
 tsk init
 tsk new --title "My first issue"
@@ -116,8 +116,10 @@ flowchart TD
 
 ## Installation
 
+This repository uses [just](https://just.systems) as its task runner. Install it with `cargo install just --locked` or via your OS package manager before running the commands below.
+
 ```bash
-make install
+just install
 
 # equivalent
 cargo install --path .
@@ -815,7 +817,7 @@ tsk store hooks uninstall
 ## Development
 
 ```bash
-make lint
-make test
-make check
+just lint
+just test
+just check
 ```

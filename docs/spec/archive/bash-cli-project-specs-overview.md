@@ -22,7 +22,7 @@ my-cli/
 │   └── test_core.bats      # using bats-core
 ├── install.sh
 ├── uninstall.sh
-├── Makefile
+├── justfile
 └── README.md
 ```
 
@@ -77,7 +77,7 @@ IFS=$'\n\t'
 
 `uninstall.sh` is the exact inverse — track installed paths explicitly (a manifest file or hardcoded list).
 
-`Makefile` wraps `install`/`uninstall`/`test`/`lint` targets.
+`justfile` wraps `install`/`uninstall`/`test`/`lint` targets.
 
 ---
 

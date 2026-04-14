@@ -63,7 +63,7 @@ Use `--merge` (merge commit), not `--squash` or `--rebase`.
 
 The Publish & Sync workflow triggers automatically on push to `master`:
 
-1. Runs `make check` (lint + tests)
+1. Runs `just check` (lint + tests)
 2. Publishes the crate to crates.io
 3. Creates a git tag `v<version>`
 4. Creates a GitHub Release with auto-generated notes

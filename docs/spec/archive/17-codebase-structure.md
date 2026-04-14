@@ -75,7 +75,7 @@ riptsk/
 │   └── ...                         # Additional Rust integration tests
 ├── templates/                      # Source templates copied/embedded by Rust
 ├── docs/spec/                      # Active + archived specifications
-├── Makefile                        # Thin wrapper around cargo commands
+├── justfile                        # Thin wrapper around cargo commands
 └── .pre-commit-config.yaml         # Rust-focused pre-commit configuration
 ```
 
