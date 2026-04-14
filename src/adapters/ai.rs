@@ -1,8 +1,10 @@
 use crate::error::RiptskError;
+use regex::Regex;
 use shell_escape::escape;
 use std::borrow::Cow;
 use std::io::Write;
 use std::process::Command;
+use std::sync::OnceLock;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TriageSuggestion {
@@ -51,18 +53,34 @@ impl AiBackend for TemplateAiBackend {
     fn generate_issue_content(&self, context: &str) -> Result<GeneratedIssueContent, RiptskError> {
         let output = run_ai(
             &self.command_template,
-            "Generate a concise issue title and body. Return strict JSON with keys \"title\" and \"body\" only.",
+            "Generate a concise issue title and body. Return strict JSON with exactly two keys: \"title\" (string) and \"body\" (string). The \"body\" value must contain ONLY the issue description body itself (no preamble like \"I'll generate...\" or \"Based on the context...\", no framing horizontal rules, no trailing questions or offers to revise, no meta commentary). Do not include any text outside the JSON object.",
             context,
         )?;
         parse_issue_content_output(&output)
     }
 
     fn generate_body(&self, context: &str) -> Result<String, RiptskError> {
-        run_ai(
+        let raw = run_ai(
             &self.command_template,
-            "Generate a concise issue body with a description and checklist.",
+            concat!(
+                "Generate an issue description body.\n",
+                "\n",
+                "OUTPUT RULES (output ONLY the raw body — no commentary, no wrapping):\n",
+                "- Output only the issue description body itself, as if written by a human author.\n",
+                "- Do NOT include any preamble such as \"I'll generate...\", \"Based on the context...\", or \"Here's a suggested format:\".\n",
+                "- Do NOT wrap the body in horizontal-rule separators (---) used as framing.\n",
+                "- Do NOT include trailing questions or offers to revise (e.g. \"Would you like me to adjust...\", \"Let me know if...\").\n",
+                "- Do NOT wrap output in markdown code fences.\n",
+                "- Do NOT add meta commentary about what you are about to do, are doing, or just did.\n",
+                "\n",
+                "CONTENT SHAPE:\n",
+                "- A short description paragraph followed by a checklist of concrete acceptance criteria.\n",
+                "- Use markdown headings and `- [ ]` checklist items as needed.\n",
+                "- Internal `---` thematic breaks inside the description are allowed only if genuinely needed; do not use them as wrappers.\n",
+            ),
             context,
-        )
+        )?;
+        sanitize_issue_body(&raw)
     }
 
     fn suggest_project_key(
@@ -191,7 +209,7 @@ fn parse_issue_content_output(output: &str) -> Result<GeneratedIssueContent, Rip
     match serde_json::from_str::<GeneratedIssueContentResponse>(trimmed) {
         Ok(parsed) => {
             let title = parsed.title.trim().to_owned();
-            let body = parsed.body.trim().to_owned();
+            let body = sanitize_issue_body(&parsed.body).unwrap_or_default();
             if title.is_empty() {
                 return Err(RiptskError::General(
                     "AI issue generation returned an empty title".into(),
@@ -208,7 +226,7 @@ fn parse_issue_content_output(output: &str) -> Result<GeneratedIssueContent, Rip
             let stripped = strip_markdown_fences(trimmed);
             if let Ok(retry) = serde_json::from_str::<GeneratedIssueContentResponse>(&stripped) {
                 let title = retry.title.trim().to_owned();
-                let body = retry.body.trim().to_owned();
+                let body = sanitize_issue_body(&retry.body).unwrap_or_default();
                 if title.is_empty() || body.is_empty() {
                     return Err(RiptskError::General(
                         "AI issue generation returned empty title or body".into(),
@@ -239,8 +257,106 @@ fn strip_markdown_fences(text: &str) -> String {
     trimmed.to_owned()
 }
 
+fn sanitize_issue_body(raw: &str) -> Result<String, RiptskError> {
+    let trimmed = raw.trim();
+    let lines: Vec<&str> = trimmed.lines().collect();
+
+    let mut start = 0usize;
+    while start < lines.len() && is_preface_line(lines[start]) {
+        start += 1;
+    }
+    if start > 0 {
+        while start < lines.len() && lines[start].trim().is_empty() {
+            start += 1;
+        }
+        if start < lines.len() && is_horizontal_rule(lines[start]) {
+            start += 1;
+            while start < lines.len() && lines[start].trim().is_empty() {
+                start += 1;
+            }
+        }
+    }
+
+    let mut end = lines.len();
+    while end > start && lines[end - 1].trim().is_empty() {
+        end -= 1;
+    }
+    if let Some((paragraph_start, paragraph)) = trailing_paragraph(&lines[start..end])
+        && is_followup_paragraph(&paragraph)
+    {
+        end = start + paragraph_start;
+        while end > start && lines[end - 1].trim().is_empty() {
+            end -= 1;
+        }
+        if end > start && is_horizontal_rule(lines[end - 1]) {
+            end -= 1;
+            while end > start && lines[end - 1].trim().is_empty() {
+                end -= 1;
+            }
+        }
+    }
+
+    let sanitized = lines[start..end].join("\n").trim().to_owned();
+    if sanitized.is_empty() {
+        return Err(RiptskError::General(
+            "AI body sanitization removed all content".into(),
+        ));
+    }
+    Ok(sanitized)
+}
+
+fn is_preface_line(line: &str) -> bool {
+    static PREFACE_RE: OnceLock<Regex> = OnceLock::new();
+    PREFACE_RE
+        .get_or_init(|| {
+            Regex::new(
+                r"(?i)^(I'?ll|I will|I'?m going to|Let me|Here'?s|Here is|Based on (the )?(context|the above|your)|Sure[,!]?|Certainly[,!]?|Of course[,!]?)\b.*",
+            )
+            .expect("valid preface regex")
+        })
+        .is_match(line.trim())
+}
+
+fn is_followup_paragraph(paragraph: &str) -> bool {
+    static FOLLOWUP_PATTERNS: OnceLock<Vec<Regex>> = OnceLock::new();
+    FOLLOWUP_PATTERNS
+        .get_or_init(|| {
+            vec![
+                Regex::new(r"(?is)^Would you like (me )?to .*\?\s*$")
+                    .expect("valid followup regex"),
+                Regex::new(r"(?is)^Let me know (if|whether) .*\.?\s*$")
+                    .expect("valid followup regex"),
+                Regex::new(r"(?is)^Want me to .*\?\s*$").expect("valid followup regex"),
+                Regex::new(r"(?is)^Should I .*\?\s*$").expect("valid followup regex"),
+                Regex::new(r"(?is)^Do you want .*\?\s*$").expect("valid followup regex"),
+            ]
+        })
+        .iter()
+        .any(|pattern| pattern.is_match(paragraph.trim()))
+}
+
+fn trailing_paragraph(lines: &[&str]) -> Option<(usize, String)> {
+    let mut end = lines.len();
+    while end > 0 && lines[end - 1].trim().is_empty() {
+        end -= 1;
+    }
+    if end == 0 {
+        return None;
+    }
+
+    let mut start = end - 1;
+    while start > 0 && !lines[start - 1].trim().is_empty() {
+        start -= 1;
+    }
+    Some((start, lines[start..end].join("\n")))
+}
+
+fn is_horizontal_rule(line: &str) -> bool {
+    line.trim() == "---"
+}
+
 fn fallback_issue_content(output: &str) -> Result<GeneratedIssueContent, RiptskError> {
-    let body = output.trim().to_owned();
+    let body = sanitize_issue_body(output).unwrap_or_default();
     let Some(first_line) = body.lines().find(|line| !line.trim().is_empty()) else {
         return Err(RiptskError::General(
             "AI issue generation fallback could not derive a title from empty output".into(),
@@ -530,6 +646,119 @@ mod tests {
             .generate_issue_content("context")
             .expect_err("empty output");
         assert!(err.to_string().contains("empty output"));
+    }
+
+    #[test]
+    fn sanitize_strips_preface_rule_and_trailing_question() {
+        let input = "I'll generate a concise issue body for this GitHub issue. Based on the context, here's a suggested format:\n\n---\n\n## Description\n\nFix the login bug.\n\n- [ ] Reproduce\n- [ ] Patch\n\n---\n\nWould you like me to adjust the description, add more detail, or modify any of the checklist items?";
+        let sanitized = sanitize_issue_body(input).expect("sanitized body");
+        assert!(sanitized.starts_with("## Description"));
+        assert!(sanitized.ends_with("- [ ] Patch"));
+        assert!(!sanitized.contains("I'll generate"));
+        assert!(!sanitized.contains("Would you like me"));
+    }
+
+    #[test]
+    fn sanitize_strips_preface_only_when_no_rule() {
+        let input = "Here's the issue body:\n\n## Description\n\nFix bug.";
+        let sanitized = sanitize_issue_body(input).expect("sanitized body");
+        assert_eq!(sanitized, "## Description\n\nFix bug.");
+    }
+
+    #[test]
+    fn sanitize_passthrough_clean_body() {
+        let input = "## Description\n\nFix bug.";
+        let sanitized = sanitize_issue_body(input).expect("sanitized body");
+        assert_eq!(sanitized, input);
+    }
+
+    #[test]
+    fn sanitize_preserves_internal_horizontal_rule() {
+        let input = "## Section A\n\nBody.\n\n---\n\n## Section B\n\nMore body.";
+        let sanitized = sanitize_issue_body(input).expect("sanitized body");
+        assert_eq!(sanitized, input);
+    }
+
+    #[test]
+    fn sanitize_preserves_body_starting_with_rule() {
+        let input = "---\n\n## Description\n\nFix bug.";
+        let sanitized = sanitize_issue_body(input).expect("sanitized body");
+        assert_eq!(sanitized, input);
+    }
+
+    #[test]
+    fn sanitize_preserves_yaml_example_with_dashes() {
+        let input = "## Description\n\n```yaml\n---\nfake: frontmatter\n---\n```\n";
+        let sanitized = sanitize_issue_body(input).expect("sanitized body");
+        assert_eq!(sanitized, input.trim());
+    }
+
+    #[test]
+    fn sanitize_strips_only_matching_trailing_question() {
+        let input = "## Description\n\nFix bug.\n\nWould you like me to adjust the description?";
+        let sanitized = sanitize_issue_body(input).expect("sanitized body");
+        assert_eq!(sanitized, "## Description\n\nFix bug.");
+    }
+
+    #[test]
+    fn sanitize_preserves_legitimate_question_in_body() {
+        let input = "## Description\n\nWhy does the login form reject valid emails?";
+        let sanitized = sanitize_issue_body(input).expect("sanitized body");
+        assert_eq!(sanitized, input);
+    }
+
+    #[test]
+    fn sanitize_returns_error_when_emptied() {
+        let input = "I'll generate a body.\n\n---\n\nWould you like me to adjust?";
+        let err = sanitize_issue_body(input).expect_err("empty sanitized body");
+        assert!(err.to_string().contains("removed all content"));
+    }
+
+    #[test]
+    fn generate_body_returns_sanitized_output() {
+        let backend = TemplateAiBackend {
+            command_template: "cat <<'EOF'\nI'll generate a concise issue body. Based on the context, here's a suggested format:\n\n---\n\n## Description\n\nFix the login bug.\n\n- [ ] Reproduce\n- [ ] Patch\n\n---\n\nWould you like me to adjust the description?\nEOF".into(),
+        };
+
+        let result = backend.generate_body("context").expect("sanitized body");
+        assert_eq!(
+            result,
+            "## Description\n\nFix the login bug.\n\n- [ ] Reproduce\n- [ ] Patch"
+        );
+    }
+
+    #[test]
+    fn generate_issue_content_sanitizes_parsed_body() {
+        let backend = TemplateAiBackend {
+            command_template: "cat <<'EOF'\n{\"title\":\"Fix login\",\"body\":\"I'll generate a concise issue body. Based on the context, here's a suggested format:\\n\\n---\\n\\n## Description\\n\\nFix the login bug.\\n\\n- [ ] Reproduce\\n- [ ] Patch\\n\\n---\\n\\nWould you like me to adjust the description?\"}\nEOF".into(),
+        };
+
+        let result = backend
+            .generate_issue_content("context")
+            .expect("issue content");
+
+        assert_eq!(result.title, "Fix login");
+        assert_eq!(
+            result.body,
+            "## Description\n\nFix the login bug.\n\n- [ ] Reproduce\n- [ ] Patch"
+        );
+    }
+
+    #[test]
+    fn generate_issue_content_fallback_sanitizes_body() {
+        let backend = TemplateAiBackend {
+            command_template: "cat <<'EOF'\nI'll generate a concise issue body. Based on the context, here's a suggested format:\n\n---\n\n# Investigate mobile timeout\n\n## Description\n\nDetails\n\n---\n\nWould you like me to adjust the description?\nEOF".into(),
+        };
+
+        let result = backend
+            .generate_issue_content("context")
+            .expect("fallback issue content");
+
+        assert_eq!(result.title, "Investigate mobile timeout");
+        assert_eq!(
+            result.body,
+            "# Investigate mobile timeout\n\n## Description\n\nDetails"
+        );
     }
 
     #[test]
