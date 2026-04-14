@@ -313,7 +313,7 @@ pub(crate) async fn create_issue_from_args(
                 )));
             }
         }
-    } else if description.is_none() {
+    } else if description.is_none() && args.ai {
         should_generate_body = true;
     }
     let service = IssueService::new(paths, &config);

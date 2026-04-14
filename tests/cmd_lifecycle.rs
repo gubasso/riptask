@@ -135,7 +135,7 @@ fn new_auto_registers_unregistered_repo() {
 }
 
 #[test]
-fn new_with_title_attempts_ai_body_by_default() {
+fn new_with_title_skips_ai_body_by_default() {
     let temp = tempdir().expect("temp dir");
     let repo = temp.path().join("repo");
     let cache = temp.path().join("cache");
@@ -156,7 +156,7 @@ fn new_with_title_attempts_ai_body_by_default() {
         .args(["new", "--title", "ai test"])
         .assert()
         .success()
-        .stderr(predicate::str::contains("AI body generation failed"));
+        .stderr(predicate::str::contains("AI body generation failed").not());
 
     let issues: Vec<_> = fs::read_dir(repo.join("issues"))
         .expect("issues dir")
@@ -255,7 +255,7 @@ fn new_without_args_non_tty_errors_clearly() {
 }
 
 #[test]
-fn new_ai_flag_rejected_by_clap() {
+fn new_with_title_and_ai_flag_attempts_ai_body() {
     let temp = tempdir().expect("temp dir");
     let repo = temp.path().join("repo");
     let cache = temp.path().join("cache");
@@ -264,10 +264,26 @@ fn new_ai_flag_rejected_by_clap() {
         .expect("binary")
         .env("RIPTSK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
-        .args(["new", "--ai"])
+        .arg("init")
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("--ai"));
+        .success();
+
+    Command::cargo_bin("tsk")
+        .expect("binary")
+        .current_dir(temp.path())
+        .env("RIPTSK_REPO", &repo)
+        .env("XDG_CACHE_HOME", &cache)
+        .args(["new", "--title", "ai test", "--ai"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("AI body generation failed"));
+
+    let issues: Vec<_> = fs::read_dir(repo.join("issues"))
+        .expect("issues dir")
+        .filter_map(Result::ok)
+        .filter(|e| e.path().extension().and_then(|ext| ext.to_str()) == Some("md"))
+        .collect();
+    assert_eq!(issues.len(), 1, "expected exactly one issue file");
 }
 
 #[test]
