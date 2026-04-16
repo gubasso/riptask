@@ -424,9 +424,33 @@ fn resolve_project_repo_path(
     cwd.to_path_buf()
 }
 
+/// Return the first available backend URL for an issue, in GitHub -> GitLab -> Jira
+/// precedence order. Returns `None` for local-only issues.
+fn issue_remote_url(issue: &IssueDocument) -> Option<&str> {
+    if let Some(meta) = issue.frontmatter.github.as_ref()
+        && let Some(url) = meta.url.as_deref()
+    {
+        return Some(url);
+    }
+    if let Some(meta) = issue.frontmatter.gitlab.as_ref()
+        && let Some(url) = meta.url.as_deref()
+    {
+        return Some(url);
+    }
+    if let Some(meta) = issue.frontmatter.jira.as_ref()
+        && let Some(url) = meta.url.as_deref()
+    {
+        return Some(url);
+    }
+    None
+}
+
 pub(crate) fn print_issue_created(issue: &IssueDocument) {
     if !crate::ui::is_tty() {
         println!("{}", issue.frontmatter.id);
+        if let Some(url) = issue_remote_url(issue) {
+            println!("{url}");
+        }
         return;
     }
 
@@ -456,6 +480,9 @@ pub(crate) fn print_issue_created(issue: &IssueDocument) {
             priority_color(fm.priority.as_ref())
         )
     );
+    if let Some(url) = issue_remote_url(issue) {
+        println!("  URL:      {}", style(url).cyan().underlined());
+    }
 }
 
 fn display_label(value: &str) -> String {
@@ -811,4 +838,149 @@ fn list_conflicted_ids(paths: &AppPaths) -> Result<Vec<String>, RiptskError> {
     }
     conflicts.sort();
     Ok(conflicts)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::issue::{
+        GithubIssueMeta, GitlabIssueMeta, IssueFrontmatter, IssueState, JiraIssueMeta,
+    };
+
+    fn base_frontmatter() -> IssueFrontmatter {
+        IssueFrontmatter {
+            id: "TEST--1".to_string(),
+            title: "t".to_string(),
+            status: IssueState::Todo,
+            board: "b".to_string(),
+            project: "p".to_string(),
+            org: None,
+            priority: None,
+            labels: Vec::new(),
+            assignees: Vec::new(),
+            milestone: None,
+            state_reason: None,
+            cycle: None,
+            order: None,
+            gitlab: None,
+            github: None,
+            jira: None,
+            local_updated_at: "2025-01-01T00:00:00Z".to_string(),
+            due: None,
+            weight: None,
+            confidential: None,
+            discussion_locked: None,
+            issue_type: None,
+            locked: None,
+            lock_reason: None,
+            recurring: None,
+            remote_deleted: false,
+            id_slug: None,
+            branch: None,
+            pr_url: None,
+            pr_number: None,
+        }
+    }
+
+    fn doc(fm: IssueFrontmatter) -> IssueDocument {
+        IssueDocument {
+            frontmatter: fm,
+            body: String::new(),
+            remote_section: None,
+        }
+    }
+
+    #[test]
+    fn issue_remote_url_prefers_github() {
+        let mut fm = base_frontmatter();
+        fm.github = Some(GithubIssueMeta {
+            repo: "o/r".into(),
+            issue_id: Some(1),
+            node_id: None,
+            milestone_id: None,
+            url: Some("https://github.com/o/r/issues/1".into()),
+            updated_at: "2025-01-01T00:00:00Z".into(),
+            last_pushed_state: None,
+        });
+        fm.gitlab = Some(GitlabIssueMeta {
+            repo: "o/r".into(),
+            issue_id: Some(2),
+            milestone_id: None,
+            url: Some("https://gitlab.com/o/r/-/issues/2".into()),
+            updated_at: "2025-01-01T00:00:00Z".into(),
+            last_pushed_state: None,
+        });
+        assert_eq!(
+            issue_remote_url(&doc(fm)),
+            Some("https://github.com/o/r/issues/1")
+        );
+    }
+
+    #[test]
+    fn issue_remote_url_falls_back_to_gitlab() {
+        let mut fm = base_frontmatter();
+        fm.gitlab = Some(GitlabIssueMeta {
+            repo: "o/r".into(),
+            issue_id: Some(2),
+            milestone_id: None,
+            url: Some("https://gitlab.com/o/r/-/issues/2".into()),
+            updated_at: "2025-01-01T00:00:00Z".into(),
+            last_pushed_state: None,
+        });
+        assert_eq!(
+            issue_remote_url(&doc(fm)),
+            Some("https://gitlab.com/o/r/-/issues/2")
+        );
+    }
+
+    #[test]
+    fn issue_remote_url_falls_back_to_jira() {
+        let mut fm = base_frontmatter();
+        fm.jira = Some(JiraIssueMeta {
+            project_key: "PROJ".into(),
+            issue_key: Some("PROJ-1".into()),
+            issue_id: Some(1),
+            url: Some("https://example.atlassian.net/browse/PROJ-1".into()),
+            updated_at: "2025-01-01T00:00:00Z".into(),
+            last_pushed_state: None,
+            issue_type: None,
+            assignee_account_id: None,
+            assignee_name: None,
+        });
+        assert_eq!(
+            issue_remote_url(&doc(fm)),
+            Some("https://example.atlassian.net/browse/PROJ-1")
+        );
+    }
+
+    #[test]
+    fn issue_remote_url_returns_none_for_local() {
+        assert_eq!(issue_remote_url(&doc(base_frontmatter())), None);
+    }
+
+    #[test]
+    fn issue_remote_url_ignores_backend_with_no_url() {
+        let mut fm = base_frontmatter();
+        fm.github = Some(GithubIssueMeta {
+            repo: "o/r".into(),
+            issue_id: Some(1),
+            node_id: None,
+            milestone_id: None,
+            url: None,
+            updated_at: "2025-01-01T00:00:00Z".into(),
+            last_pushed_state: None,
+        });
+        fm.gitlab = Some(GitlabIssueMeta {
+            repo: "o/r".into(),
+            issue_id: Some(2),
+            milestone_id: None,
+            url: Some("https://gitlab.com/o/r/-/issues/2".into()),
+            updated_at: "2025-01-01T00:00:00Z".into(),
+            last_pushed_state: None,
+        });
+        assert_eq!(
+            issue_remote_url(&doc(fm)),
+            Some("https://gitlab.com/o/r/-/issues/2")
+        );
+    }
 }
