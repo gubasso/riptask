@@ -39,7 +39,8 @@ fn new_creates_issue_file() {
         .args(["new", "--title", "Test issue", "--project", "personal"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("PERSONAL--1"));
+        .stdout(predicate::str::contains("PERSONAL--1"))
+        .stdout(predicate::str::contains("http").not());
 }
 
 #[cfg(unix)]
