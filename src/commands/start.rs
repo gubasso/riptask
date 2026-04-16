@@ -1,17 +1,40 @@
+use crate::adapters::git::{CliGit, GitBackend};
 use crate::cli::{NewArgs, PrCreateArgs, ScopeArgs, StartArgs};
 use crate::commands::{branch, issues, pr};
-use crate::config::load_config;
+use crate::config::{Config, load_config};
 use crate::error::RiptskError;
 use crate::models::Backend;
 use crate::paths::AppPaths;
 use crate::services::backend_mapping::resolve_vc_for_backend;
 use crate::services::id_resolution;
+use crate::services::issue_ids;
+use crate::services::project_detection;
 use crate::storage::issue_store;
+use camino::Utf8Path;
 
-pub async fn run(paths: &AppPaths, args: StartArgs) -> Result<(), RiptskError> {
+pub async fn run(paths: &AppPaths, mut args: StartArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
     let config = load_config(paths.config_path().as_std_path())?;
     let cwd = id_resolution::cwd_utf8();
+
+    if should_auto_create_from_changes(&config, &cwd, &args).await {
+        let new_args = NewArgs {
+            title: None,
+            description: None,
+            ai: false,
+            project: args.scope.projects.first().cloned(),
+            board: args.board.clone(),
+            status: args.status.clone(),
+            priority: args.priority.clone(),
+            template: args.template.clone(),
+            edit: args.edit,
+        };
+        let (issue, _path) = issues::create_issue_from_args(paths, new_args).await?;
+        issues::print_issue_created(&issue);
+        args.title_pos = Some(numeric_from_id(&issue.frontmatter.id));
+        args.title = None;
+        args.pick = false;
+    }
 
     // Determine mode: existing issue or new issue
     let is_numeric = args
@@ -109,4 +132,45 @@ pub async fn run(paths: &AppPaths, args: StartArgs) -> Result<(), RiptskError> {
     .await?;
 
     Ok(())
+}
+
+async fn should_auto_create_from_changes(
+    config: &Config,
+    cwd: &Utf8Path,
+    args: &StartArgs,
+) -> bool {
+    if !(args.title_pos.is_none() && args.title.is_none() && !args.pick) {
+        return false;
+    }
+    let Ok(Some(backend)) = project_detection::detect_from_cwd(cwd, config) else {
+        return false;
+    };
+    let Ok(Some((provider, vc_backend))) = resolve_vc_for_backend(&backend, config) else {
+        return false;
+    };
+    let Ok(repo) = id_resolution::current_repo() else {
+        return false;
+    };
+    let git = CliGit::new();
+    let Ok(current) = git.current_branch(repo.as_path()) else {
+        return false;
+    };
+    let repo_name = vc_backend.repo.as_deref().unwrap_or_default();
+    let Ok(default) = crate::ui::spin_on_async("Checking default branch", async {
+        provider.default_branch(repo_name).await
+    })
+    .await
+    else {
+        return false;
+    };
+    if current != default {
+        return false;
+    }
+    git.has_uncommitted_changes(repo.as_path()).unwrap_or(false)
+}
+
+fn numeric_from_id(id: &str) -> String {
+    issue_ids::parse_id(id)
+        .map(|(_, number)| number.to_string())
+        .unwrap_or_else(|| id.to_owned())
 }
