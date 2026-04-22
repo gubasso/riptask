@@ -14,7 +14,7 @@ pub(crate) const HELP_GROUPS: &[(&str, &[&str])] = &[
     ),
     (
         "Branching & Work Clones",
-        &["branch", "commit", "pr", "session"],
+        &["branch", "commit", "id", "pr", "session"],
     ),
     ("Workflows", &["clone", "done", "start", "unclone"]),
     (
@@ -118,6 +118,8 @@ pub enum Commands {
     Ls(LsArgs),
     /// Create a new issue
     New(NewArgs),
+    /// Print the issue id associated with the current git branch
+    Id,
     /// Print the file path of an issue
     Path(IdArgs),
     /// Manage recurring issue schedules
