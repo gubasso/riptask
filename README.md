@@ -13,8 +13,7 @@ A plaintext issue tracker for the terminal.
 - [Installation](#installation)
 - [Core concepts](#core-concepts)
 - [Issue lifecycle](#issue-lifecycle)
-- [Branch → PR → Done workflow](#branch--pr--done-workflow)
-- [Sync with GitHub, GitLab, Jira](#sync-with-github-gitlab-jira)
+- [Workflows](#workflows)
 - [Templates](#templates)
 - [Recurring tasks](#recurring-tasks)
 - [Sessions](#sessions)
@@ -227,244 +226,34 @@ tsk unclone --force
 
 `tsk clone` creates a sibling work-clone for an issue branch. `tsk unclone` pushes the current work-clone, removes that clone directory, and prints the main repo path to return to.
 
-## Branch → PR → Done workflow
+## Workflows
 
-The main remote workflow is issue first, then branch, then PR:
+All workflow documentation lives in [`docs/workflow/`](docs/workflow/README.md). Start there for end-to-end flows.
+
+- [Branch → PR → Done](docs/workflow/branch-pr-done.md) — `tsk branch`, `tsk pr`, `tsk done`, `tsk start`
+- [Backend Sync](docs/workflow/backend-sync.md) — credentials, `riptsk.yaml` backend config, `tsk sync`, conflict resolution
+- [Jira + GitLab Setup](docs/workflow/jira-gitlab-setup.md) — Jira for issues, GitLab for branches/MRs
+
+Quick reference:
 
 ```bash
 tsk new --title "Fix login bug"
-tsk new --title "Fix login bug" --description "manual body"
-tsk branch <ID>
-# work in the project repo
-tsk pr
-tsk done <ID>
+tsk branch <ID>            # creates branch + records it in the issue
+tsk pr                     # opens a PR (moves issue to in-progress)
+tsk done <ID>              # merges PR, cleans up branches, marks issue done
+
+tsk start --title "..."    # new + branch + PR in one step
+
+tsk sync                   # pull then push against the configured backend
 ```
 
-### `tsk branch`
-
-Run `tsk branch` from the project repository, not from `$RIPTSK_REPO`.
-
-```bash
-tsk branch <ID>
-tsk branch <ID> -d
-tsk branch <ID> -D
-tsk branch <ID> -D --yes
-```
-
-Creating a branch:
-
-- resolves the issue
-- creates or reuses the remote branch for the issue
-- checks out the local branch
-- stores both `branch` and `id-slug` in the issue frontmatter
-
-Deleting a branch with `-d` or `-D` clears `branch` and `id-slug` from the issue.
-
-### `tsk pr`
-
-```bash
-tsk pr
-tsk pr <ID>
-tsk pr create <ID>
-tsk pr edit <ID>
-tsk pr edit <ID> --no-ai
-tsk pr edit <ID> -y
-tsk pr show <ID>
-tsk pr show <ID> --json
-tsk pr merge <ID>
-```
-
-`tsk pr` without a subcommand behaves like `tsk pr create`.
-
-Verified behavior:
-
-- the current branch must match the issue branch
-- creating a PR records `pr_url` and `pr_number`
-- if the issue was `backlog` or `todo`, `tsk pr` moves it to `in-progress`
-- Jira-backed issues use the Jira issue key in the PR title/body when Jira metadata exists
-
-### `tsk done`
-
-`tsk done` is the convenience wrapper for the full finish flow:
-
-```bash
-tsk done <ID>
-tsk done <ID> --merge-method squash
-tsk done <ID> --auto-merge
-tsk done <ID> --timeout 900
-tsk done <ID> --force-push
-tsk done <ID> --yes
-```
-
-When a version-control backend is available and the issue has a branch, `tsk done`:
-
-1. merges the PR
-2. checks out the default branch and pulls
-3. deletes the remote branch
-4. deletes the local branch
-5. clears `branch` and `id-slug`
-6. marks the issue `done`
-7. syncs the issue back to its backend
-8. regenerates cached views
-
-When the issue is local-only or Jira-without-`vc`, `tsk done` skips PR merge, marks the issue `done`, syncs issue state if applicable, and regenerates views.
-
-Manual equivalent:
-
-```bash
-tsk pr show <ID>
-tsk pr merge <ID> --merge-method squash --timeout 900
-git checkout <default-branch>
-git pull
-tsk branch <ID> -D
-tsk close <ID>
-```
-
-### `tsk start`
-
-`tsk start` wraps issue creation or selection, then runs branch + PR creation when a version-control backend is available.
-
-```bash
-tsk start --title "Implement parser"
-tsk start 42
-tsk start --pick
-tsk start --title "Refactor auth" --template feature --priority high
-```
-
-## Sync with GitHub, GitLab, Jira
-
-Backends are configured in `riptsk.yaml` under `backends`.
-
-### Backend authentication
-
-GitHub token lookup order:
-
-1. `GITHUB_TOKEN`
-2. `GH_TOKEN`
-3. `gh auth token`
-
-GitLab token lookup order:
-
-1. `GITLAB_TOKEN`
-2. `glab auth status --show-token`
-
-Jira authentication:
-
-- Jira Cloud: `JIRA_API_TOKEN` plus `JIRA_EMAIL`
-- Jira Server or Data Center: `JIRA_API_TOKEN`
-- Optional override: `JIRA_AUTH_TYPE=bearer`
-- Fallback: `jira-cli-go` config and keychain
-
-Examples:
+Backend auth at a glance — full details in [Backend Sync](docs/workflow/backend-sync.md):
 
 ```bash
 export GITHUB_TOKEN="ghp_..."
 export GITLAB_TOKEN="glpat-..."
-
 export JIRA_EMAIL="you@example.com"
 export JIRA_API_TOKEN="..."
-export JIRA_AUTH_TYPE=bearer
-```
-
-### Auto-detect with `tsk register`
-
-From a project directory:
-
-```bash
-tsk register
-tsk register --list
-```
-
-Detection rules:
-
-- `github.com` remote -> `github`
-- any host containing `gitlab` -> `gitlab`
-- local git repo with no supported remote -> `local`
-- non-git directory -> `local`
-
-Jira is not auto-detected from git remotes. Add Jira backends manually in `riptsk.yaml`.
-
-`tsk` also performs best-effort project auto-registration on startup when the current directory is not already registered.
-
-### Manual backend configuration
-
-```yaml
-backends:
-  - name: my-github
-    type: github
-    repo: myorg/my-app
-
-  - name: my-gitlab
-    type: gitlab
-    host: https://gitlab.internal.example
-    repo: team/my-app
-
-  - name: my-jira
-    type: jira
-    host: https://myteam.atlassian.net
-    repo: myorg/PROJ
-    default_issue_type: Task
-    vc: my-github
-
-  - name: side-project
-    type: local
-    path: /home/user/projects/side-project
-```
-
-Field notes:
-
-- `type` is one of `github`, `gitlab`, `jira`, `local`
-- `repo` format is `owner repo` style by backend convention:
-  GitHub uses `owner/repo`, GitLab uses `group/project`, Jira uses `org/PROJECT_KEY`
-- Jira `host` is required and must start with `https://`
-- Jira `vc` may point to a GitHub or GitLab backend for branch and PR commands
-- `path` is used for local path-based project detection
-
-### Sync commands
-
-```bash
-tsk sync
-tsk sync pull
-tsk sync pull 42
-tsk sync push
-tsk sync push 42
-tsk sync status
-tsk sync resolve <ID>
-tsk sync resolve <ID> --take-local
-tsk sync resolve <ID> --take-remote
-```
-
-`tsk sync` without a subcommand runs pull, then push.
-
-Project selection can be scoped with the standard project flags where supported:
-
-```bash
-tsk sync -p my-github
-tsk sync --backend my-gitlab
-tsk done -p my-github <ID>
-tsk done -a <ID>
-```
-
-### Conflict resolution
-
-On pull conflicts, `tsk` writes:
-
-- `issues/<ID>.md` with conflict markers
-- `issues/<ID>.LOCAL.md`
-- `issues/<ID>.REMOTE.md`
-
-Then resolve with:
-
-```bash
-tsk edit <ID>
-tsk sync resolve <ID>
-```
-
-Or restore one side directly:
-
-```bash
-tsk sync resolve <ID> --take-local
-tsk sync resolve <ID> --take-remote
 ```
 
 ## Templates

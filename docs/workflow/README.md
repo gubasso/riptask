@@ -1,6 +1,16 @@
-# Development Workflow
+# Workflows
 
-Development workflow documentation for riptsk.
+Central index for riptsk workflow documentation — both using riptsk in your own projects and contributing to riptsk itself.
+
+## Using riptsk
+
+| Document | Summary |
+|----------|---------|
+| [Branch → PR → Done](branch-pr-done.md) | The main remote workflow: `tsk branch`, `tsk pr`, `tsk done`, `tsk start` |
+| [Backend Sync](backend-sync.md) | Credentials, `riptsk.yaml` backend config, `tsk sync`, conflict resolution |
+| [Jira + GitLab Setup](jira-gitlab-setup.md) | Step-by-step: Jira for issues, GitLab for branches and MRs (via `vc:`) |
+
+## Contributing to riptsk
 
 | Document | Summary |
 |----------|---------|
