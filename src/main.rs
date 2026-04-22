@@ -55,6 +55,7 @@ fn run() -> Result<(), RiptskError> {
         Commands::Config(args) => commands::config_cmd::run(&paths, args),
         Commands::Show(args) => commands::issues::show(&paths, args),
         Commands::Path(args) => commands::issues::path(&paths, args),
+        Commands::Id => commands::id::run(&paths),
         Commands::Ls(args) => commands::issues::list(&paths, args),
         Commands::Version => {
             println!("tsk {}", env!("CARGO_PKG_VERSION"));

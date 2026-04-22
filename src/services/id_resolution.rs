@@ -117,14 +117,8 @@ pub fn resolve_or_pick_id(
         return require_id(paths, config, cwd, None, scope_args);
     }
 
-    match current_repo()
-        .and_then(|repo| CliGit::new().current_branch(repo.as_path()))
-        .and_then(|branch| find_issue_for_branch(paths, &branch))
-        .and_then(|path| {
-            let id = path.file_stem().unwrap_or_default().to_string();
-            crate::commands::issues::load_issue_or_conflict_error(path.as_std_path(), &id)
-        }) {
-        Ok(issue) => Ok(Some(issue.frontmatter.id)),
+    match id_for_current_branch(paths) {
+        Ok(id) => Ok(Some(id)),
         Err(_) => require_id(paths, config, cwd, None, scope_args),
     }
 }
@@ -180,10 +174,29 @@ pub(crate) fn find_issue_for_branch(
     )))
 }
 
+/// Resolve the issue id associated with a specific git branch, if any.
+///
+/// Matches `frontmatter.branch` or `frontmatter.id_slug` via
+/// `find_issue_for_branch`. Returns `RiptskError::NotFound` when no issue is
+/// associated with `branch`.
+pub(crate) fn id_for_branch(paths: &AppPaths, branch: &str) -> Result<String, RiptskError> {
+    let path = find_issue_for_branch(paths, branch)?;
+    Ok(path.file_stem().unwrap_or_default().to_string())
+}
+
+/// Resolve the issue id associated with the current git branch in the process
+/// cwd.
+pub fn id_for_current_branch(paths: &AppPaths) -> Result<String, RiptskError> {
+    let repo = current_repo()?;
+    let branch = CliGit::new().current_branch(repo.as_path())?;
+    id_for_branch(paths, &branch)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::resolve_id;
+    use super::{id_for_branch, resolve_id};
     use crate::config::{Config, default_config};
+    use crate::error::RiptskError;
     use crate::models::{Backend, BackendConfig};
     use crate::paths::AppPaths;
     use camino::Utf8PathBuf;
@@ -274,6 +287,39 @@ mod tests {
         assert_eq!(error.to_string(), "issue file not found: 61");
     }
 
+    #[test]
+    fn id_for_branch_returns_id_when_frontmatter_branch_matches() {
+        let temp = tempdir().expect("temp dir");
+        let paths = app_paths(temp.path());
+        write_issue_with_branch(&paths, "GH-GUB-DEV--61", Some("feature/hello"), None);
+
+        let id = id_for_branch(&paths, "feature/hello").expect("branch match");
+
+        assert_eq!(id, "GH-GUB-DEV--61");
+    }
+
+    #[test]
+    fn id_for_branch_returns_id_when_id_slug_matches() {
+        let temp = tempdir().expect("temp dir");
+        let paths = app_paths(temp.path());
+        write_issue_with_branch(&paths, "GH-GUB-DEV--61", None, Some("feature/hello"));
+
+        let id = id_for_branch(&paths, "feature/hello").expect("id_slug match");
+
+        assert_eq!(id, "GH-GUB-DEV--61");
+    }
+
+    #[test]
+    fn id_for_branch_returns_not_found_for_unmapped_branch() {
+        let temp = tempdir().expect("temp dir");
+        let paths = app_paths(temp.path());
+        write_issue_with_branch(&paths, "GH-GUB-DEV--61", Some("feature/hello"), None);
+
+        let error = id_for_branch(&paths, "feature/missing").expect_err("missing branch");
+
+        assert!(matches!(error, RiptskError::NotFound(_)));
+    }
+
     fn app_paths(root: &std::path::Path) -> AppPaths {
         let repo = root.join("repo");
         let cache = root.join("cache");
@@ -288,6 +334,24 @@ mod tests {
 
     fn touch_issue(paths: &AppPaths, id: &str) {
         std::fs::write(paths.issues_dir().join(format!("{id}.md")), "").expect("write issue");
+    }
+
+    fn write_issue_with_branch(
+        paths: &AppPaths,
+        id: &str,
+        branch: Option<&str>,
+        id_slug: Option<&str>,
+    ) {
+        let branch = branch
+            .map(|value| format!("branch: {value}\n"))
+            .unwrap_or_default();
+        let id_slug = id_slug
+            .map(|value| format!("id-slug: {value}\n"))
+            .unwrap_or_default();
+        let contents = format!(
+            "---\nid: {id}\ntitle: Test issue\nstatus: todo\nboard: personal\nproject: dev-tools\norg: ~\npriority: medium\nlabels: []\nassignees: []\nmilestone: ~\ncycle: ~\norder: 1\n{branch}{id_slug}github: ~\ngitlab: ~\njira: ~\nlocal_updated_at: 2026-03-13T11:05:00Z\ndue: ~\nrecurring: ~\nremote_deleted: false\n---\n\nTest body.\n"
+        );
+        std::fs::write(paths.issues_dir().join(format!("{id}.md")), contents).expect("write issue");
     }
 
     fn config_with_backends(backends: Vec<BackendConfig>) -> Config {
