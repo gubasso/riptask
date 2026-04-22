@@ -7,6 +7,10 @@ build:
 test:
   cargo nextest run
 
+test-clean:
+  cargo clean -p riptsk
+  cargo nextest run
+
 lint:
   cargo fmt --check
   cargo clippy --all-targets --all-features -- -D warnings
