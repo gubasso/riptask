@@ -5,6 +5,7 @@ pub mod commit;
 pub mod config_cmd;
 pub mod done;
 pub mod hooks;
+pub mod id;
 pub mod init;
 pub mod issues;
 pub mod pr;

@@ -6,9 +6,7 @@ use crate::cli::{
     PrArgs, PrCreateArgs, PrEditArgs, PrMergeArgs, PrShowArgs, PrSubcommand, ScopeArgs,
 };
 use crate::commands::ai::{AI_BACKEND_MISSING, optional_backend};
-use crate::commands::branch::{
-    backend_issue_number, current_repo, cwd_utf8, find_issue_for_branch,
-};
+use crate::commands::branch::{backend_issue_number, current_repo, cwd_utf8};
 use crate::config::{Config, load_config};
 use crate::domain::issue::{IssueDocument, IssueState};
 use crate::error::RiptskError;
@@ -493,9 +491,8 @@ fn resolve_issue(
         let resolved = id_resolution::resolve_id(paths, config, &cwd, id)?;
         issue_store::find_issue(paths, &resolved)?
     } else {
-        let repo = current_repo()?;
-        let branch = CliGit::new().current_branch(repo.as_path())?;
-        find_issue_for_branch(paths, &branch)?
+        let resolved = id_resolution::id_for_current_branch(paths)?;
+        issue_store::find_issue(paths, &resolved)?
     };
     let id = path.file_stem().unwrap_or_default().to_string();
     let issue = crate::commands::issues::load_issue_or_conflict_error(path.as_std_path(), &id)?;
