@@ -13,4 +13,3 @@ These are explicitly out of scope and will not be implemented:
 - **Native mobile app** — terminal workflow only
 - **Notifications / webhooks** — pull-based, not push-based
 - **Time tracking** — out of scope for this tool
-- **Jira integration** — GitLab and GitHub only
