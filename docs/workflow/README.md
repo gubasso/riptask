@@ -7,8 +7,8 @@ Central index for riptsk workflow documentation — both using riptsk in your ow
 | Document | Summary |
 |----------|---------|
 | [Branch → PR → Done](branch-pr-done.md) | The main remote workflow: `tsk branch`, `tsk pr`, `tsk done`, `tsk start` |
-| [Backend Sync](backend-sync.md) | Credentials, `riptsk.yaml` backend config, `tsk sync`, conflict resolution |
-| [Jira + GitLab Setup](jira-gitlab-setup.md) | Step-by-step: Jira for issues, GitLab for branches and MRs (via `vc:`) |
+| [Backend Sync](backend-sync.md) | Credentials, `riptsk.yaml` `projects:` config, `tsk sync`, conflict resolution |
+| [Jira + GitLab Setup](jira-gitlab-setup.md) | Step-by-step: Jira TasksBackend + GitLab VCBackend, including shared Jira `repo_project_label` partitioning |
 
 ## Contributing to riptsk
 

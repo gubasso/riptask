@@ -1,25 +1,16 @@
-//! Backend mapping — builds providers from config, converts between backend and local formats.
-//!
-//! This module is the glue between `BackendConfig` entries and the trait objects
-//! that commands use. It handles:
-//! - Provider construction: `build_issue_tracker()`, `build_version_control()`
-//! - VC resolution: `resolve_vc_for_backend()` (links Jira → GitHub/GitLab for PRs)
-//! - Credential resolution for all backends (env vars → CLI tools → error)
-//! - Data conversion: `backend_to_local()`, `issue_to_upsert()`, `update_issue_from_backend()`
-//! - Git HTTP auth: `resolve_git_auth()` (returns None for Jira — no git involvement)
+//! Backend mapping — builds providers from config and converts between remote and local formats.
 
 use crate::adapters::backend::{
     BackendIssueRecord, BackendIssueUpsert, BackendProvider, IssueTracker, VersionControl,
 };
 use crate::adapters::github::GithubProvider;
 use crate::adapters::gitlab::GitlabProvider;
-use crate::config::Config;
 use crate::domain::issue::{
     GithubIssueMeta, GitlabIssueMeta, IssueDocument, IssueFrontmatter, IssueState, JiraIssueMeta,
     Priority,
 };
 use crate::error::RiptskError;
-use crate::models::{Backend, BackendConfig};
+use crate::models::{BackendKind, RepoProject, VCBackendSpec};
 use crate::services::issue_ids;
 use crate::services::issue_service::{generate_slug, now_utc};
 use std::process::Command;
@@ -44,204 +35,142 @@ impl std::fmt::Display for CredentialSource {
     }
 }
 
-pub fn build_provider_for_backend(
-    backend: &BackendConfig,
+pub fn build_hosted_provider(
+    vc_backend: &VCBackendSpec,
+    display_name: &str,
 ) -> Result<Box<dyn BackendProvider>, RiptskError> {
-    match backend.backend {
-        Backend::Github => {
-            let (token, source) = resolve_github_token(&backend.name)?;
+    match vc_backend.kind {
+        BackendKind::Github => {
+            let (token, source) = resolve_github_token(display_name)?;
             crate::ui::info(&format!(
-                "auth: github backend '{}' using {}",
-                backend.name, source
+                "auth: github VCBackend '{}' using {}",
+                display_name, source
             ));
             Ok(Box::new(GithubProvider::new(&token)?))
         }
-        Backend::Gitlab => {
-            let host = backend
+        BackendKind::Gitlab => {
+            let host = vc_backend
                 .host
                 .as_deref()
                 .unwrap_or("https://gitlab.com")
                 .trim_start_matches("https://")
                 .trim_start_matches("http://")
                 .to_owned();
-            let (token, source) = resolve_gitlab_token(&backend.name, &host)?;
+            let (token, source) = resolve_gitlab_token(display_name, &host)?;
             crate::ui::info(&format!(
-                "auth: gitlab backend '{}' using {}",
-                backend.name, source
+                "auth: gitlab VCBackend '{}' using {}",
+                display_name, source
             ));
             Ok(Box::new(GitlabProvider::new(&host, &token)?))
         }
-        Backend::Jira => Err(RiptskError::Config(
-            "Jira backend uses build_issue_tracker() — see resolve_vc_for_backend()".into(),
-        )),
-        Backend::Local => Err(RiptskError::Config(format!(
-            "backend {} is local-only",
-            backend.name
+        BackendKind::Local => Err(RiptskError::Config(format!(
+            "RepoProject {}: VCBackend is local-only",
+            display_name
+        ))),
+        BackendKind::Jira => Err(RiptskError::Config(format!(
+            "RepoProject {}: VCBackend cannot be jira",
+            display_name
         ))),
     }
 }
 
-/// Build an issue tracker for a backend config.
-/// Works for Github, Gitlab, Jira. Errors for Local.
-pub fn build_issue_tracker(backend: &BackendConfig) -> Result<Box<dyn IssueTracker>, RiptskError> {
-    match backend.backend {
-        Backend::Github => {
-            let (token, source) = resolve_github_token(&backend.name)?;
+pub fn build_issue_tracker(
+    repo_project: &RepoProject,
+) -> Result<Box<dyn IssueTracker>, RiptskError> {
+    match repo_project.tasks_backend.kind {
+        BackendKind::Github => {
+            let (token, source) = resolve_github_token(&repo_project.name)?;
             crate::ui::info(&format!(
-                "auth: github backend '{}' using {}",
-                backend.name, source
+                "auth: github TasksBackend '{}' using {}",
+                repo_project.name, source
             ));
             Ok(Box::new(GithubProvider::new(&token)?))
         }
-        Backend::Gitlab => {
-            let host = backend
+        BackendKind::Gitlab => {
+            let host = repo_project
+                .tasks_backend
                 .host
                 .as_deref()
                 .unwrap_or("https://gitlab.com")
                 .trim_start_matches("https://")
                 .trim_start_matches("http://")
                 .to_owned();
-            let (token, source) = resolve_gitlab_token(&backend.name, &host)?;
+            let (token, source) = resolve_gitlab_token(&repo_project.name, &host)?;
             crate::ui::info(&format!(
-                "auth: gitlab backend '{}' using {}",
-                backend.name, source
+                "auth: gitlab TasksBackend '{}' using {}",
+                repo_project.name, source
             ));
             Ok(Box::new(GitlabProvider::new(&host, &token)?))
         }
-        Backend::Jira => {
-            let host = backend
-                .host
-                .as_deref()
-                .ok_or_else(|| RiptskError::Config("Jira backend requires 'host'".into()))?;
-            let (auth, source) = resolve_jira_credentials(&backend.name, host)?;
+        BackendKind::Jira => {
+            let host =
+                repo_project.tasks_backend.host.as_deref().ok_or_else(|| {
+                    RiptskError::Config("Jira TasksBackend requires 'host'".into())
+                })?;
+            let (auth, source) = resolve_jira_credentials(&repo_project.name, host)?;
             crate::ui::info(&format!(
-                "auth: jira backend '{}' using {}",
-                backend.name, source
+                "auth: jira TasksBackend '{}' using {}",
+                repo_project.name, source
             ));
-            Ok(Box::new(
-                crate::adapters::jira::JiraProvider::with_issue_type(
-                    host,
-                    auth,
-                    backend.default_issue_type.clone(),
-                )?,
-            ))
+            Ok(Box::new(crate::adapters::jira::JiraProvider::with_config(
+                host,
+                auth,
+                repo_project.tasks_backend.default_issue_type.clone(),
+                repo_project.repo_project_label.clone(),
+            )?))
         }
-        Backend::Local => Err(RiptskError::Config(format!(
-            "backend {} is local-only",
-            backend.name
+        BackendKind::Local => Err(RiptskError::Config(format!(
+            "RepoProject {}: TasksBackend is local-only",
+            repo_project.name
         ))),
     }
 }
 
-/// Build a version control provider for a backend config.
-/// Works for Github, Gitlab. Errors for Local.
 pub fn build_version_control(
-    backend: &BackendConfig,
+    vc_backend: &VCBackendSpec,
+    display_name: &str,
 ) -> Result<Box<dyn VersionControl>, RiptskError> {
-    match backend.backend {
-        Backend::Github => {
-            let (token, source) = resolve_github_token(&backend.name)?;
-            crate::ui::info(&format!(
-                "auth: github backend '{}' using {}",
-                backend.name, source
-            ));
-            Ok(Box::new(GithubProvider::new(&token)?))
+    match vc_backend.kind {
+        BackendKind::Github | BackendKind::Gitlab => {
+            let provider = build_hosted_provider(vc_backend, display_name)?;
+            Ok(provider)
         }
-        Backend::Gitlab => {
-            let host = backend
-                .host
-                .as_deref()
-                .unwrap_or("https://gitlab.com")
-                .trim_start_matches("https://")
-                .trim_start_matches("http://")
-                .to_owned();
-            let (token, source) = resolve_gitlab_token(&backend.name, &host)?;
-            crate::ui::info(&format!(
-                "auth: gitlab backend '{}' using {}",
-                backend.name, source
-            ));
-            Ok(Box::new(GitlabProvider::new(&host, &token)?))
-        }
-        Backend::Jira => Err(RiptskError::Config(
-            "Jira is an issue tracker — use the 'vc' config field to link a GitHub/GitLab backend for PRs and branches".into(),
-        )),
-        Backend::Local => Err(RiptskError::Config(format!(
-            "backend {} is local-only — no version control",
-            backend.name
+        BackendKind::Local => Err(RiptskError::Config(format!(
+            "RepoProject {}: VCBackend is local-only",
+            display_name
+        ))),
+        BackendKind::Jira => Err(RiptskError::Config(format!(
+            "RepoProject {}: VCBackend cannot be jira",
+            display_name
         ))),
     }
 }
 
-pub type VcResolution<'a> = Option<(Box<dyn VersionControl>, &'a BackendConfig)>;
-
-/// Resolve the VC provider for a given issue backend.
-/// If backend has `vc` field, look up that backend and build its VC provider.
-/// If backend itself supports VC (Github/Gitlab), use itself.
-/// If neither, return None (issue-only project).
-pub fn resolve_vc_for_backend<'a>(
-    backend: &'a BackendConfig,
-    config: &'a Config,
-) -> Result<VcResolution<'a>, RiptskError> {
-    if let Some(vc_name) = &backend.vc {
-        let vc_backend = config
-            .backends
-            .iter()
-            .find(|b| &b.name == vc_name)
-            .ok_or_else(|| {
-                RiptskError::Config(format!(
-                    "backend '{}' references vc '{}' which does not exist",
-                    backend.name, vc_name
-                ))
-            })?;
-        if !matches!(vc_backend.backend, Backend::Github | Backend::Gitlab) {
-            return Err(RiptskError::Config(format!(
-                "vc '{}' must be a github or gitlab backend",
-                vc_name
-            )));
-        }
-        let provider = build_version_control(vc_backend)?;
-        return Ok(Some((provider, vc_backend)));
-    }
-    // If backend itself supports VC (Github/Gitlab), use itself
-    match backend.backend {
-        Backend::Github | Backend::Gitlab => {
-            let provider = build_version_control(backend)?;
-            Ok(Some((provider, backend)))
-        }
-        _ => Ok(None),
-    }
-}
-
-/// Resolve git HTTP credentials for a backend. Returns `None` for Jira and Local
-/// because Jira has no git involvement — git auth comes from the VC layer separately.
-pub fn resolve_git_auth(backend: &BackendConfig) -> Option<GitHttpAuth> {
-    match backend.backend {
-        Backend::Gitlab => {
-            let host = backend
+pub fn resolve_git_auth(vc_backend: &VCBackendSpec, display_name: &str) -> Option<GitHttpAuth> {
+    match vc_backend.kind {
+        BackendKind::Gitlab => {
+            let host = vc_backend
                 .host
                 .as_deref()
                 .unwrap_or("https://gitlab.com")
                 .trim_start_matches("https://")
                 .trim_start_matches("http://")
                 .to_owned();
-            let (token, _source) = resolve_gitlab_token(&backend.name, &host).ok()?;
+            let (token, _source) = resolve_gitlab_token(display_name, &host).ok()?;
             Some(GitHttpAuth { host, token })
         }
-        Backend::Github => {
-            let (token, _source) = resolve_github_token(&backend.name).ok()?;
+        BackendKind::Github => {
+            let (token, _source) = resolve_github_token(display_name).ok()?;
             Some(GitHttpAuth {
                 host: "github.com".into(),
                 token,
             })
         }
-        Backend::Jira => None,
-        Backend::Local => None,
+        BackendKind::Local | BackendKind::Jira => None,
     }
 }
 
-/// Convert a local `IssueDocument` to a `BackendIssueUpsert` for pushing to a remote backend.
-/// Extracts Jira-specific round-trip metadata (assignee identity) from `JiraIssueMeta`.
-pub fn issue_to_upsert(doc: &IssueDocument) -> BackendIssueUpsert {
+pub fn issue_to_upsert(doc: &IssueDocument, repo_project: &RepoProject) -> BackendIssueUpsert {
     let state = match doc.frontmatter.status {
         IssueState::Done => "closed",
         _ => "open",
@@ -257,12 +186,18 @@ pub fn issue_to_upsert(doc: &IssueDocument) -> BackendIssueUpsert {
         .jira
         .as_ref()
         .and_then(|meta| meta.assignee_name.clone());
+    let mut labels = build_state_labels(&doc.frontmatter.status, &doc.frontmatter.labels);
+    if let Some(label) = effective_repo_project_label(repo_project)
+        && !labels.iter().any(|candidate| candidate == label)
+    {
+        labels.push(label.to_owned());
+    }
     BackendIssueUpsert {
         title: doc.frontmatter.title.clone(),
         body: doc.body.clone(),
         state: Some(state.into()),
         state_reason,
-        labels: build_state_labels(&doc.frontmatter.status, &doc.frontmatter.labels),
+        labels,
         assignees: doc.frontmatter.assignees.clone(),
         milestone_id: doc
             .frontmatter
@@ -284,33 +219,39 @@ pub fn issue_to_upsert(doc: &IssueDocument) -> BackendIssueUpsert {
     }
 }
 
-/// Convert a `BackendIssueRecord` from any backend into a local `IssueDocument`.
-/// Populates the backend-specific metadata (github/gitlab/jira) based on backend type.
-/// For Jira, extracts the issue key from the browse URL and stores assignee identity.
-pub fn backend_to_local(record: &BackendIssueRecord, backend: &BackendConfig) -> IssueDocument {
+pub fn backend_to_local(record: &BackendIssueRecord, repo_project: &RepoProject) -> IssueDocument {
     let state = state_from_backend(record);
-    let issue_id = issue_ids::format_id(&issue_ids::effective_key(backend), record.issue_id);
+    let issue_id = issue_ids::format_id(&issue_ids::effective_key(repo_project), record.issue_id);
+    let task_repo = repo_project.tasks_backend.repo.clone().unwrap_or_default();
+    let jira_project = repo_project
+        .tasks_backend
+        .jira_project
+        .as_deref()
+        .unwrap_or_default();
     IssueDocument {
         frontmatter: IssueFrontmatter {
             id: issue_id.clone(),
             title: record.title.clone(),
             status: state.clone(),
-            board: backend
+            board: repo_project
                 .default_board
                 .clone()
                 .unwrap_or_else(|| "personal".into()),
-            project: backend.name.clone(),
-            org: backend.default_org.clone(),
+            project: repo_project.name.clone(),
+            org: repo_project.default_org.clone(),
             priority: Some(Priority::Medium),
-            labels: labels_without_status(&record.labels),
+            labels: labels_without_status(
+                &record.labels,
+                effective_repo_project_label(repo_project),
+            ),
             assignees: record.assignees.clone(),
             milestone: record.milestone.clone(),
             state_reason: record.state_reason.clone(),
             cycle: None,
             order: Some(1),
-            gitlab: if backend.backend == Backend::Gitlab {
+            gitlab: if repo_project.tasks_backend.kind == BackendKind::Gitlab {
                 Some(GitlabIssueMeta {
-                    repo: backend.repo.clone().unwrap_or_default(),
+                    repo: task_repo.clone(),
                     issue_id: Some(record.issue_id),
                     milestone_id: record.milestone_id,
                     url: Some(record.url.clone()),
@@ -320,9 +261,9 @@ pub fn backend_to_local(record: &BackendIssueRecord, backend: &BackendConfig) ->
             } else {
                 None
             },
-            github: if backend.backend == Backend::Github {
+            github: if repo_project.tasks_backend.kind == BackendKind::Github {
                 Some(GithubIssueMeta {
-                    repo: backend.repo.clone().unwrap_or_default(),
+                    repo: task_repo,
                     issue_id: Some(record.issue_id),
                     node_id: record.node_id.clone(),
                     milestone_id: record.milestone_id,
@@ -333,13 +274,11 @@ pub fn backend_to_local(record: &BackendIssueRecord, backend: &BackendConfig) ->
             } else {
                 None
             },
-            jira: if backend.backend == Backend::Jira {
+            jira: if repo_project.tasks_backend.kind == BackendKind::Jira {
                 let issue_key = extract_jira_key_from_url(&record.url);
                 Some(JiraIssueMeta {
-                    project_key: crate::adapters::jira::JiraProvider::project_key(
-                        backend.repo.as_deref().unwrap_or_default(),
-                    )
-                    .to_owned(),
+                    project_key: crate::adapters::jira::JiraProvider::project_key(jira_project)
+                        .to_owned(),
                     issue_key,
                     issue_id: Some(record.issue_id),
                     url: Some(record.url.clone()),
@@ -372,8 +311,6 @@ pub fn backend_to_local(record: &BackendIssueRecord, backend: &BackendConfig) ->
     }
 }
 
-/// Copy fields that exist only locally from `source` onto `target`, so they
-/// do not create false diffs when materializing a remote-only document.
 pub fn copy_local_only_fields(target: &mut IssueFrontmatter, source: &IssueFrontmatter) {
     target.pr_url = source.pr_url.clone();
     target.pr_number = source.pr_number;
@@ -399,12 +336,13 @@ pub fn build_state_labels(state: &IssueState, labels: &[String]) -> Vec<String> 
 pub fn update_issue_from_backend(
     issue: &mut IssueDocument,
     record: &BackendIssueRecord,
-    backend: &BackendConfig,
+    repo_project: &RepoProject,
 ) {
     let state = state_from_backend(record);
     issue.frontmatter.title = record.title.clone();
     issue.frontmatter.status = state.clone();
-    issue.frontmatter.labels = labels_without_status(&record.labels);
+    issue.frontmatter.labels =
+        labels_without_status(&record.labels, effective_repo_project_label(repo_project));
     issue.frontmatter.assignees = record.assignees.clone();
     issue.frontmatter.milestone = record.milestone.clone();
     issue.frontmatter.state_reason = record.state_reason.clone();
@@ -418,10 +356,10 @@ pub fn update_issue_from_backend(
     issue.frontmatter.lock_reason = record.lock_reason.clone();
     issue.frontmatter.id_slug = Some(generate_slug(&issue.frontmatter.id, &record.title));
     issue.body = record.body.clone().unwrap_or_default();
-    match backend.backend {
-        Backend::Github => {
+    match repo_project.tasks_backend.kind {
+        BackendKind::Github => {
             issue.frontmatter.github = Some(GithubIssueMeta {
-                repo: backend.repo.clone().unwrap_or_default(),
+                repo: repo_project.tasks_backend.repo.clone().unwrap_or_default(),
                 issue_id: Some(record.issue_id),
                 node_id: record.node_id.clone(),
                 milestone_id: record.milestone_id,
@@ -430,9 +368,9 @@ pub fn update_issue_from_backend(
                 last_pushed_state: Some(state),
             });
         }
-        Backend::Gitlab => {
+        BackendKind::Gitlab => {
             issue.frontmatter.gitlab = Some(GitlabIssueMeta {
-                repo: backend.repo.clone().unwrap_or_default(),
+                repo: repo_project.tasks_backend.repo.clone().unwrap_or_default(),
                 issue_id: Some(record.issue_id),
                 milestone_id: record.milestone_id,
                 url: Some(record.url.clone()),
@@ -440,11 +378,15 @@ pub fn update_issue_from_backend(
                 last_pushed_state: Some(state),
             });
         }
-        Backend::Jira => {
+        BackendKind::Jira => {
             let issue_key = extract_jira_key_from_url(&record.url);
             issue.frontmatter.jira = Some(JiraIssueMeta {
                 project_key: crate::adapters::jira::JiraProvider::project_key(
-                    backend.repo.as_deref().unwrap_or_default(),
+                    repo_project
+                        .tasks_backend
+                        .jira_project
+                        .as_deref()
+                        .unwrap_or_default(),
                 )
                 .to_owned(),
                 issue_key,
@@ -457,7 +399,7 @@ pub fn update_issue_from_backend(
                 assignee_name: record.assignee_name.clone(),
             });
         }
-        Backend::Local => {}
+        BackendKind::Local => {}
     }
 }
 
@@ -501,7 +443,6 @@ fn run_gh_auth_token(host: &str) -> Result<String, String> {
         }
         Err(error) => return Err(format!("'gh' failed to run: {error}")),
     };
-
     if !output.status.success() {
         let status = output
             .status
@@ -510,12 +451,10 @@ fn run_gh_auth_token(host: &str) -> Result<String, String> {
             .unwrap_or_else(|| "unknown".into());
         return Err(format!("'gh auth token' exited with status {status}"));
     }
-
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
     if stdout.is_empty() {
         return Err("'gh auth token' returned empty output (expected raw token on stdout)".into());
     }
-
     Ok(stdout)
 }
 
@@ -530,7 +469,6 @@ fn run_glab_auth_token(host: &str) -> Result<String, String> {
         }
         Err(error) => return Err(format!("'glab' failed to run: {error}")),
     };
-
     if !output.status.success() {
         let status = output
             .status
@@ -539,12 +477,10 @@ fn run_glab_auth_token(host: &str) -> Result<String, String> {
             .unwrap_or_else(|| "unknown".into());
         return Err(format!("'glab auth status' exited with status {status}"));
     }
-
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
     if stderr.trim().is_empty() {
         return Err("'glab auth status' produced no output on stderr".into());
     }
-
     parse_glab_token(&stderr).ok_or_else(|| {
         "glab output did not contain expected 'Token found:' line (glab may have changed its output format)".into()
     })
@@ -564,18 +500,17 @@ fn parse_glab_token(stderr_output: &str) -> Option<String> {
     })
 }
 
-fn resolve_github_token(backend_name: &str) -> Result<(String, CredentialSource), RiptskError> {
+fn resolve_github_token(display_name: &str) -> Result<(String, CredentialSource), RiptskError> {
     if let Some(token) = non_empty_env("GITHUB_TOKEN") {
         return Ok((token, CredentialSource::EnvVar("GITHUB_TOKEN")));
     }
     if let Some(token) = non_empty_env("GH_TOKEN") {
         return Ok((token, CredentialSource::EnvVar("GH_TOKEN")));
     }
-
     match run_gh_auth_token("github.com") {
         Ok(token) => Ok((token, CredentialSource::CliTool("gh auth token"))),
         Err(reason) => Err(RiptskError::Auth(format!(
-            "GitHub authentication failed for backend '{backend_name}'\n\n\
+            "GitHub authentication failed for VC/Tasks backend '{display_name}'\n\n\
 Tried: GITHUB_TOKEN, GH_TOKEN, gh auth token\n\n\
 {reason}\n\n\
 To fix, do one of:\n\
@@ -587,20 +522,19 @@ To fix, do one of:\n\
 }
 
 fn resolve_gitlab_token(
-    backend_name: &str,
+    display_name: &str,
     host: &str,
 ) -> Result<(String, CredentialSource), RiptskError> {
     if let Some(token) = non_empty_env("GITLAB_TOKEN") {
         return Ok((token, CredentialSource::EnvVar("GITLAB_TOKEN")));
     }
-
     match run_glab_auth_token(host) {
         Ok(token) => Ok((
             token,
             CredentialSource::CliTool("glab auth status --show-token"),
         )),
         Err(reason) => Err(RiptskError::Auth(format!(
-            "GitLab authentication failed for backend '{backend_name}' (host: {host})\n\n\
+            "GitLab authentication failed for VC/Tasks backend '{display_name}' (host: {host})\n\n\
 Tried: GITLAB_TOKEN, glab auth status --show-token\n\n\
 {reason}\n\n\
 To fix, do one of:\n\
@@ -610,18 +544,11 @@ To fix, do one of:\n\
     }
 }
 
-/// Resolve Jira credentials following the same pattern as GitHub/GitLab:
-/// 1. `JIRA_API_TOKEN` + `JIRA_EMAIL` → Cloud basic auth (base64 `email:token`)
-/// 2. `JIRA_API_TOKEN` alone → Server/DC PAT auth (Bearer token)
-/// 3. `jira-cli-go` config + system keychain → auto-detect Cloud vs Server
-/// 4. Error with actionable guidance
 fn resolve_jira_credentials(
-    backend_name: &str,
+    display_name: &str,
     host: &str,
 ) -> Result<(crate::adapters::jira::JiraAuth, CredentialSource), RiptskError> {
     use crate::adapters::jira::JiraAuth;
-
-    // 1. Check JIRA_API_TOKEN + JIRA_EMAIL (Cloud basic auth)
     if let Some(token) = non_empty_env("JIRA_API_TOKEN") {
         if let Some(email) = non_empty_env("JIRA_EMAIL") {
             return Ok((
@@ -629,14 +556,11 @@ fn resolve_jira_credentials(
                 CredentialSource::EnvVar("JIRA_API_TOKEN+JIRA_EMAIL"),
             ));
         }
-        // Token without email = PAT auth (Server/DC)
         return Ok((
             JiraAuth::Pat(token),
             CredentialSource::EnvVar("JIRA_API_TOKEN"),
         ));
     }
-
-    // 2. Try jira-cli-go config + system keychain
     match run_jira_cli_go_auth(host) {
         Ok((login, token, is_bearer)) => {
             let auth = if is_bearer {
@@ -647,31 +571,19 @@ fn resolve_jira_credentials(
                     token,
                 }
             };
-            return Ok((auth, CredentialSource::CliTool("jira-cli-go keychain")));
+            Ok((auth, CredentialSource::CliTool("jira-cli-go keychain")))
         }
-        Err(_reason) => {}
-    }
-
-    // 3. All failed
-    Err(RiptskError::Auth(format!(
-        "Jira authentication failed for backend '{backend_name}' (host: {host})\n\n\
+        Err(_) => Err(RiptskError::Auth(format!(
+            "Jira authentication failed for TasksBackend '{display_name}' (host: {host})\n\n\
 Tried: JIRA_API_TOKEN, jira-cli-go keychain\n\n\
 To fix, do one of:\n\
   • export JIRA_API_TOKEN=<token> JIRA_EMAIL=<email>\n\
   • brew install ankitpokhrel/jira-cli/jira-cli && jira init"
-    )))
+        ))),
+    }
 }
 
-/// Read credentials from `jira-cli-go`'s config and system keychain.
-///
-/// `jira-cli-go` (~3.8k GitHub stars) is the de facto Jira CLI. `jira init`
-/// stores config at `~/.config/.jira/.config.yml` (server URL, login email)
-/// and the API token in the system keychain (macOS Keychain, GNOME Keyring,
-/// Windows Credential Manager) under service="jira-cli".
-///
-/// Returns `(login, token, is_bearer)`. `is_bearer` is true for Server/DC PAT auth.
 fn run_jira_cli_go_auth(host: &str) -> Result<(String, String, bool), String> {
-    // Parse ~/.config/.jira/.config.yml
     let config_path = dirs_jira_cli_config();
     let content = std::fs::read_to_string(&config_path)
         .map_err(|e| format!("cannot read jira-cli config at {config_path}: {e}"))?;
@@ -686,15 +598,12 @@ fn run_jira_cli_go_auth(host: &str) -> Result<(String, String, bool), String> {
 
     let config: JiraCliGoConfig =
         serde_yaml_ng::from_str(&content).map_err(|e| format!("invalid jira-cli config: {e}"))?;
-
     let server = config
         .server
         .ok_or_else(|| "jira-cli config missing 'server' field".to_string())?;
     let login = config
         .login
         .ok_or_else(|| "jira-cli config missing 'login' field".to_string())?;
-
-    // Validate the server matches the expected host
     let server_trimmed = server.trim_end_matches('/');
     let host_trimmed = host.trim_end_matches('/');
     if !server_trimmed.eq_ignore_ascii_case(host_trimmed) {
@@ -702,22 +611,17 @@ fn run_jira_cli_go_auth(host: &str) -> Result<(String, String, bool), String> {
             "jira-cli config server '{server}' does not match expected host '{host}'"
         ));
     }
-
-    // Read API token from system keychain
     let entry =
         keyring::Entry::new("jira-cli", &login).map_err(|e| format!("keyring error: {e}"))?;
     let token = entry
         .get_password()
         .map_err(|e| format!("cannot read jira-cli token from keychain: {e}"))?;
-
-    // Detect auth type: "bearer" means Server/DC PAT, otherwise Cloud basic
     let auth_type_env = std::env::var("JIRA_AUTH_TYPE").ok();
     let is_bearer = config
         .auth_type
         .as_deref()
         .or(auth_type_env.as_deref())
-        .is_some_and(|t| t.eq_ignore_ascii_case("bearer"));
-
+        .is_some_and(|kind| kind.eq_ignore_ascii_case("bearer"));
     if is_bearer {
         Ok((login, token, true))
     } else {
@@ -754,12 +658,6 @@ fn state_from_backend(record: &BackendIssueRecord) -> IssueState {
     IssueState::Backlog
 }
 
-/// Drop `state_reason` values that are invalid for the target state.
-///
-/// GitHub allows `completed` / `not_planned` / `duplicate` when closing
-/// and `reopened` when opening. Sending a mismatched reason triggers a
-/// 422 validation error. Jira resolutions map through the same values:
-/// "Done" ↔ "completed", "Won't Do" ↔ "not_planned", "Duplicate" ↔ "duplicate".
 fn sanitize_state_reason(state: &str, reason: Option<&str>) -> Option<String> {
     let reason = reason?;
     let valid = match state {
@@ -770,15 +668,26 @@ fn sanitize_state_reason(state: &str, reason: Option<&str>) -> Option<String> {
     if valid { Some(reason.to_owned()) } else { None }
 }
 
-/// Extract the Jira issue key from a browse URL like `https://host/browse/PROJ-123`.
 fn extract_jira_key_from_url(url: &str) -> Option<String> {
-    url.rsplit('/').next().map(|s| s.to_owned())
+    url.rsplit('/').next().map(|value| value.to_owned())
 }
 
-fn labels_without_status(labels: &[String]) -> Vec<String> {
+/// Return the RepoProject's partition label only when it is meaningful for the
+/// active tasks backend. Today only Jira uses label-partitioning, so non-Jira
+/// tasks backends ignore the label even if one is stored on the RepoProject.
+pub fn effective_repo_project_label(repo_project: &RepoProject) -> Option<&str> {
+    if repo_project.tasks_backend.kind == BackendKind::Jira {
+        repo_project.repo_project_label.as_deref()
+    } else {
+        None
+    }
+}
+
+fn labels_without_status(labels: &[String], repo_project_label: Option<&str>) -> Vec<String> {
     labels
         .iter()
         .filter(|label| !label.starts_with("status::"))
+        .filter(|label| Some(label.as_str()) != repo_project_label)
         .cloned()
         .collect()
 }
@@ -786,11 +695,11 @@ fn labels_without_status(labels: &[String]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        copy_local_only_fields, non_empty_env, parse_glab_token, resolve_git_auth,
+        copy_local_only_fields, issue_to_upsert, non_empty_env, parse_glab_token, resolve_git_auth,
         sanitize_state_reason,
     };
-    use crate::domain::issue::{IssueFrontmatter, IssueState, Priority};
-    use crate::models::{Backend, BackendConfig};
+    use crate::domain::issue::{IssueDocument, IssueFrontmatter, IssueState, Priority};
+    use crate::models::{BackendKind, RepoProject, TasksBackendSpec, VCBackendSpec};
     use std::sync::{LazyLock, Mutex};
 
     static ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
@@ -803,7 +712,6 @@ mod tests {
     impl EnvGuard {
         fn unset(name: &'static str) -> Self {
             let original = std::env::var(name).ok();
-            // SAFETY: these tests serialize environment mutation with ENV_LOCK.
             unsafe {
                 std::env::remove_var(name);
             }
@@ -812,7 +720,6 @@ mod tests {
 
         fn set(name: &'static str, value: &str) -> Self {
             let original = std::env::var(name).ok();
-            // SAFETY: these tests serialize environment mutation with ENV_LOCK.
             unsafe {
                 std::env::set_var(name, value);
             }
@@ -823,144 +730,38 @@ mod tests {
     impl Drop for EnvGuard {
         fn drop(&mut self) {
             match &self.original {
-                Some(value) => {
-                    // SAFETY: these tests serialize environment mutation with ENV_LOCK.
-                    unsafe {
-                        std::env::set_var(self.name, value);
-                    }
-                }
-                None => {
-                    // SAFETY: these tests serialize environment mutation with ENV_LOCK.
-                    unsafe {
-                        std::env::remove_var(self.name);
-                    }
-                }
+                Some(value) => unsafe {
+                    std::env::set_var(self.name, value);
+                },
+                None => unsafe {
+                    std::env::remove_var(self.name);
+                },
             }
         }
     }
 
-    #[test]
-    fn non_empty_env_returns_none_for_unset_var() {
-        let _lock = ENV_LOCK.lock().expect("env lock");
-        let _guard = EnvGuard::unset("RIPTSK_TEST_NON_EMPTY_ENV");
-
-        assert_eq!(non_empty_env("RIPTSK_TEST_NON_EMPTY_ENV"), None);
-    }
-
-    #[test]
-    fn non_empty_env_returns_none_for_empty_string() {
-        let _lock = ENV_LOCK.lock().expect("env lock");
-        let _guard = EnvGuard::set("RIPTSK_TEST_NON_EMPTY_ENV", "");
-
-        assert_eq!(non_empty_env("RIPTSK_TEST_NON_EMPTY_ENV"), None);
-    }
-
-    #[test]
-    fn non_empty_env_returns_none_for_whitespace_only() {
-        let _lock = ENV_LOCK.lock().expect("env lock");
-        let _guard = EnvGuard::set("RIPTSK_TEST_NON_EMPTY_ENV", "   \t  ");
-
-        assert_eq!(non_empty_env("RIPTSK_TEST_NON_EMPTY_ENV"), None);
-    }
-
-    #[test]
-    fn non_empty_env_returns_some_for_valid_value() {
-        let _lock = ENV_LOCK.lock().expect("env lock");
-        let _guard = EnvGuard::set("RIPTSK_TEST_NON_EMPTY_ENV", "token-123");
-
-        assert_eq!(
-            non_empty_env("RIPTSK_TEST_NON_EMPTY_ENV"),
-            Some("token-123".into())
-        );
-    }
-
-    #[test]
-    fn parse_glab_token_extracts_token_from_multiline_output() {
-        let stderr_output = "gitlab.suse.de\n  ✓ Logged in to gitlab.suse.de as user\n  ✓ Token found: glpat-xxxx\n  ✓ REST API Endpoint: https://gitlab.suse.de/api/v4/";
-
-        assert_eq!(parse_glab_token(stderr_output), Some("glpat-xxxx".into()));
-    }
-
-    #[test]
-    fn parse_glab_token_returns_none_without_token_line() {
-        let stderr_output = "gitlab.com\n  ✓ Logged in\n  ✓ API calls: 123";
-
-        assert_eq!(parse_glab_token(stderr_output), None);
-    }
-
-    #[test]
-    fn parse_glab_token_handles_plain_token_found_line() {
-        let stderr_output = "gitlab.com\nToken found: glpat-xxxx";
-
-        assert_eq!(parse_glab_token(stderr_output), Some("glpat-xxxx".into()));
-    }
-
-    #[test]
-    fn parse_glab_token_falls_back_to_token_prefix() {
-        let stderr_output = "gitlab.com\nToken: glpat-xxxx";
-
-        assert_eq!(parse_glab_token(stderr_output), Some("glpat-xxxx".into()));
-    }
-
-    #[test]
-    fn parse_glab_token_returns_none_for_empty_token_value() {
-        let stderr_output = "Token found:  ";
-
-        assert_eq!(parse_glab_token(stderr_output), None);
-    }
-
-    #[test]
-    fn resolve_git_auth_returns_none_for_local_backend() {
-        let backend = BackendConfig {
-            name: "local".into(),
-            backend: Backend::Local,
-            host: None,
-            repo: None,
-            default_board: None,
+    fn repo_project(kind: BackendKind, label: Option<&str>) -> RepoProject {
+        RepoProject {
+            name: "demo".into(),
+            vc_backend: VCBackendSpec {
+                kind: BackendKind::Github,
+                host: None,
+                repo: Some("owner/repo".into()),
+                path: None,
+            },
+            tasks_backend: TasksBackendSpec {
+                kind,
+                host: Some("https://jira.example".into()),
+                repo: Some("owner/repo".into()),
+                jira_project: Some("org/PROJ".into()),
+                default_issue_type: None,
+                path: None,
+            },
+            default_board: Some("personal".into()),
             default_org: None,
-            path: None,
-            vc: None,
-            default_issue_type: None,
-            key: None,
-        };
-
-        assert!(resolve_git_auth(&backend).is_none());
-    }
-
-    #[test]
-    fn copy_local_only_fields_copies_all_fields() {
-        let source = frontmatter_fixture("SRC", "Source title");
-        let mut target = frontmatter_fixture("DST", "Target title");
-        target.pr_url = None;
-        target.pr_number = None;
-        target.branch = None;
-        target.order = Some(1);
-        target.recurring = None;
-        target.cycle = None;
-        target.board = "personal".into();
-        target.org = None;
-        target.priority = Some(Priority::Medium);
-        let original_title = target.title.clone();
-        let original_status = target.status.clone();
-        let original_labels = target.labels.clone();
-
-        copy_local_only_fields(&mut target, &source);
-
-        assert_eq!(
-            target.pr_url.as_deref(),
-            Some("https://example.invalid/pulls/42")
-        );
-        assert_eq!(target.pr_number, Some(42));
-        assert_eq!(target.branch.as_deref(), Some("feature/42"));
-        assert_eq!(target.order, Some(7));
-        assert_eq!(target.recurring.as_deref(), Some("weekly-42"));
-        assert_eq!(target.cycle.as_deref(), Some("2026-W13"));
-        assert_eq!(target.board, "ops");
-        assert_eq!(target.org.as_deref(), Some("eng"));
-        assert_eq!(target.priority, Some(Priority::High));
-        assert_eq!(target.title, original_title);
-        assert_eq!(target.status, original_status);
-        assert_eq!(target.labels, original_labels);
+            key: Some("DEMO".into()),
+            repo_project_label: label.map(str::to_owned),
+        }
     }
 
     fn frontmatter_fixture(id: &str, title: &str) -> IssueFrontmatter {
@@ -999,220 +800,98 @@ mod tests {
     }
 
     #[test]
+    fn non_empty_env_returns_none_for_unset_var() {
+        let _lock = ENV_LOCK.lock().expect("env lock");
+        let _guard = EnvGuard::unset("RIPTSK_TEST_NON_EMPTY_ENV");
+        assert_eq!(non_empty_env("RIPTSK_TEST_NON_EMPTY_ENV"), None);
+    }
+
+    #[test]
+    fn parse_glab_token_extracts_token_from_multiline_output() {
+        let stderr_output = "gitlab.suse.de\n  ✓ Logged in to gitlab.suse.de as user\n  ✓ Token found: glpat-xxxx\n  ✓ REST API Endpoint: https://gitlab.suse.de/api/v4/";
+        assert_eq!(parse_glab_token(stderr_output), Some("glpat-xxxx".into()));
+    }
+
+    #[test]
+    fn resolve_git_auth_returns_none_for_local_backend() {
+        let vc_backend = VCBackendSpec {
+            kind: BackendKind::Local,
+            host: None,
+            repo: None,
+            path: None,
+        };
+        assert!(resolve_git_auth(&vc_backend, "local").is_none());
+    }
+
+    #[test]
+    fn copy_local_only_fields_copies_all_fields() {
+        let source = frontmatter_fixture("SRC", "Source title");
+        let mut target = frontmatter_fixture("DST", "Target title");
+        target.pr_url = None;
+        copy_local_only_fields(&mut target, &source);
+        assert_eq!(
+            target.pr_url.as_deref(),
+            Some("https://example.invalid/pulls/42")
+        );
+        assert_eq!(target.pr_number, Some(42));
+        assert_eq!(target.branch.as_deref(), Some("feature/42"));
+    }
+
+    #[test]
     fn sanitize_state_reason_drops_reopened_when_closing() {
         assert_eq!(sanitize_state_reason("closed", Some("reopened")), None);
     }
 
     #[test]
-    fn sanitize_state_reason_allows_completed_when_closing() {
-        assert_eq!(
-            sanitize_state_reason("closed", Some("completed")),
-            Some("completed".into())
+    fn issue_to_upsert_injects_repo_project_label() {
+        let repo_project = repo_project(BackendKind::Jira, Some("proj::repo-a"));
+        let issue = IssueDocument {
+            frontmatter: frontmatter_fixture("DEMO--1", "Title"),
+            body: "Body".into(),
+            remote_section: None,
+        };
+        let upsert = issue_to_upsert(&issue, &repo_project);
+        assert!(upsert.labels.contains(&"proj::repo-a".to_string()));
+        assert!(upsert.labels.iter().any(|label| label == "status::todo"));
+    }
+
+    #[test]
+    fn issue_to_upsert_skips_label_for_non_jira_backend() {
+        // Auto-registration may populate `repo_project_label` on every RepoProject
+        // (not just Jira), but label injection is strictly a Jira partitioning
+        // feature. GitHub/GitLab upserts must not get an extra project label.
+        let repo_project = repo_project(BackendKind::Github, Some("proj::repo-a"));
+        let issue = IssueDocument {
+            frontmatter: frontmatter_fixture("DEMO--1", "Title"),
+            body: "Body".into(),
+            remote_section: None,
+        };
+        let upsert = issue_to_upsert(&issue, &repo_project);
+        assert!(
+            !upsert.labels.iter().any(|label| label == "proj::repo-a"),
+            "GitHub upsert labels should not contain repo_project_label: {:?}",
+            upsert.labels
         );
     }
 
     #[test]
-    fn sanitize_state_reason_allows_not_planned_when_closing() {
+    fn issue_to_upsert_dedupes_repo_project_label() {
+        let repo_project = repo_project(BackendKind::Jira, Some("proj::repo-a"));
+        let mut frontmatter = frontmatter_fixture("DEMO--1", "Title");
+        frontmatter.labels.push("proj::repo-a".into());
+        let issue = IssueDocument {
+            frontmatter,
+            body: "Body".into(),
+            remote_section: None,
+        };
+        let upsert = issue_to_upsert(&issue, &repo_project);
         assert_eq!(
-            sanitize_state_reason("closed", Some("not_planned")),
-            Some("not_planned".into())
+            upsert
+                .labels
+                .iter()
+                .filter(|label| *label == "proj::repo-a")
+                .count(),
+            1
         );
-    }
-
-    #[test]
-    fn sanitize_state_reason_allows_duplicate_when_closing() {
-        assert_eq!(
-            sanitize_state_reason("closed", Some("duplicate")),
-            Some("duplicate".into())
-        );
-    }
-
-    #[test]
-    fn sanitize_state_reason_drops_completed_when_opening() {
-        assert_eq!(sanitize_state_reason("open", Some("completed")), None);
-    }
-
-    #[test]
-    fn sanitize_state_reason_allows_reopened_when_opening() {
-        assert_eq!(
-            sanitize_state_reason("open", Some("reopened")),
-            Some("reopened".into())
-        );
-    }
-
-    #[test]
-    fn sanitize_state_reason_passes_through_none() {
-        assert_eq!(sanitize_state_reason("closed", None), None);
-    }
-
-    #[test]
-    fn resolve_git_auth_returns_none_for_jira_backend() {
-        let backend = BackendConfig {
-            name: "jira-test".into(),
-            backend: Backend::Jira,
-            host: Some("https://test.atlassian.net".into()),
-            repo: Some("org/PROJ".into()),
-            default_board: None,
-            default_org: None,
-            path: None,
-            vc: None,
-            default_issue_type: None,
-            key: None,
-        };
-
-        assert!(resolve_git_auth(&backend).is_none());
-    }
-
-    #[test]
-    fn resolve_jira_credentials_with_env_vars() {
-        let _lock = ENV_LOCK.lock().expect("env lock");
-        let _token = EnvGuard::set("JIRA_API_TOKEN", "test-token");
-        let _email = EnvGuard::set("JIRA_EMAIL", "test@example.com");
-
-        let result = super::resolve_jira_credentials("test-backend", "https://test.atlassian.net");
-        assert!(result.is_ok());
-        let (auth, source) = result.unwrap();
-        match auth {
-            crate::adapters::jira::JiraAuth::Basic { email, token } => {
-                assert_eq!(email, "test@example.com");
-                assert_eq!(token, "test-token");
-            }
-            _ => panic!("expected Basic auth"),
-        }
-        assert_eq!(source.to_string(), "JIRA_API_TOKEN+JIRA_EMAIL");
-    }
-
-    #[test]
-    fn resolve_jira_credentials_pat_without_email() {
-        let _lock = ENV_LOCK.lock().expect("env lock");
-        let _token = EnvGuard::set("JIRA_API_TOKEN", "pat-token");
-        let _email = EnvGuard::unset("JIRA_EMAIL");
-
-        let result = super::resolve_jira_credentials("test-backend", "https://test.atlassian.net");
-        assert!(result.is_ok());
-        let (auth, source) = result.unwrap();
-        match auth {
-            crate::adapters::jira::JiraAuth::Pat(token) => {
-                assert_eq!(token, "pat-token");
-            }
-            _ => panic!("expected PAT auth"),
-        }
-        assert_eq!(source.to_string(), "JIRA_API_TOKEN");
-    }
-
-    #[test]
-    fn resolve_jira_credentials_fails_without_any() {
-        let _lock = ENV_LOCK.lock().expect("env lock");
-        let _token = EnvGuard::unset("JIRA_API_TOKEN");
-        let _email = EnvGuard::unset("JIRA_EMAIL");
-
-        let result = super::resolve_jira_credentials("test-backend", "https://test.atlassian.net");
-        assert!(result.is_err());
-        let error = result.unwrap_err().to_string();
-        assert!(error.contains("Jira authentication failed"));
-        assert!(error.contains("JIRA_API_TOKEN"));
-    }
-
-    #[test]
-    fn resolve_vc_for_jira_without_vc_returns_none() {
-        let backend = BackendConfig {
-            name: "jira-test".into(),
-            backend: Backend::Jira,
-            host: Some("https://test.atlassian.net".into()),
-            repo: Some("org/PROJ".into()),
-            default_board: None,
-            default_org: None,
-            path: None,
-            vc: None,
-            default_issue_type: None,
-            key: None,
-        };
-        let config = crate::config::Config {
-            backends: vec![backend.clone()],
-            ..crate::config::default_config()
-        };
-
-        let result = super::resolve_vc_for_backend(&backend, &config);
-        // Will fail at auth (no credentials), but that's expected in tests.
-        // The important thing is the logic path.
-        // For a test with no credentials available, the resolve will error.
-        // Let's just test the None case with a Jira backend that has no vc field.
-        // resolve_vc_for_backend checks backend.vc first, then falls through to
-        // backend.backend match. For Jira, the _ arm returns None.
-        // But it calls build_version_control first for Github/Gitlab...
-        // Actually for Jira without vc, it hits the _ => Ok(None) arm directly.
-        // No credential resolution happens.
-        match result {
-            Ok(None) => {} // Expected: Jira without vc returns None
-            Ok(Some(_)) => panic!("expected None for Jira without vc"),
-            Err(e) => panic!("unexpected error: {e}"),
-        }
-    }
-
-    #[test]
-    fn resolve_vc_with_invalid_reference_errors() {
-        let backend = BackendConfig {
-            name: "jira-test".into(),
-            backend: Backend::Jira,
-            host: Some("https://test.atlassian.net".into()),
-            repo: Some("org/PROJ".into()),
-            default_board: None,
-            default_org: None,
-            path: None,
-            vc: Some("nonexistent".into()),
-            default_issue_type: None,
-            key: None,
-        };
-        let config = crate::config::Config {
-            backends: vec![backend.clone()],
-            ..crate::config::default_config()
-        };
-
-        let result = super::resolve_vc_for_backend(&backend, &config);
-        match result {
-            Err(e) => assert!(e.to_string().contains("does not exist"), "got: {e}"),
-            Ok(_) => panic!("expected error for nonexistent vc reference"),
-        }
-    }
-
-    #[test]
-    fn resolve_vc_rejects_jira_as_vc_target() {
-        let jira_backend = BackendConfig {
-            name: "jira-issues".into(),
-            backend: Backend::Jira,
-            host: Some("https://test.atlassian.net".into()),
-            repo: Some("org/PROJ".into()),
-            default_board: None,
-            default_org: None,
-            path: None,
-            vc: Some("jira-other".into()),
-            default_issue_type: None,
-            key: None,
-        };
-        let jira_other = BackendConfig {
-            name: "jira-other".into(),
-            backend: Backend::Jira,
-            host: Some("https://other.atlassian.net".into()),
-            repo: Some("org/OTHER".into()),
-            default_board: None,
-            default_org: None,
-            path: None,
-            vc: None,
-            default_issue_type: None,
-            key: None,
-        };
-        let config = crate::config::Config {
-            backends: vec![jira_backend.clone(), jira_other],
-            ..crate::config::default_config()
-        };
-
-        let result = super::resolve_vc_for_backend(&jira_backend, &config);
-        match result {
-            Err(e) => assert!(
-                e.to_string().contains("must be a github or gitlab backend"),
-                "got: {e}"
-            ),
-            Ok(_) => panic!("expected error for Jira as vc target"),
-        }
     }
 }

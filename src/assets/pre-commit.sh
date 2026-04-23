@@ -71,8 +71,8 @@ validate_config_file() {
     yq '.' "$file" >/dev/null 2>&1 || { report_fail "$file" "invalid YAML"; return; }
     # Check name uniqueness
     local dup_name
-    dup_name="$(yq -o=json '.backends // []' "$file" | jq -r '[.[].name] | group_by(.) | map(select(length > 1)) | .[0][0] // empty')"
-    [[ -z "$dup_name" ]] || report_fail "$file" "duplicate backend name \"$dup_name\""
+    dup_name="$(yq -o=json '.projects // []' "$file" | jq -r '[.[].name] | group_by(.) | map(select(length > 1)) | .[0][0] // empty')"
+    [[ -z "$dup_name" ]] || report_fail "$file" "duplicate RepoProject name \"$dup_name\""
     # Check board name uniqueness
     local dup_board
     dup_board="$(yq -o=json '.boards // []' "$file" | jq -r '[.[].name] | group_by(.) | map(select(length > 1)) | .[0][0] // empty')"

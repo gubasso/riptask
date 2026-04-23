@@ -11,10 +11,10 @@ use crate::domain::issue::{
     Priority,
 };
 use crate::error::RiptskError;
-use crate::models::{Backend, BackendConfig};
+use crate::models::{BackendKind, RepoProject};
 use crate::paths::AppPaths;
 use crate::services::auto_commit::maybe_auto_commit;
-use crate::services::backend_mapping::build_state_labels;
+use crate::services::backend_mapping::{build_state_labels, effective_repo_project_label};
 use crate::services::id_resolution;
 use crate::services::issue_ids;
 use crate::services::issue_service::{IssueDraft, IssueService, generate_slug};
@@ -267,9 +267,10 @@ pub(crate) async fn create_issue_from_args(
             .to_string(),
     );
     if args.project.is_none()
-        && let Some(backend) = crate::services::project_detection::detect_from_cwd(&cwd, &config)?
+        && let Some(repo_project) =
+            crate::services::project_detection::detect_from_cwd(&cwd, &config)?
     {
-        args.project = Some(backend.name);
+        args.project = Some(repo_project.name.clone());
     }
     let edit = args.edit;
     let prompts = DialoguerPrompts;
@@ -337,17 +338,18 @@ pub(crate) async fn create_issue_from_args(
     {
         draft.body = body;
     }
-    let issue = if draft
-        .backend
-        .as_ref()
-        .is_some_and(|backend| matches!(backend, Backend::Github | Backend::Gitlab))
-    {
-        let backend = config
-            .backends
+    let issue = if draft.tasks_backend_kind.as_ref().is_some_and(|kind| {
+        matches!(
+            kind,
+            BackendKind::Github | BackendKind::Gitlab | BackendKind::Jira
+        )
+    }) {
+        let repo_project = config
+            .projects
             .iter()
-            .find(|backend| backend.name == draft.project)
+            .find(|repo_project| repo_project.name == draft.project)
             .ok_or_else(|| RiptskError::Unregistered(draft.project.clone()))?;
-        create_backend_issue(paths, &service, &draft, backend).await?
+        create_backend_issue(paths, &service, &draft, repo_project).await?
     } else {
         create_local_issue(&service, &draft)?
     };
@@ -414,10 +416,16 @@ fn resolve_project_repo_path(
 ) -> camino::Utf8PathBuf {
     if let Some(project) = project
         && let Some(path) = config
-            .backends
+            .projects
             .iter()
-            .find(|backend| backend.name == project)
-            .and_then(|backend| backend.path.as_ref())
+            .find(|repo_project| repo_project.name == project)
+            .and_then(|repo_project| {
+                repo_project
+                    .vc_backend
+                    .path
+                    .as_ref()
+                    .or(repo_project.tasks_backend.path.as_ref())
+            })
     {
         return camino::Utf8PathBuf::from(path);
     }
@@ -657,19 +665,47 @@ async fn create_backend_issue(
     paths: &AppPaths,
     service: &IssueService<'_>,
     draft: &IssueDraft,
-    backend: &BackendConfig,
+    repo_project: &RepoProject,
 ) -> Result<IssueDocument, RiptskError> {
-    let provider = crate::services::backend_mapping::build_issue_tracker(backend)?;
-    let repo = backend
-        .repo
-        .as_deref()
-        .ok_or_else(|| RiptskError::Config(format!("backend {} is missing repo", backend.name)))?;
+    let provider = crate::services::backend_mapping::build_issue_tracker(repo_project)?;
+    let repo = match repo_project.tasks_backend.kind {
+        BackendKind::Github | BackendKind::Gitlab => {
+            repo_project.tasks_backend.repo.as_deref().ok_or_else(|| {
+                RiptskError::Config(format!(
+                    "RepoProject {} is missing TasksBackend repo",
+                    repo_project.name
+                ))
+            })?
+        }
+        BackendKind::Jira => repo_project
+            .tasks_backend
+            .jira_project
+            .as_deref()
+            .ok_or_else(|| {
+                RiptskError::Config(format!(
+                    "RepoProject {} is missing JiraProject",
+                    repo_project.name
+                ))
+            })?,
+        BackendKind::Local => {
+            return Err(RiptskError::Config(format!(
+                "RepoProject {} does not have a hosted TasksBackend",
+                repo_project.name
+            )));
+        }
+    };
+    let mut upsert_labels = build_state_labels(&draft.status, &draft.labels);
+    if let Some(label) = effective_repo_project_label(repo_project)
+        && !upsert_labels.iter().any(|candidate| candidate == label)
+    {
+        upsert_labels.push(label.to_owned());
+    }
     let upsert = BackendIssueUpsert {
         title: draft.title.clone(),
         body: draft.body.clone(),
         state: None,
         state_reason: None,
-        labels: build_state_labels(&draft.status, &draft.labels),
+        labels: upsert_labels,
         assignees: draft.assignee.clone().into_iter().collect(),
         milestone_id: None,
         due_date: None,
@@ -683,7 +719,7 @@ async fn create_backend_issue(
         provider.create_issue(repo, &upsert).await
     })
     .await?;
-    let scope = issue_ids::effective_key(backend);
+    let scope = issue_ids::effective_key(repo_project);
     let id = issue_ids::format_id(&scope, record.issue_id);
     let document = IssueDocument {
         frontmatter: IssueFrontmatter {
@@ -700,7 +736,7 @@ async fn create_backend_issue(
             state_reason: record.state_reason.clone(),
             cycle: None,
             order: Some(draft.order),
-            gitlab: if backend.backend == Backend::Gitlab {
+            gitlab: if repo_project.tasks_backend.kind == BackendKind::Gitlab {
                 Some(GitlabIssueMeta {
                     repo: repo.to_owned(),
                     issue_id: Some(record.issue_id),
@@ -712,7 +748,7 @@ async fn create_backend_issue(
             } else {
                 None
             },
-            github: if backend.backend == Backend::Github {
+            github: if repo_project.tasks_backend.kind == BackendKind::Github {
                 Some(GithubIssueMeta {
                     repo: repo.to_owned(),
                     issue_id: Some(record.issue_id),
@@ -725,7 +761,7 @@ async fn create_backend_issue(
             } else {
                 None
             },
-            jira: if backend.backend == Backend::Jira {
+            jira: if repo_project.tasks_backend.kind == BackendKind::Jira {
                 let issue_key = record.url.rsplit('/').next().map(|s| s.to_owned());
                 Some(JiraIssueMeta {
                     project_key: crate::adapters::jira::JiraProvider::project_key(repo).to_owned(),
@@ -760,12 +796,12 @@ async fn create_backend_issue(
         remote_section: None,
     };
     service.persist_issue(&document)?;
-    cache::seed_backend_state_entry(paths, provider_name(backend), repo, &record)
+    cache::seed_backend_state_entry(paths, provider_name(repo_project), repo, &record)
         .map_err(RiptskError::Other)?;
     tracing::info!(
         issue_id = %document.frontmatter.id,
         project = %document.frontmatter.project,
-        backend = %backend.name,
+        repo_project = %repo_project.name,
         "created issue"
     );
     Ok(document)
@@ -780,12 +816,12 @@ fn create_local_issue(
     Ok(document)
 }
 
-fn provider_name(backend: &BackendConfig) -> &'static str {
-    match backend.backend {
-        Backend::Github => "github",
-        Backend::Gitlab => "gitlab",
-        Backend::Jira => "jira",
-        Backend::Local => "local",
+fn provider_name(repo_project: &RepoProject) -> &'static str {
+    match repo_project.tasks_backend.kind {
+        BackendKind::Github => "github",
+        BackendKind::Gitlab => "gitlab",
+        BackendKind::Jira => "jira",
+        BackendKind::Local => "local",
     }
 }
 

@@ -6,6 +6,7 @@ pub mod issue_ids;
 pub mod issue_service;
 pub mod project_detection;
 pub mod recurrence;
+pub mod repo_project_label;
 pub mod sync_engine;
 pub mod templates;
 pub mod view_builder;

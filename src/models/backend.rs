@@ -1,18 +1,17 @@
 use serde::{Deserialize, Serialize};
 
-/// Supported backend types. GitHub and GitLab provide both issue tracking and
-/// version control. Jira is issue-only — use the `vc` field on [`BackendConfig`]
-/// to link a GitHub/GitLab backend for PRs and branches.
+/// Kind of provider — identifies the external service.
+/// Renamed from `Backend` to disambiguate it from the RepoProject config shape.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
-pub enum Backend {
+pub enum BackendKind {
     Github,
     Gitlab,
     Jira,
     Local,
 }
 
-impl Backend {
+impl BackendKind {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Github => "github",
@@ -23,59 +22,60 @@ impl Backend {
     }
 }
 
-/// Configuration for a single backend entry in `riptsk.yaml`.
-///
-/// A backend can serve as an issue tracker, a version control provider, or both.
-/// The `vc` field allows decoupling: e.g. "issues in Jira, PRs on GitHub".
-///
-/// # Example config
-/// ```yaml
-/// backends:
-///   - name: github-repo
-///     type: github
-///     repo: owner/repo
-///
-///   - name: jira-myteam
-///     type: jira
-///     host: https://myteam.atlassian.net
-///     repo: myteam/PROJ          # org/PROJECT_KEY format
-///     default_issue_type: Task
-///     vc: github-repo            # PRs/branches go to GitHub
-/// ```
+/// Version-control nature of a RepoProject's remote.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct BackendConfig {
-    pub name: String,
+pub struct VCBackendSpec {
     #[serde(rename = "type")]
-    pub backend: Backend,
-    /// Required for Jira (e.g. `https://myteam.atlassian.net`).
-    /// Optional for GitHub (defaults to github.com) and GitLab (defaults to gitlab.com).
+    pub kind: BackendKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host: Option<String>,
-    /// Repository/project identifier. Format varies by backend:
-    /// - GitHub: `owner/repo`
-    /// - GitLab: `group/project`
-    /// - Jira: `org/PROJECT_KEY` (org is user-chosen, PROJECT_KEY is the Jira project)
+    /// GitHub: `owner/repo`. GitLab: `group/project`. Local: unused.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo: Option<String>,
+    /// Local VC only: canonical absolute path to the RepoProject directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+}
+
+/// Task-tracker nature of a RepoProject's issue backend.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TasksBackendSpec {
+    #[serde(rename = "type")]
+    pub kind: BackendKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    /// GitHub: `owner/repo`. GitLab: `group/project`. Local: unused.
+    /// For Jira, use `jira_project` instead of `repo`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
+    /// Jira only: `org/PROJECT_KEY`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jira_project: Option<String>,
+    /// Jira only: default issue type for creation (e.g. "Task", "Story", "Bug").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_issue_type: Option<String>,
+    /// Local tasks backend only: canonical absolute path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+}
+
+/// A RepoProject — the coding project unit. Corresponds to one registered directory.
+///
+/// When `vc_backend` and `tasks_backend` describe the same remote (e.g. GitHub for
+/// both), the info is duplicated intentionally. Explicit over clever.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RepoProject {
+    pub name: String,
+    pub vc_backend: VCBackendSpec,
+    pub tasks_backend: TasksBackendSpec,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_board: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_org: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub path: Option<String>,
-    /// Name of another backend to use for version control (PRs, branches).
-    /// Must reference a GitHub or GitLab backend. When omitted:
-    /// - GitHub/GitLab backends provide their own VC
-    /// - Jira backends are issue-only (no PR/branch commands)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub vc: Option<String>,
-    /// Jira-specific: default issue type for creation (e.g. "Task", "Story", "Bug").
-    /// When absent, the type is discovered from Jira's create metadata endpoint.
-    /// Set this to avoid the extra API call on every issue creation.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub default_issue_type: Option<String>,
-    /// Project key used to build issue IDs (`{KEY}--{number}`).
-    /// When absent, the key is derived from `repo`/`name` at runtime.
+    /// Short ID prefix (e.g. `RIPTSK` in `RIPTSK--123`). Derived at registration.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
+    /// Label used to partition a shared Jira project across multiple RepoProjects.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_project_label: Option<String>,
 }

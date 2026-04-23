@@ -1,22 +1,36 @@
 use camino::Utf8PathBuf;
 use riptsk::config::default_config;
 use riptsk::error::RiptskError;
-use riptsk::models::{Backend, BackendConfig};
+use riptsk::models::{BackendKind, RepoProject, TasksBackendSpec, VCBackendSpec};
 use riptsk::services::project_detection::register_project_auto;
 use tempfile::tempdir;
 
-fn backend(kind: Backend, name: &str, path: Option<&str>, key: Option<&str>) -> BackendConfig {
-    BackendConfig {
+fn repo_project(
+    kind: BackendKind,
+    name: &str,
+    path: Option<&str>,
+    key: Option<&str>,
+) -> RepoProject {
+    RepoProject {
         name: name.into(),
-        backend: kind,
-        host: None,
-        repo: None,
+        vc_backend: VCBackendSpec {
+            kind: kind.clone(),
+            host: None,
+            repo: None,
+            path: path.map(str::to_owned),
+        },
+        tasks_backend: TasksBackendSpec {
+            kind,
+            host: None,
+            repo: None,
+            jira_project: None,
+            default_issue_type: None,
+            path: path.map(str::to_owned),
+        },
         default_board: Some("personal".into()),
         default_org: None,
-        path: path.map(str::to_owned),
-        vc: None,
-        default_issue_type: None,
         key: key.map(str::to_owned),
+        repo_project_label: None,
     }
 }
 
@@ -28,12 +42,12 @@ fn auto_register_assigns_derived_key() {
     let cwd = Utf8PathBuf::from_path_buf(plain_dir).expect("utf8 path");
     let mut config = default_config();
 
-    let backend = register_project_auto(&cwd, &mut config, None, None)
+    let repo_project = register_project_auto(&cwd, &mut config, None, None)
         .expect("register")
-        .expect("backend");
+        .expect("repo project");
 
-    assert_eq!(backend.key.as_deref(), Some("MYPROJ"));
-    assert_eq!(config.backends.len(), 1);
+    assert_eq!(repo_project.key.as_deref(), Some("MYPROJ"));
+    assert_eq!(config.projects.len(), 1);
 }
 
 #[test]
@@ -47,16 +61,16 @@ fn auto_register_collision_without_prompts_returns_key_collision_and_does_not_mu
     let existing_path = existing_dir.to_string_lossy().to_string();
 
     let mut config = default_config();
-    config.backends.push(backend(
-        Backend::Local,
+    config.projects.push(repo_project(
+        BackendKind::Local,
         "existing",
         Some(&existing_path),
         Some("FOO"),
     ));
-    let before = config.backends.len();
+    let before = config.projects.len();
 
     let error = register_project_auto(&cwd, &mut config, None, None).expect_err("collision");
 
     assert!(matches!(error, RiptskError::KeyCollision(_)));
-    assert_eq!(config.backends.len(), before);
+    assert_eq!(config.projects.len(), before);
 }

@@ -10,10 +10,10 @@ use crate::commands::branch::{backend_issue_number, current_repo, cwd_utf8};
 use crate::config::{Config, load_config};
 use crate::domain::issue::{IssueDocument, IssueState};
 use crate::error::RiptskError;
-use crate::models::{Backend, BackendConfig};
+use crate::models::{BackendKind, RepoProject};
 use crate::paths::AppPaths;
 use crate::services::auto_commit::maybe_auto_commit;
-use crate::services::backend_mapping::{build_provider_for_backend, resolve_git_auth};
+use crate::services::backend_mapping::{build_hosted_provider, resolve_git_auth};
 use crate::services::id_resolution;
 use crate::services::issue_service::now_utc;
 use crate::storage::{frontmatter, issue_store};
@@ -64,10 +64,13 @@ pub(crate) async fn create(paths: &AppPaths, args: PrCreateArgs) -> Result<(), R
         ));
     }
 
-    let backend = resolve_hosted_backend(&config, &issue)?;
-    let git = CliGit::with_auth(resolve_git_auth(backend));
-    let provider = build_provider_for_backend(backend)?;
-    let repo_name = backend.repo.as_deref().unwrap_or_default();
+    let repo_project = resolve_hosted_repo_project(&config, &issue)?;
+    let git = CliGit::with_auth(resolve_git_auth(
+        &repo_project.vc_backend,
+        &repo_project.name,
+    ));
+    let provider = build_hosted_provider(&repo_project.vc_backend, &repo_project.name)?;
+    let repo_name = repo_project.vc_backend.repo.as_deref().unwrap_or_default();
     let default_branch = ui::spin_on_async("Fetching default branch", async {
         provider.default_branch(repo_name).await
     })
@@ -109,7 +112,7 @@ pub(crate) async fn create(paths: &AppPaths, args: PrCreateArgs) -> Result<(), R
     })?;
 
     let mut skip_ai = false;
-    if backend.backend == Backend::Github
+    if repo_project.vc_backend.kind == BackendKind::Github
         && git.commits_ahead_of_base(repo.as_path(), &branch, &default_branch)? == 0
     {
         if git.has_staged_changes(repo.as_path())? {
@@ -136,7 +139,7 @@ pub(crate) async fn create(paths: &AppPaths, args: PrCreateArgs) -> Result<(), R
             format!("Jira: {key}"),
         )
     } else {
-        let issue_number = backend_issue_number(backend, &issue)?;
+        let issue_number = backend_issue_number(repo_project, &issue)?;
         (
             default_title(issue_number, &issue.frontmatter.title),
             default_body(issue_number),
@@ -188,9 +191,9 @@ async fn show(paths: &AppPaths, args: PrShowArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
     let config = load_config(paths.config_path().as_std_path())?;
     let (_path, issue) = resolve_issue(paths, &config, &args.scope, args.id.as_deref())?;
-    let backend = resolve_hosted_backend(&config, &issue)?;
-    let provider = build_provider_for_backend(backend)?;
-    let repo_name = backend.repo.as_deref().unwrap_or_default();
+    let repo_project = resolve_hosted_repo_project(&config, &issue)?;
+    let provider = build_hosted_provider(&repo_project.vc_backend, &repo_project.name)?;
+    let repo_name = repo_project.vc_backend.repo.as_deref().unwrap_or_default();
     let pr_number = resolve_pr_number(provider.as_ref(), repo_name, &issue).await?;
     let record = ui::spin_on_async("Fetching PR details", async {
         provider.get_pr(repo_name, pr_number).await
@@ -218,8 +221,11 @@ async fn merge(paths: &AppPaths, args: PrMergeArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
     let config = load_config(paths.config_path().as_std_path())?;
     let (_path, issue) = resolve_issue(paths, &config, &args.scope, args.id.as_deref())?;
-    let backend = resolve_hosted_backend(&config, &issue)?;
-    let git = CliGit::with_auth(resolve_git_auth(backend));
+    let repo_project = resolve_hosted_repo_project(&config, &issue)?;
+    let git = CliGit::with_auth(resolve_git_auth(
+        &repo_project.vc_backend,
+        &repo_project.name,
+    ));
     let repo_path = current_repo()?;
     let stashed = if git.has_working_tree_changes(repo_path.as_path())? {
         let current_branch = git.current_branch(repo_path.as_path()).unwrap_or_default();
@@ -234,8 +240,8 @@ async fn merge(paths: &AppPaths, args: PrMergeArgs) -> Result<(), RiptskError> {
     } else {
         false
     };
-    let provider = build_provider_for_backend(backend)?;
-    let repo_name = backend.repo.as_deref().unwrap_or_default();
+    let provider = build_hosted_provider(&repo_project.vc_backend, &repo_project.name)?;
+    let repo_name = repo_project.vc_backend.repo.as_deref().unwrap_or_default();
     let pr_number = resolve_pr_number(provider.as_ref(), repo_name, &issue).await?;
     let opts = MergeOptions {
         merge_method: args.merge_method.unwrap_or_default(),
@@ -249,7 +255,7 @@ async fn merge(paths: &AppPaths, args: PrMergeArgs) -> Result<(), RiptskError> {
         provider.as_ref(),
         &DialoguerPrompts,
         &git,
-        backend.backend.clone(),
+        repo_project.vc_backend.kind.clone(),
         repo_path.as_path(),
         repo_name,
         pr_number,
@@ -267,9 +273,9 @@ async fn edit(paths: &AppPaths, args: PrEditArgs) -> Result<(), RiptskError> {
     paths.require_initialized()?;
     let config = load_config(paths.config_path().as_std_path())?;
     let (path, mut issue) = resolve_issue(paths, &config, &args.scope, args.id.as_deref())?;
-    let backend = resolve_hosted_backend(&config, &issue)?;
-    let provider = build_provider_for_backend(backend)?;
-    let repo_name = backend.repo.as_deref().unwrap_or_default();
+    let repo_project = resolve_hosted_repo_project(&config, &issue)?;
+    let provider = build_hosted_provider(&repo_project.vc_backend, &repo_project.name)?;
+    let repo_name = repo_project.vc_backend.repo.as_deref().unwrap_or_default();
     let pr_number = resolve_pr_number(provider.as_ref(), repo_name, &issue).await?;
     let current = ui::spin_on_async("Fetching PR details", async {
         provider.get_pr(repo_name, pr_number).await
@@ -376,7 +382,7 @@ pub(crate) async fn merge_pr_workflow(
     provider: &dyn VersionControl,
     prompts: &dyn PromptBackend,
     git: &dyn GitBackend,
-    backend_kind: Backend,
+    backend_kind: BackendKind,
     repo_path: &Path,
     repo_name: &str,
     pr_number: u64,
@@ -400,7 +406,7 @@ pub(crate) async fn merge_pr_workflow(
     }
 
     // Cleanup empty bootstrap commit for GitHub before merge
-    if backend_kind == Backend::Github
+    if backend_kind == BackendKind::Github
         && let Some(branch) = issue.frontmatter.branch.as_deref()
     {
         let default_branch = ui::spin_on_async("Fetching default branch", async {
@@ -499,41 +505,22 @@ fn resolve_issue(
     Ok((path, issue))
 }
 
-pub(crate) fn resolve_hosted_backend<'a>(
+pub(crate) fn resolve_hosted_repo_project<'a>(
     config: &'a Config,
     issue: &IssueDocument,
-) -> Result<&'a BackendConfig, RiptskError> {
-    let backend = config
-        .backends
+) -> Result<&'a RepoProject, RiptskError> {
+    let repo_project = config
+        .projects
         .iter()
-        .find(|backend| backend.name == issue.frontmatter.project)
+        .find(|repo_project| repo_project.name == issue.frontmatter.project)
         .ok_or_else(|| RiptskError::Unregistered(issue.frontmatter.project.clone()))?;
-    match backend.backend {
-        Backend::Github | Backend::Gitlab => Ok(backend),
-        Backend::Jira => {
-            // For Jira, resolve through the vc field
-            let vc_name = backend.vc.as_deref().ok_or_else(|| {
-                RiptskError::Config(format!(
-                    "No version control backend configured for project '{}'. \
-                     Add 'vc: <github-or-gitlab-backend>' to the backend config.",
-                    backend.name
-                ))
-            })?;
-            config
-                .backends
-                .iter()
-                .find(|b| b.name == vc_name)
-                .ok_or_else(|| {
-                    RiptskError::Config(format!(
-                        "vc backend '{}' referenced by '{}' not found",
-                        vc_name, backend.name
-                    ))
-                })
-        }
-        Backend::Local => Err(RiptskError::Config(format!(
+    if repo_project.vc_backend.kind == BackendKind::Local {
+        Err(RiptskError::Config(format!(
             "project {} does not have a hosted backend",
-            backend.name
-        ))),
+            repo_project.name
+        )))
+    } else {
+        Ok(repo_project)
     }
 }
 
@@ -617,12 +604,12 @@ fn confirm_merge(
     prompts.confirm(&prompt, false)
 }
 
-fn has_local_ci(repo_path: &Path, backend_kind: &Backend) -> bool {
+fn has_local_ci(repo_path: &Path, backend_kind: &BackendKind) -> bool {
     match backend_kind {
-        Backend::Github => has_local_github_ci(repo_path),
-        Backend::Gitlab => has_local_gitlab_ci(repo_path),
-        Backend::Jira => false,
-        Backend::Local => false,
+        BackendKind::Github => has_local_github_ci(repo_path),
+        BackendKind::Gitlab => has_local_gitlab_ci(repo_path),
+        BackendKind::Jira => false,
+        BackendKind::Local => false,
     }
 }
 
@@ -664,7 +651,7 @@ async fn handle_ci_checks(
     repo_path: &Path,
     repo_name: &str,
     pr_number: u64,
-    backend_kind: &Backend,
+    backend_kind: &BackendKind,
     opts: &MergeOptions,
 ) -> Result<PrChecksStatus, RiptskError> {
     let has_local = has_local_ci(repo_path, backend_kind);
@@ -939,7 +926,7 @@ mod tests {
     };
     use crate::adapters::prompts::PromptBackend;
     use crate::error::RiptskError;
-    use crate::models::Backend;
+    use crate::models::BackendKind;
     use async_trait::async_trait;
     use std::collections::VecDeque;
     use std::fs;
@@ -1376,7 +1363,7 @@ mod tests {
             repo.path(),
             "owner/repo",
             42,
-            &Backend::Github,
+            &BackendKind::Github,
             &merge_options(false, 1),
         )
         .await;
@@ -1406,7 +1393,7 @@ mod tests {
             repo.path(),
             "owner/repo",
             42,
-            &Backend::Github,
+            &BackendKind::Github,
             &merge_options(false, 1),
         )
         .await;
@@ -1433,7 +1420,7 @@ mod tests {
             repo.path(),
             "owner/repo",
             42,
-            &Backend::Github,
+            &BackendKind::Github,
             &merge_options(false, 1),
         )
         .await;
@@ -1459,7 +1446,7 @@ mod tests {
             repo.path(),
             "owner/repo",
             42,
-            &Backend::Github,
+            &BackendKind::Github,
             &merge_options(false, 1),
         )
         .await;
@@ -1489,7 +1476,7 @@ mod tests {
             repo.path(),
             "owner/repo",
             42,
-            &Backend::Github,
+            &BackendKind::Github,
             &merge_options(false, 1),
         )
         .await;
@@ -1516,7 +1503,7 @@ mod tests {
             repo.path(),
             "owner/repo",
             42,
-            &Backend::Github,
+            &BackendKind::Github,
             &merge_options(true, 1),
         )
         .await;

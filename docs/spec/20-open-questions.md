@@ -11,7 +11,7 @@ When `LOCAL-3f2a` → `WHL-043`, scan all `$RIPTSK_REPO/issues/*.md` for referen
 If an issue is deleted or transferred on the remote, do not silently remove the local file. Set `remote_deleted: true` in frontmatter, preserve the last known local `state`, and emit a warning. The user decides what to do with it.
 
 **[RESOLVED] Self-hosted GitLab.**
-Pass `host:` from `riptsk.yaml` remote entry to `glab` via `GITLAB_HOST` env variable or `--hostname` flag. Document the glab authentication setup for self-hosted instances.
+Pass `host:` from the RepoProject's GitLab backend entry to `glab` via `GITLAB_HOST` env variable or `--hostname` flag. Document the glab authentication setup for self-hosted instances.
 
 **[RESOLVED] Multiple remotes, same numeric ID.**
 Remote state cache key is always `<type>:<repo>:<issue_id>` — never just the numeric ID. `WHL-042` and `FSH-042` can coexist.

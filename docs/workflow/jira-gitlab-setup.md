@@ -1,14 +1,14 @@
 # Setup: Jira (issues) + GitLab (vc)
 
-Step-by-step guide to configure a riptsk project where **Jira** tracks issues and **GitLab** hosts branches, merge requests, and CI.
+Step-by-step guide to configure a riptsk RepoProject where **Jira** is the TasksBackend and **GitLab** is the VCBackend for branches, merge requests, and CI.
 
 This is the common enterprise pattern: code review lives on GitLab, but ticketing, planning, and reporting live on Jira. Every branch and MR title carries a Jira key (e.g. `PROJ-123`) so Jira's Development panel auto-populates.
 
 ## Prerequisites
 
 - `tsk` installed — see [Installation](../../README.md#installation).
-- A GitLab project you can push to (self-hosted or gitlab.com).
-- A Jira Cloud or Server/DC instance with a project key (e.g. `PROJ`) and permission to create and transition issues.
+- A GitLab RepoProject you can push to (self-hosted or gitlab.com).
+- A Jira Cloud or Server/DC instance with a Jira project key (e.g. `PROJ`) and permission to create and transition issues.
 - Git remote for the project already pointing at the GitLab repo.
 
 ## 1. Generate credentials
@@ -60,7 +60,7 @@ tsk init
 
 This creates `$RIPTSK_REPO` (defaults to `$XDG_DATA_HOME/riptsk`) with `issues/`, `templates/`, `riptsk.yaml`, and a git repo.
 
-## 4. Register the GitLab backend
+## 4. Register the GitLab RepoProject
 
 From the project directory (the one with the GitLab git remote):
 
@@ -69,63 +69,111 @@ cd /path/to/your/project
 tsk register
 ```
 
-`tsk register` detects the `gitlab` remote and adds an entry to `riptsk.yaml`. Confirm with:
+`tsk register` detects the `gitlab` remote and adds a RepoProject entry to `riptsk.yaml`. Confirm with:
 
 ```bash
 tsk register --list
 ```
 
-## 5. Add the Jira backend manually
+## 5. Configure the RepoProject
 
-Jira is **not** auto-detected from git remotes — it must be configured by hand. Open `riptsk.yaml`:
+Jira is not auto-detected from git remotes. The supported config shape is:
 
 ```bash
 tsk config edit   # or: $EDITOR "$RIPTSK_REPO/riptsk.yaml"
 ```
 
-Add a Jira backend that points its `vc` field at the GitLab backend you just registered:
-
 ```yaml
-backends:
-  - name: my-gitlab
-    type: gitlab
-    host: https://gitlab.com          # or your self-hosted host
-    repo: team/my-app                  # group/project
-
+projects:
   - name: my-jira
-    type: jira
-    host: https://mycompany.atlassian.net
-    repo: mycompany/PROJ               # org / PROJECT_KEY
-    default_issue_type: Task           # Task, Story, Bug, etc.
-    vc: my-gitlab                      # delegate branches and MRs here
+    vc_backend:
+      type: gitlab
+      host: https://gitlab.com
+      repo: team/my-app
+      path: /path/to/your/project
+    tasks_backend:
+      type: jira
+      host: https://mycompany.atlassian.net
+      jira_project: mycompany/PROJ
+      default_issue_type: Task
+    default_board: personal
+    repo_project_label: proj::my-app
 ```
 
 Field notes:
 
-- `host` is required for Jira and must start with `https://`.
-- `repo` for Jira is `org/PROJECT_KEY` — the key is what appears in issue IDs like `PROJ-123`.
+- `tasks_backend.host` is required for Jira and must start with `https://`.
+- `tasks_backend.jira_project` is `org/PROJECT_KEY`.
 - `default_issue_type` must match an issue type that exists in the Jira project. Check in Jira under **Project settings → Issue types**.
-- `vc: my-gitlab` is the critical line — without it, `tsk start`, `tsk branch`, and `tsk pr` will skip branch/MR creation for Jira issues.
+- The VCBackend/TasksBackend split is the critical concept. Without a non-local VCBackend, `tsk start`, `tsk branch`, and `tsk pr` skip branch/MR creation for Jira issues.
 
-## 6. Point the project directory at Jira
+## 6. Register the project directory
 
-`tsk register` bound the cwd to the GitLab backend. To make `tsk` use Jira for new issues from this project, re-register with an explicit backend:
+From the project directory:
 
 ```bash
-tsk register --backend my-jira
-tsk register --list
+cd /path/to/your/project
+tsk register
 ```
 
-The same directory can be registered against multiple backends; scope commands with `-p my-jira` / `-p my-gitlab` or use `--all` when needed.
+`tsk register` detects the GitLab remote, sets the RepoProject name, stores the local path, and derives `repo_project_label` from the origin URL tail by default — always as `proj::<sanitized-tail>`. To override that label during registration:
 
-## 7. Smoke test: create and sync
+```bash
+tsk register --repo-project-label platform-api
+# stored as proj::platform-api
+
+tsk register --repo-project-label proj::platform-api
+# same result — passing the prefix explicitly is accepted
+```
+
+`--project-label` is accepted as an alias. Labels stored in `riptsk.yaml` always carry the `proj::` prefix.
+
+## 7. Shared Jira project (label-partitioned)
+
+Multiple RepoProjects can share one Jira project when each RepoProject has a distinct `repo_project_label`.
+
+```yaml
+projects:
+  - name: billing-api
+    vc_backend: { type: gitlab, host: https://gitlab.com, repo: team/billing-api, path: /src/billing-api }
+    tasks_backend: { type: jira, host: https://jira.example.com, jira_project: company/PLAT, default_issue_type: Task }
+    repo_project_label: proj::billing-api
+
+  - name: auth-service
+    vc_backend: { type: gitlab, host: https://gitlab.com, repo: team/auth-service, path: /src/auth-service }
+    tasks_backend: { type: jira, host: https://jira.example.com, jira_project: company/PLAT, default_issue_type: Task }
+    repo_project_label: proj::auth-service
+
+  - name: web-console
+    vc_backend: { type: gitlab, host: https://gitlab.com, repo: team/web-console, path: /src/web-console }
+    tasks_backend: { type: jira, host: https://jira.example.com, jira_project: company/PLAT, default_issue_type: Task }
+    repo_project_label: proj::web-console
+```
+
+Typical flow:
+
+```bash
+cd /src/billing-api && tsk register
+cd /src/auth-service && tsk register
+cd /src/web-console && tsk register --repo-project-label frontend-console
+# stored as proj::frontend-console
+```
+
+Behavior:
+
+- Pull uses JQL `project = PLAT AND labels = "proj::<suffix>"`.
+- Push injects `repo_project_label` (e.g. `proj::billing-api`) into Jira labels.
+- Pull strips that partition label back out of local issue labels so it does not become user-managed metadata.
+- Smart Commits and the Jira Development panel continue to key off the Jira issue key (`PLAT-123`), not the label.
+
+## 8. Smoke test: create and sync
 
 ```bash
 tsk new -p my-jira --title "Wire up deploy pipeline"
 tsk sync push -p my-jira
 ```
 
-Open the issue in Jira. It should exist under project `PROJ` with type `Task`. The returned `PROJ-N` key becomes the canonical ID.
+Open the issue in Jira. It should exist under Jira project `PROJ` with type `Task`. The returned `PROJ-N` key becomes the canonical ID.
 
 Pull from Jira to populate additional issues:
 
@@ -134,7 +182,7 @@ tsk sync pull -p my-jira
 tsk ls -p my-jira
 ```
 
-## 8. Full loop: start → MR → done
+## 9. Full loop: start → MR → done
 
 From the project directory:
 
@@ -157,12 +205,12 @@ tsk pr                         # view the MR URL
 tsk done                       # merge the MR and transition the Jira issue to Done
 ```
 
-`tsk done` with a Jira backend:
+`tsk done` with a Jira TasksBackend:
 
-- Merges the MR on GitLab (via `vc: my-gitlab`).
+- Merges the MR on GitLab (via the RepoProject's VCBackend).
 - Transitions the Jira issue to its **Done** status and sets resolution to `Done`. `--reason not_planned` → `Won't Do`; `--reason duplicate` → `Duplicate`.
 
-## 9. Verify the Jira ↔ GitLab link
+## 10. Verify the Jira ↔ GitLab link
 
 On the Jira issue page, open the **Development** panel (right sidebar). You should see:
 
@@ -181,12 +229,12 @@ If this panel is empty, the GitLab ↔ Jira integration app is not installed on 
 
 | Symptom | Cause / fix |
 |---|---|
-| `tsk start` says "No version control backend configured" | `vc:` missing on the Jira backend, or the referenced backend name doesn't exist. |
+| `tsk start` says "No version control backend configured" | The RepoProject's VCBackend is local or otherwise not configured for remote branch/PR work. |
 | `tsk new -p my-jira` fails with 401 | `JIRA_API_TOKEN` / `JIRA_EMAIL` wrong, or Server/DC instance needs `JIRA_AUTH_TYPE=bearer`. |
 | `tsk sync push` fails with "issue type does not exist" | `default_issue_type` doesn't match a type in the Jira project. Check **Project settings → Issue types**. |
 | MR is created but Jira shows nothing in Development panel | GitLab ↔ Jira app not installed — see step 9. The key is in the MR title regardless. |
 | `tsk done` merges MR but leaves Jira issue open | The Jira workflow has no transition named `Done` reachable from the current status. Ask the Jira admin to expose a `Done`-category transition, or transition manually. |
-| `PROJ-123` not recognized as a Jira issue key | `repo` field isn't `org/PROJECT_KEY`, or `key` override is needed — see the `key` field in the main [README](../../README.md#manual-backend-configuration). |
+| `PROJ-123` not recognized as a Jira issue key | The JiraProject field is wrong, or a RepoProject key override is needed — see the configuration docs in the main [README](../../README.md#configuration). |
 
 ## Rollout tips for teams
 

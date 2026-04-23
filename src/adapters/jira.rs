@@ -464,9 +464,7 @@ pub fn upsert_to_jira_create(
             serde_json::Value::String(upsert.body.clone()),
         );
     }
-    if !upsert.labels.is_empty() {
-        map.insert("labels".into(), serde_json::json!(upsert.labels));
-    }
+    map.insert("labels".into(), serde_json::json!(upsert.labels));
     if let Some(milestone_id) = upsert.milestone_id {
         map.insert(
             "fixVersions".into(),
@@ -531,9 +529,11 @@ pub struct JiraProvider {
     host: String,
     /// Pre-computed `Authorization` header value (Basic or Bearer).
     auth_header: String,
-    /// Configured default issue type for creation (from `BackendConfig.default_issue_type`).
+    /// Configured default issue type for creation (from `TasksBackendSpec.default_issue_type`).
     /// When set, skips the create metadata API call to discover valid types.
     configured_issue_type: Option<String>,
+    /// Optional RepoProject label used to partition a shared Jira project.
+    repo_project_label: Option<String>,
 }
 
 impl std::fmt::Debug for JiraProvider {
@@ -546,13 +546,14 @@ impl std::fmt::Debug for JiraProvider {
 
 impl JiraProvider {
     pub fn new(host: &str, auth: JiraAuth) -> Result<Self, RiptskError> {
-        Self::with_issue_type(host, auth, None)
+        Self::with_config(host, auth, None, None)
     }
 
-    pub fn with_issue_type(
+    pub fn with_config(
         host: &str,
         auth: JiraAuth,
         configured_issue_type: Option<String>,
+        repo_project_label: Option<String>,
     ) -> Result<Self, RiptskError> {
         let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
         let auth_header = match auth {
@@ -575,7 +576,17 @@ impl JiraProvider {
             host: host.trim_end_matches('/').to_owned(),
             auth_header,
             configured_issue_type,
+            repo_project_label,
         })
+    }
+
+    fn build_list_jql(project_key: &str, repo_project_label: Option<&str>) -> String {
+        let mut jql = format!("project = {project_key}");
+        if let Some(label) = repo_project_label {
+            jql.push_str(&format!(" AND labels = \"{label}\""));
+        }
+        jql.push_str(" ORDER BY updated DESC");
+        jql
     }
 
     fn api_url(&self, path: &str) -> String {
@@ -906,7 +917,7 @@ impl JiraProvider {
 impl IssueTracker for JiraProvider {
     async fn list_issues(&self, repo: &str) -> Result<Vec<BackendIssueRecord>, RiptskError> {
         let project_key = Self::project_key(repo);
-        let jql = format!("project = {project_key} ORDER BY updated DESC");
+        let jql = Self::build_list_jql(project_key, self.repo_project_label.as_deref());
         let issues = self.search_issues(&jql).await?;
         Ok(issues
             .iter()
@@ -1418,6 +1429,22 @@ mod tests {
         assert!(json["fields"]["description"].is_null());
         assert!(json["fields"]["fixVersions"].as_array().unwrap().is_empty());
         assert!(json["fields"]["duedate"].is_null());
+    }
+
+    #[test]
+    fn list_issues_jql_without_label() {
+        assert_eq!(
+            JiraProvider::build_list_jql("PROJ", None),
+            "project = PROJ ORDER BY updated DESC"
+        );
+    }
+
+    #[test]
+    fn list_issues_jql_with_label() {
+        assert_eq!(
+            JiraProvider::build_list_jql("PROJ", Some("proj::repo-a")),
+            "project = PROJ AND labels = \"proj::repo-a\" ORDER BY updated DESC"
+        );
     }
 
     // -----------------------------------------------------------------------

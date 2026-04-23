@@ -10,24 +10,37 @@ defaults:
   priority: medium
   assignee: tester
   template: task
-backends:
+projects:
 - name: wormhole-router
-  type: gitlab
-  host: https://gitlab.example.com
-  repo: chrono/wormhole-router
+  vc_backend:
+    type: gitlab
+    host: https://gitlab.example.com
+    repo: chrono/wormhole-router
+  tasks_backend:
+    type: gitlab
+    host: https://gitlab.example.com
+    repo: chrono/wormhole-router
   default_board: penguin-chrono-labs
   default_org: chrono
   key: GL-CHR-WOR
 - name: fish-from-the-future
-  type: github
-  repo: Penguin-Chrono-Labs/fish-from-the-future
+  vc_backend:
+    type: github
+    repo: Penguin-Chrono-Labs/fish-from-the-future
+  tasks_backend:
+    type: github
+    repo: Penguin-Chrono-Labs/fish-from-the-future
   default_board: penguin-chrono-labs
   default_org: chrono
   key: GH-PEN-FIS
 - name: penguin-scratch
-  type: local
+  vc_backend:
+    type: local
+    path: /tmp/penguin-scratch
+  tasks_backend:
+    type: local
+    path: /tmp/penguin-scratch
   default_board: personal
-  path: /tmp/penguin-scratch
   key: LO-PEN
 boards:
 - name: penguin-chrono-labs
