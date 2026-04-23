@@ -65,12 +65,11 @@ pub fn sanitize(raw: &str) -> String {
         };
 
         match mapped {
-            Some('-') => {
-                if !last_was_dash && !buffer.is_empty() {
-                    buffer.push('-');
-                    last_was_dash = true;
-                }
+            Some('-') if !last_was_dash && !buffer.is_empty() => {
+                buffer.push('-');
+                last_was_dash = true;
             }
+            Some('-') => {}
             Some(c) => {
                 buffer.push(c);
                 last_was_dash = false;
