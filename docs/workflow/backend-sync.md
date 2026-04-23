@@ -1,6 +1,6 @@
 # Sync with GitHub, GitLab, Jira
 
-Backends are configured in `riptsk.yaml` under `backends`.
+RepoProjects are configured in `riptsk.yaml` under `projects:`.
 
 Sync data flow:
 
@@ -63,43 +63,68 @@ Detection rules:
 - local git repo with no supported remote -> `local`
 - non-git directory -> `local`
 
-Jira is not auto-detected from git remotes. Add Jira backends manually in `riptsk.yaml`.
+Jira TasksBackends are not auto-detected from git remotes. Add Jira-backed RepoProjects manually in `riptsk.yaml`.
 
 `tsk` also performs best-effort project auto-registration on startup when the current directory is not already registered.
 
-## Manual backend configuration
+## Manual RepoProject configuration
 
 ```yaml
-backends:
+projects:
   - name: my-github
-    type: github
-    repo: myorg/my-app
+    vc_backend:
+      type: github
+      repo: myorg/my-app
+      path: /home/user/src/my-app
+    tasks_backend:
+      type: github
+      repo: myorg/my-app
 
   - name: my-gitlab
-    type: gitlab
-    host: https://gitlab.internal.example
-    repo: team/my-app
+    vc_backend:
+      type: gitlab
+      host: https://gitlab.internal.example
+      repo: team/my-app
+      path: /home/user/src/my-app
+    tasks_backend:
+      type: gitlab
+      host: https://gitlab.internal.example
+      repo: team/my-app
 
   - name: my-jira
-    type: jira
-    host: https://myteam.atlassian.net
-    repo: myorg/PROJ
-    default_issue_type: Task
-    vc: my-github
+    vc_backend:
+      type: gitlab
+      host: https://gitlab.internal.example
+      repo: team/my-app
+      path: /home/user/src/my-app
+    tasks_backend:
+      type: jira
+      host: https://myteam.atlassian.net
+      jira_project: myorg/PROJ
+      default_issue_type: Task
+    repo_project_label: proj::my-app
 
   - name: side-project
-    type: local
-    path: /home/user/projects/side-project
+    vc_backend:
+      type: local
+      path: /home/user/projects/side-project
+    tasks_backend:
+      type: local
+      path: /home/user/projects/side-project
 ```
 
 Field notes:
 
-- `type` is one of `github`, `gitlab`, `jira`, `local`
-- `repo` format is `owner repo` style by backend convention:
-  GitHub uses `owner/repo`, GitLab uses `group/project`, Jira uses `org/PROJECT_KEY`
-- Jira `host` is required and must start with `https://`
-- Jira `vc` may point to a GitHub or GitLab backend for branch and PR commands
-- `path` is used for local path-based project detection
+- `name` is the RepoProject name used by `-p/--project`.
+- `vc_backend.type` is `github`, `gitlab`, or `local`. `jira` is never valid here.
+- `tasks_backend.type` is `github`, `gitlab`, `jira`, or `local`.
+- `vc_backend.repo` uses `owner/repo` for GitHub and `group/project` for GitLab.
+- `tasks_backend.repo` uses the same remote format for GitHub and GitLab.
+- `tasks_backend.jira_project` uses `org/PROJECT_KEY`.
+- Jira `tasks_backend.host` is required and must start with `https://`.
+- `repo_project_label` is optional and Jira-only. When set, riptsk adds that label on push, filters by it on pull (`labels = "<label>"`), and strips it from local issue labels after pull. Labels always carry the fixed `proj::` prefix (e.g. `proj::my-app`) so the Jira label unambiguously identifies a RepoProject reference.
+- `repo_project_label` auto-derivation order is: git origin tail, then cwd basename. The suffix is sanitized to lowercase, separators become `-`, invalid characters are dropped, duplicates collapse; the final label is the prefix + non-empty suffix, must contain no whitespace or `"`, and be at most 255 bytes. On `tsk register --repo-project-label <value>` the prefix may be omitted — riptsk normalizes the input to the prefixed form.
+- `path` is used for path-based RepoProject detection. riptsk checks `vc_backend.path` first, then `tasks_backend.path`.
 
 ## Sync commands
 
@@ -117,13 +142,12 @@ tsk sync resolve <ID> --take-remote
 
 `tsk sync` without a subcommand runs pull, then push.
 
-Project selection can be scoped with the standard project flags where supported:
+RepoProject selection can be scoped with the standard project flags where supported:
 
 ```bash
 tsk sync -p my-github
-tsk sync --backend my-gitlab
-tsk done -p my-github <ID>
-tsk done -a <ID>
+tsk sync pull -p my-jira
+tsk sync push -a
 ```
 
 ## Conflict resolution
@@ -150,5 +174,5 @@ tsk sync resolve <ID> --take-remote
 
 ## Related
 
-- [Branch → PR → Done](branch-pr-done.md) — the remote workflow that consumes these backends
-- [Jira + GitLab Setup](jira-gitlab-setup.md) — step-by-step for the Jira+GitLab pattern
+- [Branch → PR → Done](branch-pr-done.md) — the remote workflow that consumes these RepoProjects
+- [Jira + GitLab Setup](jira-gitlab-setup.md) — step-by-step for Jira TasksBackend + GitLab VCBackend, including shared Jira partitioning

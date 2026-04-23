@@ -4,8 +4,9 @@ use crate::config::Config;
 use crate::domain::backend_state::backend_state_key;
 use crate::domain::issue::IssueDocument;
 use crate::error::RiptskError;
-use crate::models::{Backend, BackendConfig};
+use crate::models::{BackendKind, RepoProject};
 use crate::paths::AppPaths;
+use crate::services::backend_mapping;
 use crate::services::backend_mapping::{
     backend_state_entry, backend_to_local, copy_local_only_fields, current_timestamp,
     issue_to_upsert, update_issue_from_backend,
@@ -52,34 +53,32 @@ impl<'a> SyncEngine<'a> {
     pub async fn pull<P: IssueTracker + ?Sized>(
         &self,
         provider: &P,
-        backend: &BackendConfig,
+        repo_project: &RepoProject,
         force: bool,
         filter_ids: Option<&HashSet<String>>,
         force_ids: Option<&HashSet<String>>,
     ) -> Result<PullSummary, RiptskError> {
-        let repo = backend.repo.as_deref().ok_or_else(|| {
-            RiptskError::Config(format!("backend {} is missing repo", backend.name))
-        })?;
+        let repo = sync_repo(repo_project)?;
         let mut backend_state =
             cache::load_backend_state(self.paths).map_err(RiptskError::Other)?;
         let deleted_keys = cache::load_deleted_keys(self.paths).map_err(RiptskError::Other)?;
-        let records = provider.list_issues(repo).await?;
+        let records = provider.list_issues(&repo).await?;
         let mut summary = PullSummary::default();
         let mut seen_ids = HashSet::new();
 
         for record in records {
             let record_id =
-                issue_ids::format_id(&issue_ids::effective_key(backend), record.issue_id);
+                issue_ids::format_id(&issue_ids::effective_key(repo_project), record.issue_id);
             if filter_ids.is_some_and(|ids| !ids.contains(&record_id)) {
                 continue;
             }
-            let key = backend_state_key(provider_name(backend), repo, record.issue_id);
+            let key = backend_state_key(provider_name(repo_project), &repo, record.issue_id);
             seen_ids.insert(record.issue_id);
             if deleted_keys.contains(&key) {
                 continue;
             }
             let cached = backend_state.get(&key).cloned();
-            let local_path = self.find_local_issue(backend, record.issue_id)?;
+            let local_path = self.find_local_issue(repo_project, record.issue_id)?;
 
             if let Some(path) = local_path {
                 let mut issue = match frontmatter::try_load_issue(path.as_std_path()) {
@@ -105,16 +104,16 @@ impl<'a> SyncEngine<'a> {
                     && local_changed
                     && remote_changed
                 {
-                    self.write_conflict(backend, &record, &issue, &path)?;
+                    self.write_conflict(repo_project, &record, &issue, &path)?;
                     summary.conflicts.push(issue.frontmatter.id.clone());
                 } else if remote_changed {
-                    update_issue_from_backend(&mut issue, &record, backend);
+                    update_issue_from_backend(&mut issue, &record, repo_project);
                     frontmatter::save_issue(path.as_std_path(), &issue)
                         .map_err(RiptskError::Other)?;
                     summary.updated.push(issue.frontmatter.id.clone());
                 }
             } else {
-                let document = backend_to_local(&record, backend);
+                let document = backend_to_local(&record, repo_project);
                 let path = self
                     .paths
                     .issues_dir()
@@ -136,22 +135,30 @@ impl<'a> SyncEngine<'a> {
                         return Err(RiptskError::Other(error));
                     }
                 };
+                // Limit the deletion sweep to issues that belong to THIS
+                // RepoProject. Without this guard, a Jira shared-project pull
+                // (filtered by `repo_project_label`) would delete every other
+                // RepoProject's local issues because they share `project_key`
+                // but never appear in the label-filtered `seen_ids` set.
+                if issue.frontmatter.project != repo_project.name {
+                    continue;
+                }
                 let meta =
-                    match backend.backend {
-                        Backend::Github => issue.frontmatter.github.as_ref().and_then(|meta| {
+                    match repo_project.tasks_backend.kind {
+                        BackendKind::Github => issue.frontmatter.github.as_ref().and_then(|meta| {
                             (meta.repo == repo).then_some(meta.issue_id).flatten()
                         }),
-                        Backend::Gitlab => issue.frontmatter.gitlab.as_ref().and_then(|meta| {
+                        BackendKind::Gitlab => issue.frontmatter.gitlab.as_ref().and_then(|meta| {
                             (meta.repo == repo).then_some(meta.issue_id).flatten()
                         }),
-                        Backend::Jira => issue.frontmatter.jira.as_ref().and_then(|meta| {
+                        BackendKind::Jira => issue.frontmatter.jira.as_ref().and_then(|meta| {
                             let expected_key =
-                                crate::adapters::jira::JiraProvider::project_key(repo);
+                                crate::adapters::jira::JiraProvider::project_key(&repo);
                             (meta.project_key == expected_key)
                                 .then_some(meta.issue_id)
                                 .flatten()
                         }),
-                        Backend::Local => None,
+                        BackendKind::Local => None,
                     };
                 let Some(issue_id) = meta else {
                     continue;
@@ -160,7 +167,11 @@ impl<'a> SyncEngine<'a> {
                     continue;
                 }
                 issue_store::delete_issue_files(self.paths, &issue.frontmatter.id)?;
-                backend_state.remove(&backend_state_key(provider_name(backend), repo, issue_id));
+                backend_state.remove(&backend_state_key(
+                    provider_name(repo_project),
+                    &repo,
+                    issue_id,
+                ));
                 summary.deleted.push(issue.frontmatter.id.clone());
             }
         }
@@ -172,19 +183,21 @@ impl<'a> SyncEngine<'a> {
     pub async fn push<P: IssueTracker + ?Sized>(
         &self,
         provider: &P,
-        backend: &BackendConfig,
+        repo_project: &RepoProject,
     ) -> Result<PushSummary, RiptskError> {
         let issue_paths = issue_store::list_issues(self.paths)?;
-        self.push_inner(provider, backend, &issue_paths, true).await
+        self.push_inner(provider, repo_project, &issue_paths, true)
+            .await
     }
 
     pub async fn push_issues<P: IssueTracker + ?Sized>(
         &self,
         provider: &P,
-        backend: &BackendConfig,
+        repo_project: &RepoProject,
         issue_paths: &[camino::Utf8PathBuf],
     ) -> Result<PushSummary, RiptskError> {
-        self.push_inner(provider, backend, issue_paths, false).await
+        self.push_inner(provider, repo_project, issue_paths, false)
+            .await
     }
 
     pub fn status(&self) -> Result<StatusSummary, RiptskError> {
@@ -202,11 +215,11 @@ impl<'a> SyncEngine<'a> {
                 frontmatter::IssueLoadResult::Err(error) => return Err(RiptskError::Other(error)),
             };
 
-            let Some(project_backend) = self.backend_for_project(&issue.frontmatter.project) else {
+            let Some(repo_project) = self.project_for_name(&issue.frontmatter.project) else {
                 continue;
             };
 
-            let backend_key = issue_backend_key(&issue, project_backend);
+            let backend_key = issue_backend_key(&issue, repo_project);
             let Some(backend_key) = backend_key else {
                 summary.creates.push(issue.frontmatter.id.clone());
                 continue;
@@ -231,13 +244,11 @@ impl<'a> SyncEngine<'a> {
     async fn push_inner<P: IssueTracker + ?Sized>(
         &self,
         provider: &P,
-        backend: &BackendConfig,
+        repo_project: &RepoProject,
         issue_paths: &[camino::Utf8PathBuf],
         include_deletes: bool,
     ) -> Result<PushSummary, RiptskError> {
-        let repo = backend.repo.as_deref().ok_or_else(|| {
-            RiptskError::Config(format!("backend {} is missing repo", backend.name))
-        })?;
+        let repo = sync_repo(repo_project)?;
         let mut backend_state =
             cache::load_backend_state(self.paths).map_err(RiptskError::Other)?;
         let mut deleted_keys = cache::load_deleted_keys(self.paths).map_err(RiptskError::Other)?;
@@ -252,14 +263,15 @@ impl<'a> SyncEngine<'a> {
                 }
                 frontmatter::IssueLoadResult::Err(error) => return Err(RiptskError::Other(error)),
             };
-            if issue.frontmatter.project != backend.name || issue.frontmatter.remote_deleted {
+            if issue.frontmatter.project != repo_project.name || issue.frontmatter.remote_deleted {
                 continue;
             }
 
-            let upsert = issue_to_upsert(&issue);
-            let issue_id = issue_backend_issue_id(&issue, backend);
+            let upsert = issue_to_upsert(&issue, repo_project);
+            let outbound_labels = effective_outbound_labels(&upsert.labels, repo_project);
+            let issue_id = issue_backend_issue_id(&issue, repo_project);
             if let Some(issue_id) = issue_id {
-                let key = backend_state_key(provider_name(backend), repo, issue_id);
+                let key = backend_state_key(provider_name(repo_project), &repo, issue_id);
                 let cached = backend_state.get(&key);
                 if cached
                     .as_ref()
@@ -269,19 +281,21 @@ impl<'a> SyncEngine<'a> {
                     continue;
                 }
 
-                let mut record = provider.update_issue(repo, issue_id, &upsert).await?;
-                provider.sync_labels(repo, issue_id, &upsert.labels).await?;
-                sync_lock_state(provider, repo, issue_id, &issue, &record).await?;
+                let mut record = provider.update_issue(&repo, issue_id, &upsert).await?;
+                provider
+                    .sync_labels(&repo, issue_id, &outbound_labels)
+                    .await?;
+                sync_lock_state(provider, &repo, issue_id, &issue, &record).await?;
                 // Trigger state transitions (close/reopen) if the desired state
                 // differs from what the backend returned.
                 if let Some(ref desired_state) = upsert.state {
                     let is_closed = record.state.eq_ignore_ascii_case("closed");
                     if desired_state == "closed" && !is_closed {
                         provider
-                            .close_issue(repo, issue_id, upsert.state_reason.as_deref())
+                            .close_issue(&repo, issue_id, upsert.state_reason.as_deref())
                             .await?;
                     } else if desired_state == "open" && is_closed {
-                        provider.reopen_issue(repo, issue_id).await?;
+                        provider.reopen_issue(&repo, issue_id).await?;
                     }
                 }
                 if let Some(state) = upsert.state.clone() {
@@ -294,7 +308,7 @@ impl<'a> SyncEngine<'a> {
                 record.updated_at = current_timestamp();
 
                 let mut updated = issue;
-                update_issue_from_backend(&mut updated, &record, backend);
+                update_issue_from_backend(&mut updated, &record, repo_project);
                 frontmatter::save_issue(path.as_std_path(), &updated)
                     .map_err(RiptskError::Other)?;
                 backend_state.insert(key, backend_state_entry(&record));
@@ -302,20 +316,20 @@ impl<'a> SyncEngine<'a> {
                 continue;
             }
 
-            let mut record = provider.create_issue(repo, &upsert).await?;
+            let mut record = provider.create_issue(&repo, &upsert).await?;
             provider
-                .sync_labels(repo, record.issue_id, &upsert.labels)
+                .sync_labels(&repo, record.issue_id, &outbound_labels)
                 .await?;
             if issue.frontmatter.status == crate::domain::issue::IssueState::Done {
                 provider
-                    .close_issue(repo, record.issue_id, upsert.state_reason.as_deref())
+                    .close_issue(&repo, record.issue_id, upsert.state_reason.as_deref())
                     .await?;
                 record.state = "closed".into();
             } else {
-                provider.reopen_issue(repo, record.issue_id).await?;
+                provider.reopen_issue(&repo, record.issue_id).await?;
                 record.state = "open".into();
             }
-            sync_lock_state(provider, repo, record.issue_id, &issue, &record).await?;
+            sync_lock_state(provider, &repo, record.issue_id, &issue, &record).await?;
             record.state_reason = upsert.state_reason.clone();
             record.discussion_locked = issue.frontmatter.discussion_locked;
             record.locked = issue.frontmatter.locked;
@@ -323,10 +337,10 @@ impl<'a> SyncEngine<'a> {
             record.updated_at = current_timestamp();
 
             let mut created = issue;
-            update_issue_from_backend(&mut created, &record, backend);
+            update_issue_from_backend(&mut created, &record, repo_project);
             frontmatter::save_issue(path.as_std_path(), &created).map_err(RiptskError::Other)?;
             backend_state.insert(
-                backend_state_key(provider_name(backend), repo, record.issue_id),
+                backend_state_key(provider_name(repo_project), &repo, record.issue_id),
                 backend_state_entry(&record),
             );
             summary.created.push(created.frontmatter.id.clone());
@@ -339,10 +353,10 @@ impl<'a> SyncEngine<'a> {
                 let Some((key_provider, key_repo, issue_id)) = parse_backend_state_key(&key) else {
                     continue;
                 };
-                if key_provider != provider_name(backend) || key_repo != repo {
+                if key_provider != provider_name(repo_project) || key_repo != repo {
                     continue;
                 }
-                let outcome = provider.delete_issue(repo, issue_id).await?;
+                let outcome = provider.delete_issue(&repo, issue_id).await?;
                 if outcome == DeleteOutcome::HardDeleted {
                     deleted_keys.remove(&key);
                 }
@@ -358,10 +372,10 @@ impl<'a> SyncEngine<'a> {
 
     fn find_local_issue(
         &self,
-        backend: &BackendConfig,
+        repo_project: &RepoProject,
         issue_id: u64,
     ) -> Result<Option<camino::Utf8PathBuf>, RiptskError> {
-        let exact_id = issue_ids::format_id(&issue_ids::effective_key(backend), issue_id);
+        let exact_id = issue_ids::format_id(&issue_ids::effective_key(repo_project), issue_id);
         if let Ok(path) = issue_store::find_issue(self.paths, &exact_id) {
             return Ok(Some(path));
         }
@@ -372,22 +386,26 @@ impl<'a> SyncEngine<'a> {
                 frontmatter::IssueLoadResult::Conflict { .. } => continue,
                 frontmatter::IssueLoadResult::Err(error) => return Err(RiptskError::Other(error)),
             };
-            let matches = match backend.backend {
-                Backend::Github => issue.frontmatter.github.as_ref().is_some_and(|meta| {
-                    meta.repo == backend.repo.clone().unwrap_or_default()
+            let matches = match repo_project.tasks_backend.kind {
+                BackendKind::Github => issue.frontmatter.github.as_ref().is_some_and(|meta| {
+                    meta.repo == repo_project.tasks_backend.repo.clone().unwrap_or_default()
                         && meta.issue_id == Some(issue_id)
                 }),
-                Backend::Gitlab => issue.frontmatter.gitlab.as_ref().is_some_and(|meta| {
-                    meta.repo == backend.repo.clone().unwrap_or_default()
+                BackendKind::Gitlab => issue.frontmatter.gitlab.as_ref().is_some_and(|meta| {
+                    meta.repo == repo_project.tasks_backend.repo.clone().unwrap_or_default()
                         && meta.issue_id == Some(issue_id)
                 }),
-                Backend::Jira => issue.frontmatter.jira.as_ref().is_some_and(|meta| {
+                BackendKind::Jira => issue.frontmatter.jira.as_ref().is_some_and(|meta| {
                     let expected_key = crate::adapters::jira::JiraProvider::project_key(
-                        backend.repo.as_deref().unwrap_or_default(),
+                        repo_project
+                            .tasks_backend
+                            .jira_project
+                            .as_deref()
+                            .unwrap_or_default(),
                     );
                     meta.project_key == expected_key && meta.issue_id == Some(issue_id)
                 }),
-                Backend::Local => false,
+                BackendKind::Local => false,
             };
             if matches {
                 return Ok(Some(path));
@@ -396,19 +414,19 @@ impl<'a> SyncEngine<'a> {
         Ok(None)
     }
 
-    fn backend_for_project(&self, project: &str) -> Option<&BackendConfig> {
-        self.config.backends.iter().find(|backend| {
-            backend.name == project
+    fn project_for_name(&self, project: &str) -> Option<&RepoProject> {
+        self.config.projects.iter().find(|repo_project| {
+            repo_project.name == project
                 && matches!(
-                    backend.backend,
-                    Backend::Github | Backend::Gitlab | Backend::Jira
+                    repo_project.tasks_backend.kind,
+                    BackendKind::Github | BackendKind::Gitlab | BackendKind::Jira
                 )
         })
     }
 
     fn write_conflict(
         &self,
-        backend: &BackendConfig,
+        repo_project: &RepoProject,
         record: &BackendIssueRecord,
         issue: &IssueDocument,
         issue_path: &camino::Utf8PathBuf,
@@ -416,7 +434,7 @@ impl<'a> SyncEngine<'a> {
         let local_path = issue_store::local_backup_path(self.paths, &issue.frontmatter.id);
         fs::copy(issue_path, &local_path)?;
 
-        let mut remote_doc = backend_to_local(record, backend);
+        let mut remote_doc = backend_to_local(record, repo_project);
         copy_local_only_fields(&mut remote_doc.frontmatter, &issue.frontmatter);
         let remote_path = issue_store::remote_backup_path(self.paths, &issue.frontmatter.id);
         frontmatter::save_issue(remote_path.as_std_path(), &remote_doc)
@@ -459,40 +477,81 @@ async fn sync_lock_state<P: IssueTracker + ?Sized>(
     }
 }
 
-fn provider_name(backend: &BackendConfig) -> &'static str {
-    match backend.backend {
-        Backend::Github => "github",
-        Backend::Gitlab => "gitlab",
-        Backend::Jira => "jira",
-        Backend::Local => "local",
+fn provider_name(repo_project: &RepoProject) -> &'static str {
+    match repo_project.tasks_backend.kind {
+        BackendKind::Github => "github",
+        BackendKind::Gitlab => "gitlab",
+        BackendKind::Jira => "jira",
+        BackendKind::Local => "local",
     }
 }
 
-fn issue_backend_issue_id(issue: &IssueDocument, backend: &BackendConfig) -> Option<u64> {
-    match backend.backend {
-        Backend::Github => issue
+fn issue_backend_issue_id(issue: &IssueDocument, repo_project: &RepoProject) -> Option<u64> {
+    match repo_project.tasks_backend.kind {
+        BackendKind::Github => issue
             .frontmatter
             .github
             .as_ref()
             .and_then(|meta| meta.issue_id),
-        Backend::Gitlab => issue
+        BackendKind::Gitlab => issue
             .frontmatter
             .gitlab
             .as_ref()
             .and_then(|meta| meta.issue_id),
-        Backend::Jira => issue
+        BackendKind::Jira => issue
             .frontmatter
             .jira
             .as_ref()
             .and_then(|meta| meta.issue_id),
-        Backend::Local => None,
+        BackendKind::Local => None,
     }
 }
 
-fn issue_backend_key(issue: &IssueDocument, backend: &BackendConfig) -> Option<String> {
-    let repo = backend.repo.as_deref()?;
-    let issue_id = issue_backend_issue_id(issue, backend)?;
-    Some(backend_state_key(provider_name(backend), repo, issue_id))
+fn issue_backend_key(issue: &IssueDocument, repo_project: &RepoProject) -> Option<String> {
+    let repo = sync_repo(repo_project).ok()?;
+    let issue_id = issue_backend_issue_id(issue, repo_project)?;
+    Some(backend_state_key(
+        provider_name(repo_project),
+        &repo,
+        issue_id,
+    ))
+}
+
+fn sync_repo(repo_project: &RepoProject) -> Result<String, RiptskError> {
+    match repo_project.tasks_backend.kind {
+        BackendKind::Github | BackendKind::Gitlab => {
+            repo_project.tasks_backend.repo.clone().ok_or_else(|| {
+                RiptskError::Config(format!(
+                    "RepoProject {} is missing TasksBackend repo",
+                    repo_project.name
+                ))
+            })
+        }
+        BackendKind::Jira => repo_project
+            .tasks_backend
+            .jira_project
+            .clone()
+            .ok_or_else(|| {
+                RiptskError::Config(format!(
+                    "RepoProject {} is missing JiraProject",
+                    repo_project.name
+                ))
+            }),
+        BackendKind::Local => Err(RiptskError::Config(format!(
+            "RepoProject {} does not have a hosted TasksBackend",
+            repo_project.name
+        ))),
+    }
+}
+
+fn effective_outbound_labels(base: &[String], repo_project: &RepoProject) -> Vec<String> {
+    let mut labels = base.to_vec();
+    if let Some(label) = backend_mapping::effective_repo_project_label(repo_project)
+        && !labels.iter().any(|candidate| candidate == label)
+    {
+        labels.push(label.to_owned());
+    }
+    labels
 }
 
 fn parse_backend_state_key(key: &str) -> Option<(&str, &str, u64)> {
@@ -1302,7 +1361,7 @@ mod tests {
             .expect("runtime")
     }
 
-    fn test_context() -> (AppPaths, Config, BackendConfig) {
+    fn test_context() -> (AppPaths, Config, RepoProject) {
         let temp = tempdir().expect("temp dir");
         let root = temp.path().to_path_buf();
         std::mem::forget(temp);
@@ -1314,20 +1373,29 @@ mod tests {
             state_root: root.join("state").to_string_lossy().as_ref().into(),
         };
         paths.ensure_repo_dirs().expect("repo dirs");
-        let backend = BackendConfig {
+        let backend = RepoProject {
             name: "remote-project".into(),
-            backend: Backend::Github,
-            host: None,
-            repo: Some("owner/repo".into()),
+            vc_backend: crate::models::VCBackendSpec {
+                kind: BackendKind::Github,
+                host: None,
+                repo: Some("owner/repo".into()),
+                path: None,
+            },
+            tasks_backend: crate::models::TasksBackendSpec {
+                kind: BackendKind::Github,
+                host: None,
+                repo: Some("owner/repo".into()),
+                jira_project: None,
+                default_issue_type: None,
+                path: None,
+            },
             default_board: Some("personal".into()),
             default_org: None,
-            path: None,
-            vc: None,
-            default_issue_type: None,
             key: Some("GH-OWN-REP".into()),
+            repo_project_label: None,
         };
         let mut config = default_config();
-        config.backends = vec![backend.clone()];
+        config.projects = vec![backend.clone()];
         (paths, config, backend)
     }
 
@@ -1524,12 +1592,12 @@ mod tests {
             .expect("load issue")
     }
 
-    fn seed_backend_state(paths: &AppPaths, backend: &BackendConfig, record: &BackendIssueRecord) {
+    fn seed_backend_state(paths: &AppPaths, backend: &RepoProject, record: &BackendIssueRecord) {
         let mut state = HashMap::new();
         state.insert(
             backend_state_key(
                 provider_name(backend),
-                backend.repo.as_deref().expect("repo"),
+                &sync_repo(backend).expect("repo"),
                 record.issue_id,
             ),
             backend_state_entry(record),

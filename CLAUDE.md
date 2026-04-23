@@ -4,6 +4,29 @@
 
 This project is pre-1.0.0. There is NO backward compatibility requirement. Breaking changes are allowed and expected — do not add migration paths, compatibility shims, or legacy support for old formats.
 
+## Terminology
+
+The terms in this glossary have single meanings — do not introduce ambiguous synonyms. Use the `code identifier` column in Rust source and the `YAML / doc form` column elsewhere.
+
+| Concept | Code identifier | YAML / doc form | Meaning |
+|---|---|---|---|
+| **RepoProject** | `RepoProject` (struct), `repo_project` (vars) | `project` (generic), `repo_project` when precision needed | The coding project — a git repo (or a local non-git directory). The unit the user works on. What GitHub/GitLab call a "project" or "repo". |
+| **VCBackend** | `VCBackendSpec` (struct), `vc_backend` (field/vars) | `vc_backend` | Version control nature: GitHub, GitLab, or Local. Provides branches, PRs/MRs, CI. The `kind` field is a `BackendKind`. |
+| **TasksBackend** | `TasksBackendSpec` (struct), `tasks_backend` (field/vars) | `tasks_backend` | Issue tracking nature: GitHub, GitLab, Jira, or Local. Provides issues/tasks CRUD. The `kind` field is a `BackendKind`. |
+| **BackendKind** | `BackendKind` (enum) | `type` (YAML key within `vc_backend` / `tasks_backend`) | The provider-identity enum shared by both backend specs: `Github`, `Gitlab`, `Jira`, `Local`. Replaces the pre-refactor `Backend` enum. |
+| **RepoProject label** | `repo_project_label` | `repo_project_label` (preferred) or `project_label` | String used to partition a shared Jira project by RepoProject. Always carries the fixed `proj::` prefix (e.g. `proj::my-api`) so the Jira label unambiguously identifies a RepoProject reference. Injected into Jira labels on push; filtered on pull. |
+| **RepoProject key** | `repo_project_key` (new synonym) / `key` | `key` | Short ID prefix (e.g. `RIPTSK` in `RIPTSK--123`). One per RepoProject. `BackendConfig.key` is renamed into the RepoProject.) |
+| **JiraProject** | `JiraProject`, `jira_project` | `jira_project` | The external Jira container (e.g. `PROJ`). Stored as `"org/PROJ"`. Replaces the `repo:` field when a TasksBackend is of type Jira. |
+| **Backend** (plain) | — | — | **Banned** as a standalone term for a project-level concept. Use "VCBackend" (`VCBackendSpec`) or "TasksBackend" (`TasksBackendSpec`) explicitly. The pre-refactor `Backend` provider-identity enum has been renamed to `BackendKind`. |
+
+Rules:
+
+- The word "project" in code or docs, unqualified, always means RepoProject.
+- "Jira project" (two words) is always the external Jira concept; never abbreviated to "project" alone.
+- `BackendConfig` is replaced entirely by `RepoProject` (plus inline `VCBackendSpec` and `TasksBackendSpec`).
+- The `--project` / `-p` CLI flag keeps its name; it now literally selects a RepoProject by name (no change in behavior — just cleanly matches the terminology).
+- `IssueFrontmatter.project: String` keeps its name; it stores `RepoProject.name`.
+
 ## Pre-commit configs
 
 - `.pre-commit-config.yaml` — active repository config

@@ -10,11 +10,16 @@ defaults:
   priority: medium
   assignee: tester
   template: task
-backends:
+projects:
 - name: wormhole-router
-  type: gitlab
-  host: https://gitlab.example.com
-  repo: chrono/wormhole-router
+  vc_backend:
+    type: gitlab
+    host: https://gitlab.example.com
+    repo: chrono/wormhole-router
+  tasks_backend:
+    type: gitlab
+    host: https://gitlab.example.com
+    repo: chrono/wormhole-router
   default_board: personal
   default_org: chrono
   key: GL-CHR-WOR

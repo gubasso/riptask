@@ -90,10 +90,10 @@ pub struct Cli {
 
 #[derive(Debug, Clone, Args, Default)]
 pub struct ScopeArgs {
-    /// Limit to specific projects
+    /// Limit to specific RepoProjects
     #[arg(long = "project", short = 'p')]
     pub projects: Vec<String>,
-    /// Run across all registered projects
+    /// Run across all registered RepoProjects
     #[arg(long = "all-projects", short = 'a')]
     pub all_projects: bool,
 }
@@ -387,7 +387,7 @@ pub struct NewArgs {
     /// Force AI helper to fill missing fields (e.g. description) when --title is set
     #[arg(long)]
     pub ai: bool,
-    /// Target project
+    /// Target RepoProject
     #[arg(short = 'p', long)]
     pub project: Option<String>,
     /// Board to assign
@@ -714,9 +714,12 @@ pub enum TemplateSubcommand {
 
 #[derive(Debug, Clone, Args, Default)]
 pub struct RegisterArgs {
-    /// List registered backend projects
+    /// List registered RepoProjects
     #[arg(long)]
     pub list: bool,
+    /// Override the auto-derived repo-project label (used to partition a shared Jira project)
+    #[arg(long = "repo-project-label", alias = "project-label")]
+    pub repo_project_label: Option<String>,
 }
 
 #[derive(Debug, Clone, Args, Default)]
@@ -727,7 +730,7 @@ pub struct SummarizeArgs {
     /// Limit summary to a specific board
     #[arg(short = 'b', long)]
     pub board: Option<String>,
-    /// Limit summary to a specific project
+    /// Limit summary to a specific RepoProject
     #[arg(short = 'p', long)]
     pub project: Option<String>,
 }

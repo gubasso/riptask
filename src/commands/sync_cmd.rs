@@ -5,7 +5,7 @@ use crate::cli::{
 use crate::config::{Config, load_config};
 use crate::domain::session::SessionState;
 use crate::error::RiptskError;
-use crate::models::{Backend, BackendConfig};
+use crate::models::{BackendKind, RepoProject};
 use crate::paths::AppPaths;
 use crate::services::auto_commit::maybe_auto_commit;
 use crate::services::backend_mapping::build_issue_tracker;
@@ -40,15 +40,15 @@ async fn pull(
 ) -> Result<(), RiptskError> {
     let config = load_config(paths.config_path().as_std_path())?;
     let engine = SyncEngine::new(paths, &config);
-    for backend in resolve_sync_backends(args, &config)? {
-        let provider = build_issue_tracker(backend)?;
-        let pull_ids = resolve_pull_filter_ids(&subargs.ids, backend);
-        let force_ids = resolve_pull_filter_ids(&args.force_pull_ids, backend);
+    for repo_project in resolve_sync_projects(args, &config)? {
+        let provider = build_issue_tracker(repo_project)?;
+        let pull_ids = resolve_pull_filter_ids(&subargs.ids, repo_project);
+        let force_ids = resolve_pull_filter_ids(&args.force_pull_ids, repo_project);
         let summary = crate::ui::spin_on_async(
-            &format!("Pulling issues from {}", backend.name),
+            &format!("Pulling issues from {}", repo_project.name),
             engine.pull(
                 provider.as_ref(),
-                backend,
+                repo_project,
                 args.force,
                 (!pull_ids.is_empty()).then_some(&pull_ids),
                 (!force_ids.is_empty()).then_some(&force_ids),
@@ -56,7 +56,7 @@ async fn pull(
         )
         .await?;
         tracing::info!(
-            backend = %backend.name,
+            repo_project = %repo_project.name,
             created = summary.created.len(),
             updated = summary.updated.len(),
             deleted = summary.deleted.len(),
@@ -109,24 +109,24 @@ async fn push(
         .iter()
         .map(|id| id_resolution::resolve_id(paths, &config, &cwd, id))
         .collect::<Result<Vec<_>, _>>()?;
-    for backend in resolve_sync_backends(args, &config)? {
-        let provider = build_issue_tracker(backend)?;
-        let issue_paths = collect_push_paths(paths, backend, &resolved_ids)?;
+    for repo_project in resolve_sync_projects(args, &config)? {
+        let provider = build_issue_tracker(repo_project)?;
+        let issue_paths = collect_push_paths(paths, repo_project, &resolved_ids)?;
         let summary = if resolved_ids.is_empty() {
             crate::ui::spin_on_async(
-                &format!("Pushing issues to {}", backend.name),
-                engine.push(provider.as_ref(), backend),
+                &format!("Pushing issues to {}", repo_project.name),
+                engine.push(provider.as_ref(), repo_project),
             )
             .await?
         } else {
             crate::ui::spin_on_async(
-                &format!("Pushing issues to {}", backend.name),
-                engine.push_issues(provider.as_ref(), backend, &issue_paths),
+                &format!("Pushing issues to {}", repo_project.name),
+                engine.push_issues(provider.as_ref(), repo_project, &issue_paths),
             )
             .await?
         };
         tracing::info!(
-            backend = %backend.name,
+            repo_project = %repo_project.name,
             created = summary.created.len(),
             updated = summary.updated.len(),
             deleted = summary.deleted.len(),
@@ -161,7 +161,7 @@ async fn push(
             &config,
             &crate::adapters::git::CliGit::new(),
             paths.riptsk_repo.as_std_path(),
-            &format!("riptsk: push local issues to {}", backend.name),
+            &format!("riptsk: push local issues to {}", repo_project.name),
             &file_refs,
         )?;
     }
@@ -170,15 +170,15 @@ async fn push(
 
 fn status(paths: &AppPaths, args: &SyncArgs) -> Result<(), RiptskError> {
     let config = load_config(paths.config_path().as_std_path())?;
-    let backends = resolve_sync_backends(args, &config)?;
-    let backend_names = backends
+    let repo_projects = resolve_sync_projects(args, &config)?;
+    let project_names = repo_projects
         .iter()
-        .map(|backend| backend.name.as_str())
+        .map(|repo_project| repo_project.name.as_str())
         .collect::<HashSet<_>>();
     let summary = SyncEngine::new(paths, &config).status()?;
     let tty = std::io::stdout().is_terminal();
     for id in summary.conflicts {
-        if issue_matches_backend_scope(paths, &id, &backend_names)? {
+        if issue_matches_project_scope(paths, &id, &project_names)? {
             if tty {
                 println!("{} {id}", style("CONFLICT").red().bold());
             } else {
@@ -187,7 +187,7 @@ fn status(paths: &AppPaths, args: &SyncArgs) -> Result<(), RiptskError> {
         }
     }
     for id in summary.creates {
-        if issue_matches_backend_scope(paths, &id, &backend_names)? {
+        if issue_matches_project_scope(paths, &id, &project_names)? {
             if tty {
                 println!("{}   {id}", style("CREATE").green());
             } else {
@@ -196,7 +196,7 @@ fn status(paths: &AppPaths, args: &SyncArgs) -> Result<(), RiptskError> {
         }
     }
     for id in summary.pushes {
-        if issue_matches_backend_scope(paths, &id, &backend_names)? {
+        if issue_matches_project_scope(paths, &id, &project_names)? {
             if tty {
                 println!("{}     {id}", style("PUSH").cyan());
             } else {
@@ -205,7 +205,7 @@ fn status(paths: &AppPaths, args: &SyncArgs) -> Result<(), RiptskError> {
         }
     }
     for key in summary.deletes {
-        if deleted_key_matches_backend_scope(&key, &backends) {
+        if deleted_key_matches_project_scope(&key, &repo_projects) {
             if tty {
                 println!("{}   {key}", style("DELETE").yellow());
             } else {
@@ -216,18 +216,18 @@ fn status(paths: &AppPaths, args: &SyncArgs) -> Result<(), RiptskError> {
     Ok(())
 }
 
-fn resolve_sync_backends<'a>(
+fn resolve_sync_projects<'a>(
     args: &SyncArgs,
     config: &'a Config,
-) -> Result<Vec<&'a BackendConfig>, RiptskError> {
+) -> Result<Vec<&'a RepoProject>, RiptskError> {
     if let Some(name) = args.backend.as_deref() {
-        return Ok(hosted_backends(config)
+        return Ok(hosted_projects(config)
             .into_iter()
-            .filter(|backend| backend.name == name)
+            .filter(|repo_project| repo_project.name == name)
             .collect());
     }
     if args.scope.all_projects {
-        return Ok(hosted_backends(config));
+        return Ok(hosted_projects(config));
     }
     if !args.scope.projects.is_empty() {
         return args
@@ -236,22 +236,22 @@ fn resolve_sync_backends<'a>(
             .iter()
             .map(|project| {
                 config
-                    .backends
+                    .projects
                     .iter()
-                    .find(|backend| backend.name == *project)
+                    .find(|repo_project| repo_project.name == *project)
                     .ok_or_else(|| RiptskError::Unregistered(project.clone()))
             })
             .map(|result| {
-                result.and_then(|backend| {
+                result.and_then(|repo_project| {
                     if matches!(
-                        backend.backend,
-                        Backend::Github | Backend::Gitlab | Backend::Jira
+                        repo_project.tasks_backend.kind,
+                        BackendKind::Github | BackendKind::Gitlab | BackendKind::Jira
                     ) {
-                        Ok(backend)
+                        Ok(repo_project)
                     } else {
                         Err(RiptskError::Config(format!(
                             "sync target must be github, gitlab, or jira: {}",
-                            backend.name
+                            repo_project.name
                         )))
                     }
                 })
@@ -265,12 +265,13 @@ fn resolve_sync_backends<'a>(
             .to_string_lossy()
             .to_string(),
     );
-    if let Ok(Some(backend)) = crate::services::project_detection::detect_from_cwd(&cwd, config)
-        && let Some(candidate) = config.backends.iter().find(|candidate| {
-            candidate.name == backend.name
+    if let Ok(Some(repo_project)) =
+        crate::services::project_detection::detect_from_cwd(&cwd, config)
+        && let Some(candidate) = config.projects.iter().find(|candidate| {
+            candidate.name == repo_project.name
                 && matches!(
-                    candidate.backend,
-                    Backend::Github | Backend::Gitlab | Backend::Jira
+                    candidate.tasks_backend.kind,
+                    BackendKind::Github | BackendKind::Gitlab | BackendKind::Jira
                 )
         })
     {
@@ -282,15 +283,15 @@ fn resolve_sync_backends<'a>(
     ))
 }
 
-fn issue_matches_backend_scope(
+fn issue_matches_project_scope(
     paths: &AppPaths,
     id: &str,
-    backend_names: &HashSet<&str>,
+    project_names: &HashSet<&str>,
 ) -> Result<bool, RiptskError> {
     let path = crate::storage::issue_store::find_issue(paths, id)?;
     match crate::storage::frontmatter::try_load_issue(path.as_std_path()) {
         crate::storage::frontmatter::IssueLoadResult::Ok(issue) => {
-            Ok(backend_names.contains(issue.frontmatter.project.as_str()))
+            Ok(project_names.contains(issue.frontmatter.project.as_str()))
         }
         crate::storage::frontmatter::IssueLoadResult::Conflict { id, .. } => {
             for backup in [
@@ -303,7 +304,7 @@ fn issue_matches_backend_scope(
                 if let crate::storage::frontmatter::IssueLoadResult::Ok(issue) =
                     crate::storage::frontmatter::try_load_issue(backup.as_std_path())
                 {
-                    return Ok(backend_names.contains(issue.frontmatter.project.as_str()));
+                    return Ok(project_names.contains(issue.frontmatter.project.as_str()));
                 }
             }
             Ok(false)
@@ -312,20 +313,20 @@ fn issue_matches_backend_scope(
     }
 }
 
-fn hosted_backends(config: &Config) -> Vec<&BackendConfig> {
+fn hosted_projects(config: &Config) -> Vec<&RepoProject> {
     config
-        .backends
+        .projects
         .iter()
-        .filter(|backend| {
+        .filter(|repo_project| {
             matches!(
-                backend.backend,
-                Backend::Github | Backend::Gitlab | Backend::Jira
+                repo_project.tasks_backend.kind,
+                BackendKind::Github | BackendKind::Gitlab | BackendKind::Jira
             )
         })
         .collect()
 }
 
-fn resolve_pull_filter_ids(ids: &[String], backend: &BackendConfig) -> HashSet<String> {
+fn resolve_pull_filter_ids(ids: &[String], repo_project: &RepoProject) -> HashSet<String> {
     ids.iter()
         .map(|id| {
             if id.contains("--") {
@@ -334,7 +335,7 @@ fn resolve_pull_filter_ids(ids: &[String], backend: &BackendConfig) -> HashSet<S
             if id.chars().all(|character| character.is_ascii_digit()) {
                 let number = id.parse::<u64>().unwrap_or_default();
                 return crate::services::issue_ids::format_id(
-                    &crate::services::issue_ids::effective_key(backend),
+                    &crate::services::issue_ids::effective_key(repo_project),
                     number,
                 );
             }
@@ -345,7 +346,7 @@ fn resolve_pull_filter_ids(ids: &[String], backend: &BackendConfig) -> HashSet<S
 
 fn collect_push_paths(
     paths: &AppPaths,
-    backend: &BackendConfig,
+    repo_project: &RepoProject,
     ids: &[String],
 ) -> Result<Vec<camino::Utf8PathBuf>, RiptskError> {
     if !ids.is_empty() {
@@ -363,7 +364,7 @@ fn collect_push_paths(
                 }
                 frontmatter::IssueLoadResult::Err(error) => return Err(RiptskError::Other(error)),
             };
-            if issue.frontmatter.project == backend.name {
+            if issue.frontmatter.project == repo_project.name {
                 paths_to_push.push(path);
             }
         }
@@ -377,7 +378,7 @@ fn collect_push_paths(
             frontmatter::IssueLoadResult::Conflict { .. } => continue,
             frontmatter::IssueLoadResult::Err(error) => return Err(RiptskError::Other(error)),
         };
-        if issue.frontmatter.project != backend.name {
+        if issue.frontmatter.project != repo_project.name {
             continue;
         }
         paths_to_push.push(path);
@@ -385,13 +386,13 @@ fn collect_push_paths(
     Ok(paths_to_push)
 }
 
-fn deleted_key_matches_backend_scope(key: &str, backends: &[&BackendConfig]) -> bool {
+fn deleted_key_matches_project_scope(key: &str, repo_projects: &[&RepoProject]) -> bool {
     let Some((provider, repo, _issue_id)) = parse_backend_state_key(key) else {
         return false;
     };
-    backends
-        .iter()
-        .any(|backend| provider_name(backend) == provider && backend.repo.as_deref() == Some(repo))
+    repo_projects.iter().any(|repo_project| {
+        provider_name(repo_project) == provider && sync_repo(repo_project).as_deref() == Some(repo)
+    })
 }
 
 fn parse_backend_state_key(key: &str) -> Option<(&str, &str, u64)> {
@@ -400,12 +401,20 @@ fn parse_backend_state_key(key: &str) -> Option<(&str, &str, u64)> {
     Some((provider, repo, issue_id.parse().ok()?))
 }
 
-fn provider_name(backend: &BackendConfig) -> &'static str {
-    match backend.backend {
-        Backend::Github => "github",
-        Backend::Gitlab => "gitlab",
-        Backend::Jira => "jira",
-        Backend::Local => "local",
+fn provider_name(repo_project: &RepoProject) -> &'static str {
+    match repo_project.tasks_backend.kind {
+        BackendKind::Github => "github",
+        BackendKind::Gitlab => "gitlab",
+        BackendKind::Jira => "jira",
+        BackendKind::Local => "local",
+    }
+}
+
+fn sync_repo(repo_project: &RepoProject) -> Option<String> {
+    match repo_project.tasks_backend.kind {
+        BackendKind::Github | BackendKind::Gitlab => repo_project.tasks_backend.repo.clone(),
+        BackendKind::Jira => repo_project.tasks_backend.jira_project.clone(),
+        BackendKind::Local => None,
     }
 }
 

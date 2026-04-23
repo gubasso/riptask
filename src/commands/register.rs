@@ -19,28 +19,70 @@ pub fn run(paths: &AppPaths, args: RegisterArgs) -> Result<(), RiptskError> {
                 Cell::new("Name")
                     .add_attribute(Attribute::Bold)
                     .add_attribute(Attribute::Dim),
-                Cell::new("Type")
+                Cell::new("VC")
                     .add_attribute(Attribute::Bold)
                     .add_attribute(Attribute::Dim),
-                Cell::new("Repo")
+                Cell::new("Tasks")
+                    .add_attribute(Attribute::Bold)
+                    .add_attribute(Attribute::Dim),
+                Cell::new("JiraProject")
+                    .add_attribute(Attribute::Bold)
+                    .add_attribute(Attribute::Dim),
+                Cell::new("Label")
                     .add_attribute(Attribute::Bold)
                     .add_attribute(Attribute::Dim),
             ]);
-            for backend in &config.backends {
+            for repo_project in &config.projects {
                 table.add_row(vec![
-                    Cell::new(&backend.name).fg(Color::Cyan),
-                    Cell::new(backend.backend.as_str()),
-                    Cell::new(backend.repo.as_deref().unwrap_or("-")).fg(Color::Grey),
+                    Cell::new(&repo_project.name).fg(Color::Cyan),
+                    Cell::new(format_backend_cell(
+                        repo_project.vc_backend.kind.as_str(),
+                        repo_project.vc_backend.host.as_deref(),
+                        repo_project.vc_backend.repo.as_deref(),
+                        repo_project.vc_backend.path.as_deref(),
+                    )),
+                    Cell::new(format_backend_cell(
+                        repo_project.tasks_backend.kind.as_str(),
+                        repo_project.tasks_backend.host.as_deref(),
+                        repo_project.tasks_backend.repo.as_deref(),
+                        repo_project.tasks_backend.path.as_deref(),
+                    )),
+                    Cell::new(
+                        repo_project
+                            .tasks_backend
+                            .jira_project
+                            .as_deref()
+                            .unwrap_or("-"),
+                    )
+                    .fg(Color::Grey),
+                    Cell::new(repo_project.repo_project_label.as_deref().unwrap_or(""))
+                        .fg(Color::Grey),
                 ]);
             }
             println!("{table}");
         } else {
-            for backend in &config.backends {
+            for repo_project in &config.projects {
                 println!(
-                    "{}\t{}\t{}",
-                    backend.name,
-                    backend.backend.as_str(),
-                    backend.repo.as_deref().unwrap_or("")
+                    "{}\t{}\t{}\t{}\t{}",
+                    repo_project.name,
+                    format_backend_cell(
+                        repo_project.vc_backend.kind.as_str(),
+                        repo_project.vc_backend.host.as_deref(),
+                        repo_project.vc_backend.repo.as_deref(),
+                        repo_project.vc_backend.path.as_deref(),
+                    ),
+                    format_backend_cell(
+                        repo_project.tasks_backend.kind.as_str(),
+                        repo_project.tasks_backend.host.as_deref(),
+                        repo_project.tasks_backend.repo.as_deref(),
+                        repo_project.tasks_backend.path.as_deref(),
+                    ),
+                    repo_project
+                        .tasks_backend
+                        .jira_project
+                        .as_deref()
+                        .unwrap_or(""),
+                    repo_project.repo_project_label.as_deref().unwrap_or("")
                 );
             }
         }
@@ -58,19 +100,42 @@ pub fn run(paths: &AppPaths, args: RegisterArgs) -> Result<(), RiptskError> {
     } else {
         None
     };
-    let backend = crate::services::project_detection::register_project_interactive(
+    let repo_project = crate::services::project_detection::register_project_interactive(
         &mut config,
         &DialoguerPrompts,
         ai_backend
             .as_ref()
             .map(|backend| backend as &dyn crate::adapters::ai::AiBackend),
         &cwd,
+        args.repo_project_label,
     )?;
     save_config(paths.config_path().as_std_path(), &config)?;
     crate::ui::success(&format!(
-        "registered {} ({})",
-        backend.name,
-        backend.backend.as_str()
+        "registered {} (vc: {}, tasks: {})",
+        repo_project.name,
+        repo_project.vc_backend.kind.as_str(),
+        repo_project.tasks_backend.kind.as_str()
     ));
     Ok(())
+}
+
+fn format_backend_cell(
+    kind: &str,
+    host: Option<&str>,
+    repo: Option<&str>,
+    path: Option<&str>,
+) -> String {
+    if let Some(path) = path {
+        return format!("{kind}@{path}");
+    }
+    if let Some(repo) = repo {
+        if let Some(host) = host {
+            return format!("{kind}@{host}/{repo}");
+        }
+        return format!("{kind}@{repo}");
+    }
+    if let Some(host) = host {
+        return format!("{kind}@{host}");
+    }
+    kind.to_owned()
 }
