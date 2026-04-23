@@ -28,7 +28,7 @@ pub fn resolve_id(
     let mut detected_candidate = None;
 
     if let Some(backend) = project_detection::detect_from_cwd(cwd, config)? {
-        let scope = issue_ids::effective_key(&backend);
+        let scope = issue_ids::effective_key(backend);
         let full_id = issue_ids::format_id(&scope, number);
         if crate::storage::issue_store::find_issue(paths, &full_id).is_ok() {
             return Ok(full_id);
@@ -197,7 +197,7 @@ mod tests {
     use super::{id_for_branch, resolve_id};
     use crate::config::{Config, default_config};
     use crate::error::RiptskError;
-    use crate::models::{Backend, BackendConfig};
+    use crate::models::{BackendKind, RepoProject, TasksBackendSpec, VCBackendSpec};
     use crate::paths::AppPaths;
     use camino::Utf8PathBuf;
     use tempfile::tempdir;
@@ -223,17 +223,26 @@ mod tests {
         let paths = app_paths(temp.path());
         touch_issue(&paths, "GH-GUB-DEV--61");
         touch_issue(&paths, "GL-FOO-BAR--61");
-        let config = config_with_backends(vec![BackendConfig {
+        let config = config_with_projects(vec![RepoProject {
             name: "dev-tools".into(),
-            backend: Backend::Github,
-            host: None,
-            repo: Some("GubCorp/dev-tools".into()),
+            vc_backend: VCBackendSpec {
+                kind: BackendKind::Github,
+                host: None,
+                repo: Some("GubCorp/dev-tools".into()),
+                path: Some(cwd.to_string()),
+            },
+            tasks_backend: TasksBackendSpec {
+                kind: BackendKind::Github,
+                host: None,
+                repo: Some("GubCorp/dev-tools".into()),
+                jira_project: None,
+                default_issue_type: None,
+                path: None,
+            },
             default_board: Some("personal".into()),
             default_org: None,
-            path: Some(cwd.to_string()),
-            vc: None,
-            default_issue_type: None,
             key: Some("GH-GUB-DEV".into()),
+            repo_project_label: None,
         }]);
 
         let resolved = resolve_id(&paths, &config, &cwd, "61").expect("resolve numeric id");
@@ -354,9 +363,9 @@ mod tests {
         std::fs::write(paths.issues_dir().join(format!("{id}.md")), contents).expect("write issue");
     }
 
-    fn config_with_backends(backends: Vec<BackendConfig>) -> Config {
+    fn config_with_projects(projects: Vec<RepoProject>) -> Config {
         let mut config = default_config();
-        config.backends = backends;
+        config.projects = projects;
         config
     }
 }

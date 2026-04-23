@@ -47,7 +47,7 @@ flowchart LR
     User[User terminal] --> CLI[tsk CLI]
     CLI --> Repo[RIPTSK_REPO<br/>issues, templates, riptsk.yaml, .git]
     CLI --> Cache[XDG_CACHE_HOME riptsk<br/>views, id_map, backend_state, session]
-    CLI --> ProjRepo[Project repo<br/>registered backend cwd]
+    CLI --> ProjRepo[Project repo<br/>registered RepoProject cwd]
     CLI --> Sync[Sync engine]
     Sync --> GitHub[GitHub]
     Sync --> GitLab[GitLab]
@@ -470,10 +470,15 @@ defaults:
   assignee: null
   template: task
 
-backends:
+projects:
   - name: my-github
-    type: github
-    repo: myorg/my-app
+    vc_backend:
+      type: github
+      repo: myorg/my-app
+      path: /home/user/src/my-app
+    tasks_backend:
+      type: github
+      repo: myorg/my-app
     default_board: personal
 
 boards:
@@ -520,10 +525,12 @@ Exactly these keys are supported:
 
 Everything else is YAML-only, including:
 
-- `backends`
+- `projects`
 - `boards`
 - `recurring`
 - `ai.features.*`
+
+Shared Jira project setup, including `repo_project_label` partitioning, is documented in [docs/workflow/jira-gitlab-setup.md](docs/workflow/jira-gitlab-setup.md).
 
 ## Issue format
 

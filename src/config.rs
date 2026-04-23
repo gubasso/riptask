@@ -1,10 +1,10 @@
 use crate::domain::issue::{IssueState, Priority};
 use crate::error::RiptskError;
 use crate::models::{
-    AiConfig, AiFeatures, BackendConfig, BoardConfig, DefaultsConfig, RecurringDef, SyncConfig,
-    UiConfig,
+    AiConfig, AiFeatures, BackendKind, BoardConfig, DefaultsConfig, RecurringDef, RepoProject,
+    SyncConfig, UiConfig,
 };
-use crate::services::issue_ids;
+use crate::services::{issue_ids, repo_project_label};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
@@ -17,7 +17,7 @@ pub struct Config {
     pub auto_commit: bool,
     pub defaults: DefaultsConfig,
     #[serde(default)]
-    pub backends: Vec<BackendConfig>,
+    pub projects: Vec<RepoProject>,
     #[serde(default)]
     pub boards: Vec<BoardConfig>,
     #[serde(default)]
@@ -41,7 +41,7 @@ pub fn default_config() -> Config {
             assignee: None,
             template: Some("task".into()),
         },
-        backends: Vec::new(),
+        projects: Vec::new(),
         boards: vec![BoardConfig {
             name: "personal".into(),
             statuses: vec![
@@ -106,12 +106,12 @@ pub fn save_config(path: &Path, config: &Config) -> Result<(), RiptskError> {
 pub fn validate_config(config: &mut Config) -> Result<(), RiptskError> {
     // Check explicit `key:` syntax before normalization so users get a clear
     // error that names the offending backend instead of a downstream collision.
-    for backend in &config.backends {
-        if let Some(key) = backend.key.as_deref() {
+    for project in &config.projects {
+        if let Some(key) = project.key.as_deref() {
             issue_ids::validate_explicit_key_syntax(key).map_err(|message| {
                 RiptskError::Config(format!(
-                    "backend '{}' has invalid key: {message}",
-                    backend.name
+                    "RepoProject '{}' has invalid key: {message}",
+                    project.name
                 ))
             })?;
         }
@@ -119,77 +119,67 @@ pub fn validate_config(config: &mut Config) -> Result<(), RiptskError> {
     // Populate every group member with its canonical key so that downstream
     // `effective_key` calls return a stable value regardless of which backend
     // instance they are given.
-    issue_ids::normalize_backend_keys(&mut config.backends)?;
-    issue_ids::validate_no_key_collisions(&config.backends)?;
+    issue_ids::normalize_backend_keys(&mut config.projects)?;
+    issue_ids::validate_no_key_collisions(&config.projects)?;
     require_unique(
-        config.backends.iter().map(|backend| backend.name.as_str()),
-        "duplicate backend name in riptsk.yaml",
+        config.projects.iter().map(|project| project.name.as_str()),
+        "duplicate RepoProject name in riptsk.yaml",
     )?;
     require_unique(
         config.boards.iter().map(|board| board.name.as_str()),
         "duplicate board name in riptsk.yaml",
     )?;
     validate_ai_command(config)?;
-    validate_jira_backends(config)?;
-    validate_vc_references(config)?;
+    validate_projects(config)?;
     Ok(())
 }
 
-/// Validate Jira-specific config requirements:
-/// - `host` is required and must use HTTPS
-/// - `repo` must use `org/PROJECT_KEY` format (must contain `/`)
-fn validate_jira_backends(config: &Config) -> Result<(), RiptskError> {
-    use crate::models::Backend;
-    for backend in &config.backends {
-        if backend.backend != Backend::Jira {
-            continue;
-        }
-        let host = backend.host.as_deref().unwrap_or_default();
-        if host.is_empty() {
+fn validate_projects(config: &Config) -> Result<(), RiptskError> {
+    for repo_project in &config.projects {
+        if repo_project.vc_backend.kind == BackendKind::Jira {
             return Err(RiptskError::Config(format!(
-                "Jira backend '{}' requires a 'host' field (e.g., https://myteam.atlassian.net)",
-                backend.name
+                "RepoProject '{}' has invalid VCBackend: jira is not allowed",
+                repo_project.name
             )));
         }
-        if !host.starts_with("https://") {
-            return Err(RiptskError::Config(format!(
-                "Jira backend '{}' host must start with https:// (got: {})",
-                backend.name, host
-            )));
-        }
-        let repo = backend.repo.as_deref().unwrap_or_default();
-        if repo.is_empty() || !repo.contains('/') {
-            return Err(RiptskError::Config(format!(
-                "Jira backend '{}' requires 'repo' in org/PROJECT_KEY format (got: {:?})",
-                backend.name, backend.repo
-            )));
-        }
-    }
-    Ok(())
-}
 
-/// Validate that `vc` fields reference existing GitHub or GitLab backends.
-/// Prevents referencing nonexistent backends or using Jira/Local as a VC target.
-fn validate_vc_references(config: &Config) -> Result<(), RiptskError> {
-    use crate::models::Backend;
-    for backend in &config.backends {
-        if let Some(ref vc_name) = backend.vc {
-            let vc_backend = config
-                .backends
-                .iter()
-                .find(|b| &b.name == vc_name)
-                .ok_or_else(|| {
-                    RiptskError::Config(format!(
-                        "backend '{}' references vc '{}' which does not exist",
-                        backend.name, vc_name
-                    ))
-                })?;
-            if !matches!(vc_backend.backend, Backend::Github | Backend::Gitlab) {
+        if let Some(label) = repo_project.repo_project_label.as_deref() {
+            repo_project_label::validate(label)?;
+            if repo_project.tasks_backend.kind != BackendKind::Jira {
                 return Err(RiptskError::Config(format!(
-                    "vc '{}' referenced by backend '{}' must be a github or gitlab backend (got: {})",
-                    vc_name,
-                    backend.name,
-                    vc_backend.backend.as_str()
+                    "RepoProject '{}' sets repo_project_label '{}' but its TasksBackend is {:?}; the label is Jira-only and would be silently ignored",
+                    repo_project.name, label, repo_project.tasks_backend.kind
+                )));
+            }
+        }
+
+        if repo_project.tasks_backend.kind == BackendKind::Jira {
+            let host = repo_project
+                .tasks_backend
+                .host
+                .as_deref()
+                .unwrap_or_default();
+            if host.is_empty() {
+                return Err(RiptskError::Config(format!(
+                    "Jira TasksBackend for RepoProject '{}' requires a 'host' field (e.g., https://myteam.atlassian.net)",
+                    repo_project.name
+                )));
+            }
+            if !host.starts_with("https://") {
+                return Err(RiptskError::Config(format!(
+                    "Jira TasksBackend for RepoProject '{}' host must start with https:// (got: {})",
+                    repo_project.name, host
+                )));
+            }
+            let jira_project = repo_project
+                .tasks_backend
+                .jira_project
+                .as_deref()
+                .unwrap_or_default();
+            if jira_project.is_empty() || !jira_project.contains('/') {
+                return Err(RiptskError::Config(format!(
+                    "Jira TasksBackend for RepoProject '{}' requires 'jira_project' in org/PROJECT_KEY format (got: {:?})",
+                    repo_project.name, repo_project.tasks_backend.jira_project
                 )));
             }
         }
@@ -324,7 +314,7 @@ mod tests {
         let config = load_config(std::path::Path::new("tests/fixtures/riptsk.yaml"))
             .expect("load fixture config");
         assert_eq!(config.version, 1);
-        assert_eq!(config.backends.len(), 1);
+        assert_eq!(config.projects.len(), 1);
     }
 
     #[test]
@@ -391,10 +381,14 @@ defaults:
   priority: medium
   assignee: ~
   template: task
-backends:
+projects:
   - name: demo
-    type: github
-    repo: owner/demo
+    vc_backend:
+      type: github
+      repo: owner/demo
+    tasks_backend:
+      type: github
+      repo: owner/demo
     default_board: personal
 boards:
   - name: personal
@@ -420,7 +414,7 @@ recurring: []
         let config = load_config(file.path()).expect("load");
 
         // Normalization populates the in-memory key from the derived default.
-        assert_eq!(config.backends[0].key.as_deref(), Some("DEMO"));
+        assert_eq!(config.projects[0].key.as_deref(), Some("DEMO"));
         // But loading must never rewrite the file on disk.
         let after = fs::read_to_string(file.path()).expect("after");
         assert_eq!(before, after);
@@ -436,14 +430,22 @@ defaults:
   priority: medium
   assignee: ~
   template: task
-backends:
+projects:
   - name: alpha-one
-    type: github
-    repo: owner/alpha
+    vc_backend:
+      type: github
+      repo: owner/alpha
+    tasks_backend:
+      type: github
+      repo: owner/alpha
     default_board: personal
   - name: alpha-two
-    type: github
-    repo: other/alpha
+    vc_backend:
+      type: github
+      repo: other/alpha
+    tasks_backend:
+      type: github
+      repo: other/alpha
     default_board: personal
 boards:
   - name: personal
@@ -467,5 +469,57 @@ recurring: []
 
         let error = load_config(file.path()).expect_err("collision");
         assert!(matches!(error, RiptskError::KeyCollision(_)));
+    }
+
+    #[test]
+    fn load_config_rejects_repo_project_label_on_non_jira_backend() {
+        let file = NamedTempFile::new().expect("temp file");
+        let yaml = r#"version: 1
+defaults:
+  board: personal
+  status: todo
+  priority: medium
+  assignee: ~
+  template: task
+projects:
+  - name: demo
+    vc_backend:
+      type: github
+      repo: owner/demo
+    tasks_backend:
+      type: github
+      repo: owner/demo
+    default_board: personal
+    repo_project_label: proj::demo
+boards:
+  - name: personal
+    statuses: [backlog, todo, in-progress, review, done]
+ui:
+  opener: "nvim -R"
+  tree_depth: 2
+  fzf_opts: "--border"
+ai:
+  enabled: false
+  features:
+    new_body_gen: true
+    triage: true
+    summarize: true
+    ask: true
+sync:
+  conflict_detection: true
+recurring: []
+"#;
+        fs::write(file.path(), yaml).expect("write yaml");
+
+        let error = load_config(file.path()).expect_err("label on non-Jira should fail");
+        match error {
+            RiptskError::Config(msg) => {
+                assert!(
+                    msg.contains("repo_project_label") && msg.contains("Jira-only"),
+                    "unexpected error message: {msg}"
+                );
+            }
+            other => panic!("expected RiptskError::Config, got {other:?}"),
+        }
     }
 }

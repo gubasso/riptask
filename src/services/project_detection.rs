@@ -2,11 +2,11 @@ use crate::adapters::ai::AiBackend;
 use crate::adapters::git::GitBackend;
 use crate::adapters::prompts::PromptBackend;
 use crate::config::{Config, load_config, save_config};
-use crate::error::RiptskError;
-use crate::models::{Backend, BackendConfig};
+use crate::error::{ProjectKeyCollision, ProjectKeyProjectMeta, RiptskError};
+use crate::models::{BackendKind, RepoProject, TasksBackendSpec, VCBackendSpec};
 use crate::paths::AppPaths;
 use crate::services::auto_commit::maybe_auto_commit;
-use crate::services::issue_ids;
+use crate::services::{issue_ids, repo_project_label};
 use anyhow::Context;
 use camino::Utf8Path;
 use std::io::IsTerminal;
@@ -28,8 +28,6 @@ pub fn ensure_registered(
             .to_string_lossy()
             .to_string(),
     );
-    // Best-effort: if git is unavailable or detection fails, skip silently
-    // and let commands handle errors with their own messages.
     let detected = match detect_from_cwd(&cwd, &config) {
         Ok(result) => result,
         Err(_) => return Ok(()),
@@ -42,9 +40,6 @@ pub fn ensure_registered(
     } else {
         None
     };
-    // Best-effort: if auto-registration fails (e.g. a derived-key collision in
-    // a non-interactive environment), skip silently so unrelated commands still
-    // run. Commands that require a registered project raise their own errors.
     let registered = match register_project_auto(
         &cwd,
         &mut config,
@@ -67,11 +62,10 @@ pub fn ensure_registered(
     Ok(())
 }
 
-pub fn detect_from_cwd(
+pub fn detect_from_cwd<'a>(
     cwd: &Utf8Path,
-    config: &Config,
-) -> Result<Option<BackendConfig>, RiptskError> {
-    // Git remote URL matching first — skip if git root is $HOME.
+    config: &'a Config,
+) -> Result<Option<&'a RepoProject>, RiptskError> {
     let output = Command::new("git")
         .arg("-C")
         .arg(cwd)
@@ -85,34 +79,29 @@ pub fn detect_from_cwd(
     if output.status.success() && !git_root_is_home(cwd)? {
         let url = String::from_utf8_lossy(&output.stdout);
         let normalized = normalize_url(url.trim());
-        if let Some(backend) = config
-            .backends
+        if let Some(repo_project) = config
+            .projects
             .iter()
-            .find(|backend| normalized == normalized_backend(backend))
+            .find(|repo_project| normalized == normalized_vc_backend(&repo_project.vc_backend))
         {
-            return Ok(Some(backend.clone()));
+            return Ok(Some(repo_project));
         }
     }
 
-    // Path-based matching — works for all project types including non-git.
-    if let Some(backend) = config
-        .backends
-        .iter()
-        .find(|backend| {
-            backend
+    Ok(config.projects.iter().find(|repo_project| {
+        repo_project
+            .vc_backend
+            .path
+            .as_ref()
+            .is_some_and(|path| path_is_under(cwd.as_str(), path))
+            || repo_project
+                .tasks_backend
                 .path
                 .as_ref()
-                .is_some_and(|p| path_is_under(cwd.as_str(), p))
-        })
-        .cloned()
-    {
-        return Ok(Some(backend));
-    }
-
-    Ok(None)
+                .is_some_and(|path| path_is_under(cwd.as_str(), path))
+    }))
 }
 
-/// Check if `cwd` is the same directory or a subdirectory of `base`, using canonical paths when possible.
 fn path_is_under(cwd: &str, base: &str) -> bool {
     let cwd_canon = std::fs::canonicalize(cwd)
         .map(|p| p.to_string_lossy().to_string())
@@ -146,16 +135,16 @@ pub fn normalize_url(url: &str) -> String {
     }
 }
 
-pub fn infer_type(host: &str) -> Backend {
+pub fn infer_type(host: &str) -> BackendKind {
     match host {
-        "github.com" => Backend::Github,
-        value if value.contains("gitlab") => Backend::Gitlab,
-        _ => Backend::Local,
+        "github.com" => BackendKind::Github,
+        value if value.contains("gitlab") => BackendKind::Gitlab,
+        _ => BackendKind::Local,
     }
 }
 
-pub fn normalized_backend(backend: &BackendConfig) -> String {
-    match (&backend.host, &backend.repo) {
+pub fn normalized_vc_backend(vc_backend: &VCBackendSpec) -> String {
+    match (&vc_backend.host, &vc_backend.repo) {
         (Some(host), Some(repo)) => {
             let host = host
                 .strip_prefix("https://")
@@ -163,10 +152,10 @@ pub fn normalized_backend(backend: &BackendConfig) -> String {
                 .unwrap_or(host);
             format!("{}:{}", host.trim_end_matches('/'), repo)
         }
-        (None, Some(repo)) if backend.backend == Backend::Github => {
+        (None, Some(repo)) if vc_backend.kind == BackendKind::Github => {
             format!("github.com:{repo}")
         }
-        (None, Some(repo)) if backend.backend == Backend::Gitlab => {
+        (None, Some(repo)) if vc_backend.kind == BackendKind::Gitlab => {
             format!("gitlab.com:{repo}")
         }
         _ => String::new(),
@@ -178,44 +167,59 @@ pub fn register_project_auto(
     config: &mut Config,
     prompts: Option<&dyn PromptBackend>,
     ai: Option<&dyn AiBackend>,
-) -> Result<Option<BackendConfig>, RiptskError> {
-    // Never auto-register $HOME itself as a project.
+) -> Result<Option<RepoProject>, RiptskError> {
     if is_home_dir(cwd) {
         return Ok(None);
     }
 
     if let Some(existing) = detect_from_cwd(cwd, config)? {
-        return Ok(Some(existing));
+        return Ok(Some(existing.clone()));
     }
 
-    // Remote git repo — register by URL (skip if git root is $HOME).
     if !git_root_is_home(cwd)? {
         if let Some(url) = git_origin_url(cwd)? {
             let normalized = normalize_url(url.trim());
             let (host, repo) = split_host_repo(&normalized)
                 .ok_or_else(|| RiptskError::General("failed to normalize git remote URL".into()))?;
-            let Some(name) = deduplicate_name(repo.rsplit('/').next().unwrap_or(repo), cwd, config)
-            else {
+            let repo_tail = repo.rsplit('/').next().unwrap_or(repo);
+            let Some(name) = deduplicate_name(repo_tail, cwd, config) else {
                 return Ok(None);
             };
-            let mut backend = BackendConfig {
+            let host_url = format!("https://{}", host.trim_end_matches('/'));
+            let mut repo_project = RepoProject {
                 name,
-                backend: infer_type(host),
-                host: Some(format!("https://{}", host.trim_end_matches('/'))),
-                repo: Some(repo.to_owned()),
+                vc_backend: VCBackendSpec {
+                    kind: infer_type(host),
+                    host: Some(host_url.clone()),
+                    repo: Some(repo.to_owned()),
+                    path: None,
+                },
+                tasks_backend: TasksBackendSpec {
+                    kind: infer_type(host),
+                    host: Some(host_url),
+                    repo: Some(repo.to_owned()),
+                    jira_project: None,
+                    default_issue_type: None,
+                    path: None,
+                },
                 default_board: Some("personal".into()),
                 default_org: None,
-                path: None,
-                vc: None,
-                default_issue_type: None,
                 key: None,
+                // Only Jira TasksBackends use `repo_project_label`; auto-
+                // registration in this branch always targets GitHub/GitLab via
+                // `infer_type(host)`, so leave it unset. This also avoids the
+                // edge case where `derive_default` can sanitize down to `""`
+                // (e.g. for emoji-only or all-punctuation directory names),
+                // which would otherwise fail validation for a project that
+                // does not use the label at all.
+                repo_project_label: None,
             };
-            finalize_backend_registration(config, &mut backend, prompts, ai)?;
-            config.backends.push(backend.clone());
-            return Ok(Some(backend));
+            validate_new_repo_project(config, &repo_project)?;
+            finalize_repo_project_registration(config, &mut repo_project, prompts, ai)?;
+            config.projects.push(repo_project.clone());
+            return Ok(Some(repo_project));
         }
 
-        // Local git repo (no remote) — register by path.
         if is_inside_work_tree(cwd)? {
             let Some(name) = deduplicate_name(cwd.file_name().unwrap_or("project"), cwd, config)
             else {
@@ -224,67 +228,91 @@ pub fn register_project_auto(
             let path = std::fs::canonicalize(cwd.as_std_path())
                 .map(|value| value.to_string_lossy().to_string())
                 .unwrap_or_else(|_| cwd.as_str().to_owned());
-            let mut backend = BackendConfig {
+            let mut repo_project = RepoProject {
                 name,
-                backend: Backend::Local,
-                host: None,
-                repo: None,
+                vc_backend: VCBackendSpec {
+                    kind: BackendKind::Local,
+                    host: None,
+                    repo: None,
+                    path: Some(path.clone()),
+                },
+                tasks_backend: TasksBackendSpec {
+                    kind: BackendKind::Local,
+                    host: None,
+                    repo: None,
+                    jira_project: None,
+                    default_issue_type: None,
+                    path: Some(path),
+                },
                 default_board: Some("personal".into()),
                 default_org: None,
-                path: Some(path),
-                vc: None,
-                default_issue_type: None,
                 key: None,
+                // Local/Local RepoProjects do not use `repo_project_label`.
+                repo_project_label: None,
             };
-            finalize_backend_registration(config, &mut backend, prompts, ai)?;
-            config.backends.push(backend.clone());
-            return Ok(Some(backend));
+            validate_new_repo_project(config, &repo_project)?;
+            finalize_repo_project_registration(config, &mut repo_project, prompts, ai)?;
+            config.projects.push(repo_project.clone());
+            return Ok(Some(repo_project));
         }
     }
 
-    // Non-git directory — register as Backend::Local using cwd.
     let Some(name) = deduplicate_name(cwd.file_name().unwrap_or("project"), cwd, config) else {
         return Ok(None);
     };
     let path = std::fs::canonicalize(cwd.as_std_path())
         .map(|value| value.to_string_lossy().to_string())
         .unwrap_or_else(|_| cwd.as_str().to_owned());
-    let mut backend = BackendConfig {
+    let mut repo_project = RepoProject {
         name,
-        backend: Backend::Local,
-        host: None,
-        repo: None,
+        vc_backend: VCBackendSpec {
+            kind: BackendKind::Local,
+            host: None,
+            repo: None,
+            path: Some(path.clone()),
+        },
+        tasks_backend: TasksBackendSpec {
+            kind: BackendKind::Local,
+            host: None,
+            repo: None,
+            jira_project: None,
+            default_issue_type: None,
+            path: Some(path),
+        },
         default_board: Some("personal".into()),
         default_org: None,
-        path: Some(path),
-        vc: None,
-        default_issue_type: None,
         key: None,
+        // Non-git, Local/Local RepoProject — `repo_project_label` is a Jira
+        // partitioning concept and has no effect here, so leave it unset.
+        repo_project_label: None,
     };
-    finalize_backend_registration(config, &mut backend, prompts, ai)?;
-    config.backends.push(backend.clone());
-    Ok(Some(backend))
+    validate_new_repo_project(config, &repo_project)?;
+    finalize_repo_project_registration(config, &mut repo_project, prompts, ai)?;
+    config.projects.push(repo_project.clone());
+    Ok(Some(repo_project))
 }
 
-/// Ensure the backend name is unique within the config. If `base` already exists,
-/// prepend the parent directory name. Returns `None` if uniqueness cannot be achieved.
 fn deduplicate_name(base: &str, cwd: &Utf8Path, config: &Config) -> Option<String> {
-    if !config.backends.iter().any(|b| b.name == base) {
+    if !config
+        .projects
+        .iter()
+        .any(|repo_project| repo_project.name == base)
+    {
         return Some(base.to_owned());
     }
     let parent = cwd.parent().and_then(|p| p.file_name()).unwrap_or("dup");
     let candidate = format!("{parent}-{base}");
-    if !config.backends.iter().any(|b| b.name == candidate) {
+    if !config
+        .projects
+        .iter()
+        .any(|repo_project| repo_project.name == candidate)
+    {
         return Some(candidate);
     }
     None
 }
 
-/// Split a normalized "host:repo" or "host:port:repo" string into (host, repo).
-/// The repo part is identified as the segment after the last ':' that contains '/'.
 fn split_host_repo(normalized: &str) -> Option<(&str, &str)> {
-    // Try splitting from the right: if the part after the last ':' contains '/',
-    // it's the repo path. Otherwise fall back to split_once for "host:repo".
     if let Some(pos) = normalized.rfind(':') {
         let candidate = &normalized[pos + 1..];
         if candidate.contains('/') {
@@ -317,13 +345,14 @@ pub fn register_project_interactive(
     prompts: &dyn PromptBackend,
     ai: Option<&dyn AiBackend>,
     cwd: &Utf8Path,
-) -> Result<BackendConfig, RiptskError> {
+    repo_project_label_override: Option<String>,
+) -> Result<RepoProject, RiptskError> {
     if let Some(existing) = detect_from_cwd(cwd, config)? {
-        return Ok(existing);
+        return Ok(existing.clone());
     }
 
     let repo_url = git_origin_url(cwd)?;
-    let (default_name, default_type, default_host, default_repo, default_path) =
+    let (default_name, default_vc_kind, default_host, default_repo, default_path, origin_tail) =
         if let Some(url) = repo_url {
             let normalized = normalize_url(&url);
             let (host, repo) = split_host_repo(&normalized)
@@ -334,11 +363,12 @@ pub fn register_project_interactive(
                 Some(host.to_owned()),
                 Some(repo.to_owned()),
                 None,
+                Some(repo.rsplit('/').next().unwrap_or(repo).to_owned()),
             )
         } else {
             (
                 cwd.file_name().unwrap_or("project").to_owned(),
-                Backend::Local,
+                BackendKind::Local,
                 None,
                 None,
                 Some(
@@ -346,76 +376,190 @@ pub fn register_project_interactive(
                         .map(|path| path.to_string_lossy().to_string())
                         .unwrap_or_else(|_| cwd.as_str().to_owned()),
                 ),
+                None,
             )
         };
 
-    let name = prompts.input("Backend name", Some(&default_name))?;
-    let backend = match prompts
-        .select(
-            "Backend type",
-            &["github".into(), "gitlab".into(), "local".into()],
-            match default_type {
-                Backend::Github => 0,
-                Backend::Gitlab => 1,
-                Backend::Jira => 0,
-                Backend::Local => 2,
-            },
-        )?
-        .as_str()
-    {
-        "github" => Backend::Github,
-        "gitlab" => Backend::Gitlab,
-        _ => Backend::Local,
-    };
-    let host = if backend == Backend::Local {
+    let name = prompts.input("RepoProject name", Some(&default_name))?;
+    let vc_kind = select_backend_kind(
+        prompts,
+        "VCBackend type",
+        &["github", "gitlab", "local"],
+        default_vc_kind.clone(),
+    )?;
+    let vc_host = if vc_kind == BackendKind::Local {
         None
     } else {
-        let default_host = default_host.as_deref().unwrap_or(match backend {
-            Backend::Github => "github.com",
-            Backend::Gitlab => "gitlab.com",
-            Backend::Jira => "",
-            Backend::Local => "",
+        let default_host = default_host.as_deref().unwrap_or(match vc_kind {
+            BackendKind::Github => "github.com",
+            BackendKind::Gitlab => "gitlab.com",
+            BackendKind::Jira | BackendKind::Local => "",
         });
-        let host = prompts.input("Host", Some(default_host))?;
+        let host = prompts.input("VCBackend host", Some(default_host))?;
         Some(format!(
             "https://{}",
             host.trim_start_matches("https://")
                 .trim_start_matches("http://")
         ))
     };
-    let repo = if backend == Backend::Local {
+    let vc_repo = if vc_kind == BackendKind::Local {
         None
     } else {
-        Some(prompts.input("Repo", default_repo.as_deref())?)
+        Some(prompts.input("VCBackend repo", default_repo.as_deref())?)
     };
+
+    let default_tasks_kind = if vc_kind == BackendKind::Local {
+        BackendKind::Local
+    } else {
+        vc_kind.clone()
+    };
+    let tasks_kind = select_backend_kind(
+        prompts,
+        "TasksBackend type",
+        &["github", "gitlab", "jira", "local"],
+        default_tasks_kind,
+    )?;
+    let tasks_host = if tasks_kind == BackendKind::Local {
+        None
+    } else {
+        let default_tasks_host = default_host.as_deref().unwrap_or(match tasks_kind {
+            BackendKind::Github => "github.com",
+            BackendKind::Gitlab => "gitlab.com",
+            BackendKind::Jira => "",
+            BackendKind::Local => "",
+        });
+        let host = prompts.input("TasksBackend host", Some(default_tasks_host))?;
+        Some(format!(
+            "https://{}",
+            host.trim_start_matches("https://")
+                .trim_start_matches("http://")
+        ))
+    };
+    let (tasks_repo, jira_project, default_issue_type, tasks_path) = match tasks_kind {
+        BackendKind::Github | BackendKind::Gitlab => (
+            Some(prompts.input("TasksBackend repo", default_repo.as_deref())?),
+            None,
+            None,
+            None,
+        ),
+        BackendKind::Jira => (
+            None,
+            Some(prompts.input("JiraProject", Some("org/PROJ"))?),
+            match prompts.input("Default issue type", Some("Task"))? {
+                value if value.trim().is_empty() => None,
+                value => Some(value),
+            },
+            None,
+        ),
+        BackendKind::Local => (None, None, None, default_path.clone()),
+    };
+
     let board_default = config
         .boards
         .first()
         .map(|board| board.name.as_str())
         .unwrap_or("personal");
     let default_board = Some(prompts.input("Default board", Some(board_default))?);
-
-    let path = if backend == Backend::Local {
-        default_path
-    } else {
-        None
-    };
-    let mut backend_config = BackendConfig {
+    let derived_label = repo_project_label::derive_default(
+        origin_tail.as_deref(),
+        cwd.file_name().unwrap_or("project"),
+    );
+    let mut repo_project = RepoProject {
         name,
-        backend,
-        host,
-        repo,
+        vc_backend: VCBackendSpec {
+            kind: vc_kind,
+            host: vc_host,
+            repo: vc_repo,
+            path: default_path.clone(),
+        },
+        tasks_backend: TasksBackendSpec {
+            kind: tasks_kind.clone(),
+            host: tasks_host.clone(),
+            repo: tasks_repo,
+            jira_project: jira_project.clone(),
+            default_issue_type,
+            path: tasks_path,
+        },
         default_board,
         default_org: None,
-        path,
-        vc: None,
-        default_issue_type: None,
         key: None,
+        repo_project_label: None,
     };
-    validate_new_backend(config, &backend_config)?;
-    finalize_backend_registration(config, &mut backend_config, Some(prompts), ai)?;
-    config.backends.push(backend_config.clone());
-    Ok(backend_config)
+
+    let shared_jira = tasks_kind == BackendKind::Jira
+        && config.projects.iter().any(|existing| {
+            existing.tasks_backend.kind == BackendKind::Jira
+                && existing.tasks_backend.host == tasks_host
+                && existing.tasks_backend.jira_project == jira_project
+        });
+    // `repo_project_label` is only meaningful for *shared* Jira projects —
+    // it partitions one `jira_project` across multiple RepoProjects. Setting
+    // it on a solo Jira RepoProject would silently narrow `list_issues` JQL
+    // to `AND labels = "<label>"`, hiding every pre-existing Jira issue that
+    // lacks the synthetic label. So we only populate the label when:
+    //   - the user explicitly passed `--repo-project-label`, OR
+    //   - another RepoProject already registered for the same
+    //     `(tasks_host, jira_project)` (shared mode, prompt the user).
+    // For non-Jira TasksBackends the override flag is rejected and the field
+    // stays `None`.
+    if tasks_kind == BackendKind::Jira {
+        let final_label: Option<String> = if let Some(raw) = repo_project_label_override {
+            Some(
+                repo_project_label::normalize_user_input(&raw).ok_or_else(|| {
+                    RiptskError::Config(format!(
+                        "--repo-project-label '{raw}' sanitizes to an empty suffix after '{}'",
+                        repo_project_label::LABEL_PREFIX
+                    ))
+                })?,
+            )
+        } else if shared_jira {
+            let answer = prompts.input("Repo-project label", derived_label.as_deref())?;
+            repo_project_label::normalize_user_input(&answer)
+        } else {
+            None
+        };
+        if let Some(label) = final_label {
+            repo_project.repo_project_label = Some(deduplicate_default_label(
+                config,
+                cwd,
+                label,
+                tasks_host.as_deref(),
+                jira_project.as_deref(),
+            ));
+        }
+    } else if repo_project_label_override.is_some() {
+        return Err(RiptskError::Config(
+            "--repo-project-label is only valid when the TasksBackend is Jira".into(),
+        ));
+    }
+
+    validate_new_repo_project(config, &repo_project)?;
+    finalize_repo_project_registration(config, &mut repo_project, Some(prompts), ai)?;
+    config.projects.push(repo_project.clone());
+    Ok(repo_project)
+}
+
+fn select_backend_kind(
+    prompts: &dyn PromptBackend,
+    prompt: &str,
+    options: &[&str],
+    default: BackendKind,
+) -> Result<BackendKind, RiptskError> {
+    let items = options
+        .iter()
+        .map(|item| item.to_string())
+        .collect::<Vec<_>>();
+    let default_index = options
+        .iter()
+        .position(|item| *item == default.as_str())
+        .unwrap_or(0);
+    let selected = prompts.select(prompt, &items, default_index)?;
+    Ok(match selected.as_str() {
+        "github" => BackendKind::Github,
+        "gitlab" => BackendKind::Gitlab,
+        "jira" => BackendKind::Jira,
+        _ => BackendKind::Local,
+    })
 }
 
 pub(crate) fn suggest_key_with_ai(
@@ -439,8 +583,8 @@ pub(crate) fn suggest_key_with_ai(
 
 pub(crate) fn resolve_key_conflict_interactive(
     prompts: &dyn PromptBackend,
-    new_backend: &BackendConfig,
-    conflicting: &BackendConfig,
+    new_repo_project: &RepoProject,
+    conflicting: &RepoProject,
     attempted: &str,
     ai_default: Option<&str>,
     existing_keys: &[String],
@@ -449,37 +593,24 @@ pub(crate) fn resolve_key_conflict_interactive(
         "project key collision: attempted \"{attempted}\" is already used by '{}'",
         conflicting.name
     ));
-    eprintln!("Conflicting project:");
+    eprintln!("Conflicting RepoProject:");
     eprintln!("  name:  {}", conflicting.name);
-    eprintln!("  type:  {}", conflicting.backend.as_str());
-    if let Some(host) = &conflicting.host {
+    eprintln!("  tasks: {}", conflicting.tasks_backend.kind.as_str());
+    if let Some(host) = &conflicting.tasks_backend.host {
         eprintln!("  host:  {host}");
     }
-    if let Some(repo) = &conflicting.repo {
+    if let Some(repo) = &conflicting.tasks_backend.repo {
         eprintln!("  repo:  {repo}");
     }
-    if let Some(path) = &conflicting.path {
-        eprintln!("  path:  {path}");
+    if let Some(jira_project) = &conflicting.tasks_backend.jira_project {
+        eprintln!("  jira_project:  {jira_project}");
     }
-    if let Some(key) = &conflicting.key {
-        eprintln!("  key:   {key}");
-    }
-    eprintln!("New project:");
-    eprintln!("  name:  {}", new_backend.name);
-    eprintln!("  type:  {}", new_backend.backend.as_str());
-    if let Some(host) = &new_backend.host {
-        eprintln!("  host:  {host}");
-    }
-    if let Some(repo) = &new_backend.repo {
-        eprintln!("  repo:  {repo}");
-    }
-    if let Some(path) = &new_backend.path {
-        eprintln!("  path:  {path}");
-    }
+    eprintln!("New RepoProject:");
+    eprintln!("  name:  {}", new_repo_project.name);
+    eprintln!("  tasks: {}", new_repo_project.tasks_backend.kind.as_str());
 
     let fallback_suggestion = numeric_suffix_suggestion(attempted, existing_keys);
     let default_value = ai_default.unwrap_or(&fallback_suggestion);
-
     loop {
         let input = prompts.input("Enter a unique project key", Some(default_value))?;
         match validate_user_key(&input, existing_keys) {
@@ -489,41 +620,38 @@ pub(crate) fn resolve_key_conflict_interactive(
     }
 }
 
-fn finalize_backend_registration(
+fn finalize_repo_project_registration(
     config: &Config,
-    new_backend: &mut BackendConfig,
+    new_repo_project: &mut RepoProject,
     prompts: Option<&dyn PromptBackend>,
     ai: Option<&dyn AiBackend>,
 ) -> Result<(), RiptskError> {
-    let new_group = issue_ids::logical_group_identity(new_backend);
+    let new_group = issue_ids::logical_group_identity(new_repo_project);
 
-    // If the new backend belongs to the same logical project as an existing
-    // one, reuse that project's key so every entry resolves to the same
-    // effective key at runtime.
     if let Some(sibling) = config
-        .backends
+        .projects
         .iter()
-        .find(|backend| issue_ids::logical_group_identity(backend) == new_group)
+        .find(|repo_project| issue_ids::logical_group_identity(repo_project) == new_group)
     {
-        new_backend.key = Some(issue_ids::effective_key(sibling));
+        new_repo_project.key = Some(issue_ids::effective_key(sibling));
         return Ok(());
     }
 
-    let derived = issue_ids::derive_default_key(new_backend);
+    let derived = issue_ids::derive_default_key(new_repo_project);
     let mut existing_keys = Vec::new();
     let mut conflicting = None;
-    for backend in &config.backends {
-        if issue_ids::logical_group_identity(backend) == new_group {
+    for repo_project in &config.projects {
+        if issue_ids::logical_group_identity(repo_project) == new_group {
             continue;
         }
-        let key = issue_ids::effective_key(backend);
+        let key = issue_ids::effective_key(repo_project);
         if key == derived && conflicting.is_none() {
-            conflicting = Some(backend);
+            conflicting = Some(repo_project);
         }
         existing_keys.push(key);
     }
     if conflicting.is_none() {
-        new_backend.key = Some(derived);
+        new_repo_project.key = Some(derived);
         return Ok(());
     }
 
@@ -535,56 +663,86 @@ fn finalize_backend_registration(
         let ai_default = ai.and_then(|backend| {
             suggest_key_with_ai(
                 backend,
-                backend_key_source_name(new_backend),
-                new_backend.backend.as_str(),
+                backend_key_source_name(new_repo_project),
+                new_repo_project.tasks_backend.kind.as_str(),
                 &existing_keys,
             )
         });
         let resolved = resolve_key_conflict_interactive(
             prompts,
-            new_backend,
+            new_repo_project,
             conflicting,
             &derived,
             ai_default.as_deref(),
             &existing_keys,
         )?;
-        new_backend.key = Some(resolved);
+        new_repo_project.key = Some(resolved);
         return Ok(());
     }
 
-    Err(RiptskError::KeyCollision(Box::new(
-        crate::error::ProjectKeyCollision {
-            attempted_key: derived,
-            new_project: crate::error::ProjectKeyProjectMeta {
-                name: new_backend.name.clone(),
-                backend: new_backend.backend.as_str().to_owned(),
-                host: new_backend.host.clone(),
-                repo: new_backend.repo.clone(),
-                path: new_backend.path.clone(),
-                existing_key: new_backend.key.clone(),
-            },
-            conflicting_project: crate::error::ProjectKeyProjectMeta {
-                name: conflicting.name.clone(),
-                backend: conflicting.backend.as_str().to_owned(),
-                host: conflicting.host.clone(),
-                repo: conflicting.repo.clone(),
-                path: conflicting.path.clone(),
-                existing_key: conflicting.key.clone(),
-            },
-        },
-    )))
+    Err(RiptskError::KeyCollision(Box::new(ProjectKeyCollision {
+        attempted_key: derived,
+        new_project: project_meta(new_repo_project),
+        conflicting_project: project_meta(conflicting),
+    })))
 }
 
-fn backend_key_source_name(backend: &BackendConfig) -> &str {
-    match backend.backend {
-        Backend::Github | Backend::Gitlab | Backend::Jira => backend
-            .repo
-            .as_deref()
-            .and_then(|repo| repo.rsplit('/').next())
-            .filter(|value| !value.is_empty())
-            .unwrap_or(backend.name.as_str()),
-        Backend::Local => backend.name.as_str(),
-    }
+fn backend_key_source_name(repo_project: &RepoProject) -> &str {
+    repo_project
+        .tasks_backend
+        .jira_project
+        .as_deref()
+        .and_then(|jira_project| jira_project.rsplit('/').next())
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            repo_project
+                .vc_backend
+                .repo
+                .as_deref()
+                .and_then(|repo| repo.rsplit('/').next())
+                .filter(|value| !value.is_empty())
+        })
+        .unwrap_or(repo_project.name.as_str())
+}
+
+fn deduplicate_default_label(
+    config: &Config,
+    cwd: &Utf8Path,
+    label: String,
+    jira_host: Option<&str>,
+    jira_project: Option<&str>,
+) -> String {
+    let temp_repo_project = RepoProject {
+        name: "__new__".into(),
+        vc_backend: VCBackendSpec {
+            kind: BackendKind::Local,
+            host: None,
+            repo: None,
+            path: None,
+        },
+        tasks_backend: TasksBackendSpec {
+            kind: if jira_project.is_some() {
+                BackendKind::Jira
+            } else {
+                BackendKind::Local
+            },
+            host: jira_host.map(str::to_owned),
+            repo: None,
+            jira_project: jira_project.map(str::to_owned),
+            default_issue_type: None,
+            path: None,
+        },
+        default_board: None,
+        default_org: None,
+        key: None,
+        repo_project_label: Some(label.clone()),
+    };
+    repo_project_label::deduplicate_within_jira_project(
+        &label,
+        &temp_repo_project,
+        config.projects.iter(),
+        cwd.parent().and_then(|parent| parent.file_name()),
+    )
 }
 
 fn stdin_is_terminal() -> bool {
@@ -596,16 +754,12 @@ fn stdout_is_terminal() -> bool {
 }
 
 fn numeric_suffix_suggestion(attempted: &str, existing: &[String]) -> String {
-    // Reserve room for `-N` (up to three digits) so the suggested value still
-    // fits inside `MAX_KEY_LEN` once the suffix is appended.
     let reserved = "-999".len();
     let max_prefix_len = issue_ids::MAX_KEY_LEN.saturating_sub(reserved);
     let mut prefix = attempted;
     if prefix.len() > max_prefix_len {
         prefix = &prefix[..max_prefix_len];
     }
-    // Trim any trailing '-' that a naive slice may leave behind so the result
-    // still passes `validate_user_key`.
     let prefix = prefix.trim_end_matches('-');
     for number in 2u32..1000 {
         let candidate = format!("{prefix}-{number}");
@@ -617,20 +771,14 @@ fn numeric_suffix_suggestion(attempted: &str, existing: &[String]) -> String {
 }
 
 fn validate_user_key(raw: &str, existing: &[String]) -> Result<String, String> {
-    // Silently trim the user's input so enter-at-the-prompt typos don't count
-    // as hard errors, then delegate syntactic validation to the shared helper
-    // so that interactively accepted keys cannot be rejected later by
-    // `save_config()`.
     let trimmed = raw.trim();
-    issue_ids::validate_explicit_key_syntax(trimmed).map_err(|message| message.to_string())?;
+    issue_ids::validate_explicit_key_syntax(trimmed)?;
     if existing.iter().any(|key| key == trimmed) {
         return Err(format!("key '{trimmed}' is already in use"));
     }
     Ok(trimmed.to_owned())
 }
 
-/// Returns true if `cwd` is exactly `$HOME` (canonicalized comparison).
-/// Directories *under* `$HOME` are allowed; only `$HOME` itself is excluded.
 fn is_home_dir(cwd: &Utf8Path) -> bool {
     let Some(home) = std::env::var_os("HOME") else {
         return false;
@@ -649,7 +797,6 @@ fn path_is_same(a: &str, b: &str) -> bool {
     a_canon == b_canon
 }
 
-/// Returns the git top-level directory for `cwd`, or `None` if not in a git repo.
 fn git_toplevel(cwd: &Utf8Path) -> Result<Option<String>, RiptskError> {
     let output = Command::new("git")
         .arg("-C")
@@ -687,138 +834,113 @@ fn is_inside_work_tree(cwd: &Utf8Path) -> Result<bool, RiptskError> {
     Ok(output.status.success())
 }
 
-fn validate_new_backend(config: &Config, backend: &BackendConfig) -> Result<(), RiptskError> {
+fn validate_new_repo_project(
+    config: &Config,
+    repo_project: &RepoProject,
+) -> Result<(), RiptskError> {
     if config
-        .backends
+        .projects
         .iter()
-        .any(|candidate| candidate.name == backend.name)
+        .any(|candidate| candidate.name == repo_project.name)
     {
         return Err(RiptskError::Config(format!(
-            "backend name already exists: {}",
-            backend.name
+            "RepoProject name already exists: {}",
+            repo_project.name
         )));
     }
+    if repo_project.vc_backend.kind == BackendKind::Jira {
+        return Err(RiptskError::Config(format!(
+            "RepoProject '{}' cannot use Jira as a VCBackend",
+            repo_project.name
+        )));
+    }
+    if repo_project.tasks_backend.kind == BackendKind::Jira {
+        let host = repo_project
+            .tasks_backend
+            .host
+            .as_deref()
+            .unwrap_or_default();
+        if !host.starts_with("https://") {
+            return Err(RiptskError::Config(format!(
+                "Jira TasksBackend for RepoProject '{}' requires https:// host",
+                repo_project.name
+            )));
+        }
+        let jira_project = repo_project
+            .tasks_backend
+            .jira_project
+            .as_deref()
+            .unwrap_or_default();
+        if jira_project.is_empty() || !jira_project.contains('/') {
+            return Err(RiptskError::Config(format!(
+                "Jira TasksBackend for RepoProject '{}' requires jira_project in org/PROJECT_KEY format",
+                repo_project.name
+            )));
+        }
+    }
+    if let Some(label) = repo_project.repo_project_label.as_deref() {
+        repo_project_label::validate(label)?;
+    }
     Ok(())
+}
+
+fn project_meta(repo_project: &RepoProject) -> ProjectKeyProjectMeta {
+    ProjectKeyProjectMeta {
+        name: repo_project.name.clone(),
+        backend: repo_project.tasks_backend.kind.as_str().to_owned(),
+        host: repo_project
+            .tasks_backend
+            .host
+            .clone()
+            .or_else(|| repo_project.vc_backend.host.clone()),
+        repo: repo_project
+            .tasks_backend
+            .repo
+            .clone()
+            .or_else(|| repo_project.tasks_backend.jira_project.clone())
+            .or_else(|| repo_project.vc_backend.repo.clone()),
+        path: repo_project
+            .vc_backend
+            .path
+            .clone()
+            .or_else(|| repo_project.tasks_backend.path.clone()),
+        existing_key: repo_project.key.clone(),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        deduplicate_name, detect_from_cwd, finalize_backend_registration, infer_type, is_home_dir,
-        normalize_url, numeric_suffix_suggestion, path_is_same, register_project_auto,
-        resolve_key_conflict_interactive, split_host_repo, suggest_key_with_ai,
+        deduplicate_name, detect_from_cwd, infer_type, normalize_url, register_project_auto,
+        split_host_repo,
     };
-    use crate::adapters::ai::{AiBackend, GeneratedIssueContent, TriageSuggestion};
-    use crate::adapters::prompts::PromptBackend;
     use crate::config::default_config;
-    use crate::error::RiptskError;
-    use crate::models::{Backend, BackendConfig};
+    use crate::models::{BackendKind, RepoProject, TasksBackendSpec, VCBackendSpec};
+    use crate::services::repo_project_label::validate as validate_label;
     use camino::Utf8PathBuf;
-    use std::cell::RefCell;
-    use std::collections::VecDeque;
     use tempfile::tempdir;
 
-    struct FakePrompts {
-        inputs: RefCell<VecDeque<String>>,
-    }
-
-    impl FakePrompts {
-        fn new(inputs: Vec<&str>) -> Self {
-            Self {
-                inputs: RefCell::new(inputs.into_iter().map(str::to_owned).collect()),
-            }
-        }
-    }
-
-    impl PromptBackend for FakePrompts {
-        fn input(&self, _prompt: &str, _default: Option<&str>) -> Result<String, RiptskError> {
-            self.inputs
-                .borrow_mut()
-                .pop_front()
-                .ok_or_else(|| RiptskError::General("missing prompt input".into()))
-        }
-
-        fn confirm(&self, _prompt: &str, _default: bool) -> Result<bool, RiptskError> {
-            unimplemented!()
-        }
-
-        fn select(
-            &self,
-            _prompt: &str,
-            _items: &[String],
-            _default: usize,
-        ) -> Result<String, RiptskError> {
-            unimplemented!()
-        }
-    }
-
-    struct FakeAiBackend {
-        suggestion: Option<String>,
-        should_error: bool,
-    }
-
-    impl AiBackend for FakeAiBackend {
-        fn generate_issue_content(
-            &self,
-            _context: &str,
-        ) -> Result<GeneratedIssueContent, RiptskError> {
-            unimplemented!()
-        }
-
-        fn generate_body(&self, _context: &str) -> Result<String, RiptskError> {
-            unimplemented!()
-        }
-
-        fn suggest_project_key(
-            &self,
-            _repo_name: &str,
-            _backend_type: &str,
-            _existing_keys: &[String],
-        ) -> Result<String, RiptskError> {
-            if self.should_error {
-                Err(RiptskError::General("nope".into()))
-            } else {
-                Ok(self.suggestion.clone().unwrap_or_default())
-            }
-        }
-
-        fn generate_pr_description(&self, _context: &str) -> Result<String, RiptskError> {
-            unimplemented!()
-        }
-
-        fn triage(&self, _issue_context: &str) -> Result<TriageSuggestion, RiptskError> {
-            unimplemented!()
-        }
-
-        fn summarize(&self, _issues: &str) -> Result<String, RiptskError> {
-            unimplemented!()
-        }
-
-        fn ask(&self, _question: &str, _context: &str) -> Result<String, RiptskError> {
-            unimplemented!()
-        }
-
-        fn update_pr_description(&self, _context: &str) -> Result<String, RiptskError> {
-            unimplemented!()
-        }
-
-        fn generate_commit_message(&self, _diff: &str) -> Result<String, RiptskError> {
-            unimplemented!()
-        }
-    }
-
-    fn backend(kind: Backend, name: &str, repo: Option<&str>, key: Option<&str>) -> BackendConfig {
-        BackendConfig {
+    fn local_repo_project(name: &str, path: &str) -> RepoProject {
+        RepoProject {
             name: name.into(),
-            backend: kind,
-            host: None,
-            repo: repo.map(str::to_owned),
+            vc_backend: VCBackendSpec {
+                kind: BackendKind::Local,
+                host: None,
+                repo: None,
+                path: Some(path.into()),
+            },
+            tasks_backend: TasksBackendSpec {
+                kind: BackendKind::Local,
+                host: None,
+                repo: None,
+                jira_project: None,
+                default_issue_type: None,
+                path: Some(path.into()),
+            },
             default_board: Some("personal".into()),
             default_org: None,
-            path: None,
-            vc: None,
-            default_issue_type: None,
-            key: key.map(str::to_owned),
+            key: Some("LOCAL".into()),
+            repo_project_label: None,
         }
     }
 
@@ -836,9 +958,9 @@ mod tests {
 
     #[test]
     fn infers_remote_type_from_host() {
-        assert_eq!(infer_type("github.com"), Backend::Github);
-        assert_eq!(infer_type("gitlab.example.com"), Backend::Gitlab);
-        assert_eq!(infer_type("codeberg.org"), Backend::Local);
+        assert_eq!(infer_type("github.com"), BackendKind::Github);
+        assert_eq!(infer_type("gitlab.example.com"), BackendKind::Gitlab);
+        assert_eq!(infer_type("codeberg.org"), BackendKind::Local);
     }
 
     #[test]
@@ -854,375 +976,82 @@ mod tests {
     }
 
     #[test]
-    fn split_host_repo_handles_ported_urls() {
-        // ssh://git@host:2222/group/repo normalizes to host:2222:group/repo
-        assert_eq!(
-            split_host_repo("gitlab.example.com:2222:group/repo"),
-            Some(("gitlab.example.com:2222", "group/repo"))
-        );
-        // https://host:8443/group/repo normalizes to host:8443:group/repo
-        assert_eq!(
-            split_host_repo("gitlab.example.com:8443:group/repo"),
-            Some(("gitlab.example.com:8443", "group/repo"))
-        );
-    }
-
-    #[test]
-    fn is_home_dir_matches_actual_home() {
-        if let Ok(home) = std::env::var("HOME") {
-            let path = Utf8PathBuf::from(&home);
-            assert!(is_home_dir(&path));
-        }
-    }
-
-    #[test]
-    fn is_home_dir_rejects_subdir() {
-        if let Ok(home) = std::env::var("HOME") {
-            let subdir = Utf8PathBuf::from(format!("{home}/some-subdir"));
-            assert!(!is_home_dir(&subdir));
-        }
-    }
-
-    #[test]
-    fn path_is_same_handles_identical_paths() {
-        let temp = tempdir().expect("temp dir");
-        let path = temp.path().to_string_lossy().to_string();
-        assert!(path_is_same(&path, &path));
-    }
-
-    #[test]
-    fn register_auto_non_git_creates_local_backend() {
-        let temp = tempdir().expect("temp dir");
-        let plain_dir = temp.path().join("my-proj");
-        std::fs::create_dir_all(&plain_dir).expect("create dir");
-        let cwd = Utf8PathBuf::from_path_buf(plain_dir.clone()).expect("utf8");
-        let mut config = default_config();
-
-        let result = register_project_auto(&cwd, &mut config, None, None).expect("register");
-
-        assert!(result.is_some());
-        let backend = result.unwrap();
-        assert_eq!(backend.backend, Backend::Local);
-        assert_eq!(backend.name, "my-proj");
-        assert!(backend.path.is_some());
-        assert!(backend.host.is_none());
-        assert!(backend.repo.is_none());
-        assert_eq!(backend.key.as_deref(), Some("MYPROJ"));
-    }
-
-    #[test]
-    fn register_auto_skips_home_dir() {
-        let temp = tempdir().expect("temp dir");
-        let cwd = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).expect("utf8");
-        let mut config = default_config();
-
-        // Pretend this temp dir is $HOME
-        let old_home = std::env::var("HOME").ok();
-        // SAFETY: test is single-threaded; restoring HOME immediately after.
-        unsafe { std::env::set_var("HOME", temp.path()) };
-        let result = register_project_auto(&cwd, &mut config, None, None).expect("register");
-        match old_home {
-            Some(h) => unsafe { std::env::set_var("HOME", h) },
-            None => unsafe { std::env::remove_var("HOME") },
-        }
-
-        assert!(result.is_none(), "should not register $HOME as a project");
-    }
-
-    #[test]
     fn detect_from_cwd_matches_non_git_by_path() {
         let temp = tempdir().expect("temp dir");
-        let plain_dir = temp.path().join("my-proj");
-        std::fs::create_dir_all(&plain_dir).expect("create dir");
-        let cwd = Utf8PathBuf::from_path_buf(plain_dir.clone()).expect("utf8");
-        let canon = std::fs::canonicalize(&plain_dir)
-            .expect("canonicalize")
-            .to_string_lossy()
-            .to_string();
-
+        let cwd = Utf8PathBuf::from_path_buf(temp.path().join("worktree")).expect("utf8 path");
+        std::fs::create_dir_all(cwd.as_std_path()).expect("cwd");
         let mut config = default_config();
-        config.backends.push(BackendConfig {
-            name: "my-proj".into(),
-            backend: Backend::Local,
-            host: None,
-            repo: None,
-            default_board: Some("personal".into()),
-            default_org: None,
-            path: Some(canon),
-            vc: None,
-            default_issue_type: None,
-            key: None,
-        });
+        config
+            .projects
+            .push(local_repo_project("local", cwd.as_str()));
 
         let detected = detect_from_cwd(&cwd, &config).expect("detect");
-        assert!(detected.is_some());
-        assert_eq!(detected.unwrap().name, "my-proj");
-    }
-
-    #[test]
-    fn detect_from_cwd_url_beats_ancestor_path() {
-        // Regression: a registered remote backend must win over a parent local backend
-        // when the child directory has a git remote matching the remote backend.
-        let temp = tempdir().expect("temp dir");
-        let parent_dir = temp.path().join("projects");
-        let child_dir = parent_dir.join("my-repo");
-        std::fs::create_dir_all(&child_dir).expect("create dirs");
-
-        // Set up a real git repo with a remote URL in child_dir
-        let status = std::process::Command::new("git")
-            .args(["init", "--quiet"])
-            .arg(&child_dir)
-            .status()
-            .expect("git init");
-        assert!(status.success());
-        let status = std::process::Command::new("git")
-            .arg("-C")
-            .arg(&child_dir)
-            .args([
-                "remote",
-                "add",
-                "origin",
-                "https://github.com/user/my-repo.git",
-            ])
-            .status()
-            .expect("git remote add");
-        assert!(status.success());
-
-        let parent_canon = std::fs::canonicalize(&parent_dir)
-            .expect("canonicalize")
-            .to_string_lossy()
-            .to_string();
-
-        let mut config = default_config();
-        // Parent local backend registered at ancestor path
-        config.backends.push(BackendConfig {
-            name: "projects".into(),
-            backend: Backend::Local,
-            host: None,
-            repo: None,
-            default_board: Some("personal".into()),
-            default_org: None,
-            path: Some(parent_canon),
-            vc: None,
-            default_issue_type: None,
-            key: None,
-        });
-        // Remote backend registered by URL — should win over parent path
-        config.backends.push(BackendConfig {
-            name: "my-repo".into(),
-            backend: Backend::Github,
-            host: Some("https://github.com".into()),
-            repo: Some("user/my-repo".into()),
-            default_board: Some("personal".into()),
-            default_org: None,
-            path: None,
-            vc: None,
-            default_issue_type: None,
-            key: None,
-        });
-
-        let cwd = Utf8PathBuf::from_path_buf(child_dir).expect("utf8");
-        let detected = detect_from_cwd(&cwd, &config).expect("detect");
-        assert!(detected.is_some());
-        // URL match must win over ancestor path match
-        assert_eq!(detected.unwrap().name, "my-repo");
+        assert_eq!(detected.expect("detected").name, "local");
     }
 
     #[test]
     fn deduplicate_name_appends_parent_on_collision() {
         let temp = tempdir().expect("temp dir");
-        let child = temp.path().join("parent").join("myapp");
-        std::fs::create_dir_all(&child).expect("create dirs");
-        let cwd = Utf8PathBuf::from_path_buf(child).expect("utf8");
-
+        let cwd =
+            Utf8PathBuf::from_path_buf(temp.path().join("parent").join("myapp")).expect("utf8 cwd");
+        std::fs::create_dir_all(cwd.as_std_path()).expect("cwd");
         let mut config = default_config();
-        config.backends.push(BackendConfig {
-            name: "myapp".into(),
-            backend: Backend::Local,
-            host: None,
-            repo: None,
-            default_board: None,
-            default_org: None,
-            path: Some("/some/other/myapp".into()),
-            vc: None,
-            default_issue_type: None,
-            key: None,
-        });
+        config
+            .projects
+            .push(local_repo_project("myapp", "/tmp/myapp"));
 
         let name = deduplicate_name("myapp", &cwd, &config);
-        assert_eq!(name, Some("parent-myapp".into()));
+        assert_eq!(name.as_deref(), Some("parent-myapp"));
     }
 
     #[test]
-    fn deduplicate_name_returns_none_when_exhausted() {
+    fn register_auto_non_git_creates_local_project() {
         let temp = tempdir().expect("temp dir");
-        let child = temp.path().join("parent").join("myapp");
-        std::fs::create_dir_all(&child).expect("create dirs");
-        let cwd = Utf8PathBuf::from_path_buf(child).expect("utf8");
-
+        let cwd = Utf8PathBuf::from_path_buf(temp.path().join("repo")).expect("utf8 cwd");
+        std::fs::create_dir_all(cwd.as_std_path()).expect("cwd");
         let mut config = default_config();
-        config.backends.push(BackendConfig {
-            name: "myapp".into(),
-            backend: Backend::Local,
-            host: None,
-            repo: None,
-            default_board: None,
-            default_org: None,
-            path: Some("/some/other/myapp".into()),
-            vc: None,
-            default_issue_type: None,
-            key: None,
-        });
-        config.backends.push(BackendConfig {
-            name: "parent-myapp".into(),
-            backend: Backend::Local,
-            host: None,
-            repo: None,
-            default_board: None,
-            default_org: None,
-            path: Some("/some/other/parent-myapp".into()),
-            vc: None,
-            default_issue_type: None,
-            key: None,
-        });
 
-        let name = deduplicate_name("myapp", &cwd, &config);
-        assert_eq!(name, None);
+        let result = register_project_auto(&cwd, &mut config, None, None).expect("register");
+        let registered = result.expect("project");
+        assert_eq!(registered.vc_backend.kind, BackendKind::Local);
+        // Local/Local RepoProjects do not carry `repo_project_label` — that
+        // field is exclusively a Jira-shared-project partition concept.
+        assert_eq!(registered.repo_project_label, None);
+        assert_eq!(config.projects.len(), 1);
     }
 
     #[test]
-    fn suggest_key_with_ai_accepts_clean_value() {
-        let ai = FakeAiBackend {
-            suggestion: Some("RIPTSK".into()),
-            should_error: false,
-        };
-        let existing = vec!["OTHER".into()];
-        assert_eq!(
-            suggest_key_with_ai(&ai, "riptsk", "github", &existing),
-            Some("RIPTSK".into())
+    fn validate_repo_project_rejects_space_in_label() {
+        assert!(validate_label("has space").is_err());
+    }
+
+    #[test]
+    fn validate_repo_project_rejects_empty_label() {
+        assert!(validate_label("").is_err());
+    }
+
+    #[test]
+    fn validate_repo_project_rejects_quote_in_label() {
+        assert!(validate_label("has\"quote").is_err());
+    }
+
+    #[test]
+    fn validate_repo_project_rejects_over_255_chars() {
+        let long = format!(
+            "{}{}",
+            crate::services::repo_project_label::LABEL_PREFIX,
+            "a".repeat(crate::services::repo_project_label::MAX_LABEL_LEN)
         );
+        assert!(validate_label(&long).is_err());
     }
 
     #[test]
-    fn suggest_key_with_ai_sanitizes_output() {
-        let ai = FakeAiBackend {
-            suggestion: Some("riptsk!!!".into()),
-            should_error: false,
-        };
-        assert_eq!(
-            suggest_key_with_ai(&ai, "riptsk", "github", &[]),
-            Some("RIPTSK".into())
-        );
+    fn validate_repo_project_rejects_missing_prefix() {
+        assert!(validate_label("good-label").is_err());
     }
 
     #[test]
-    fn suggest_key_with_ai_rejects_collision_and_invalid() {
-        let taken = vec!["ALREADYTAKEN".into()];
-        let collision = FakeAiBackend {
-            suggestion: Some("ALREADY_TAKEN".into()),
-            should_error: false,
-        };
-        let invalid = FakeAiBackend {
-            suggestion: Some("!!!".into()),
-            should_error: false,
-        };
-        let erroring = FakeAiBackend {
-            suggestion: None,
-            should_error: true,
-        };
-        assert_eq!(
-            suggest_key_with_ai(&collision, "repo", "github", &taken),
-            None
-        );
-        assert_eq!(suggest_key_with_ai(&invalid, "repo", "github", &[]), None);
-        assert_eq!(suggest_key_with_ai(&erroring, "repo", "github", &[]), None);
-    }
-
-    #[test]
-    fn resolve_key_conflict_interactive_accepts_ai_default_value() {
-        let prompts = FakePrompts::new(vec!["RIPTSK"]);
-        let new_backend = backend(Backend::Github, "new", Some("owner/riptsk"), None);
-        let conflicting = backend(
-            Backend::Github,
-            "existing",
-            Some("other/riptsk"),
-            Some("RIPTSK"),
-        );
-        let resolved = resolve_key_conflict_interactive(
-            &prompts,
-            &new_backend,
-            &conflicting,
-            "RIPTSK",
-            Some("RIPTSK"),
-            &["OTHER".into()],
-        )
-        .expect("resolve");
-        assert_eq!(resolved, "RIPTSK");
-    }
-
-    #[test]
-    fn resolve_key_conflict_interactive_loops_on_invalid_inputs() {
-        let prompts = FakePrompts::new(vec!["lower-case", "UPPERCASE"]);
-        let new_backend = backend(Backend::Github, "new", Some("owner/new"), None);
-        let conflicting = backend(Backend::Github, "existing", Some("other/new"), Some("NEW"));
-        let resolved = resolve_key_conflict_interactive(
-            &prompts,
-            &new_backend,
-            &conflicting,
-            "NEW",
-            None,
-            &["NEW".into()],
-        )
-        .expect("resolve");
-        assert_eq!(resolved, "UPPERCASE");
-    }
-
-    #[test]
-    fn resolve_key_conflict_interactive_retries_on_duplicate() {
-        let prompts = FakePrompts::new(vec!["USED", "UNUSED"]);
-        let new_backend = backend(Backend::Github, "new", Some("owner/new"), None);
-        let conflicting = backend(Backend::Github, "existing", Some("other/new"), Some("NEW"));
-        let resolved = resolve_key_conflict_interactive(
-            &prompts,
-            &new_backend,
-            &conflicting,
-            "NEW",
-            None,
-            &["USED".into()],
-        )
-        .expect("resolve");
-        assert_eq!(resolved, "UNUSED");
-    }
-
-    #[test]
-    fn numeric_suffix_suggestion_uses_next_free_number() {
-        let existing = vec!["RIPTSK".into(), "RIPTSK-2".into()];
-        assert_eq!(numeric_suffix_suggestion("RIPTSK", &existing), "RIPTSK-3");
-    }
-
-    #[test]
-    fn finalize_backend_registration_sets_derived_key_when_free() {
-        let config = default_config();
-        let mut new_backend = backend(Backend::Github, "riptsk", Some("owner/riptsk"), None);
-        finalize_backend_registration(&config, &mut new_backend, None, None).expect("finalize");
-        assert_eq!(new_backend.key.as_deref(), Some("RIPTSK"));
-    }
-
-    #[test]
-    fn finalize_backend_registration_returns_collision_without_prompts() {
-        let mut config = default_config();
-        config.backends.push(backend(
-            Backend::Github,
-            "existing",
-            Some("owner/riptsk"),
-            None,
-        ));
-        let before = config.backends.len();
-        let mut new_backend = backend(Backend::Github, "new", Some("other/riptsk"), None);
-        let error = finalize_backend_registration(&config, &mut new_backend, None, None)
-            .expect_err("collision");
-        assert!(matches!(error, RiptskError::KeyCollision(_)));
-        assert!(new_backend.key.is_none());
-        assert_eq!(config.backends.len(), before);
+    fn validate_repo_project_accepts_prefixed_label() {
+        assert!(validate_label("proj::good-label").is_ok());
     }
 }

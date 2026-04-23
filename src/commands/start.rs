@@ -3,9 +3,9 @@ use crate::cli::{NewArgs, PrCreateArgs, ScopeArgs, StartArgs};
 use crate::commands::{branch, issues, pr};
 use crate::config::{Config, load_config};
 use crate::error::RiptskError;
-use crate::models::Backend;
+use crate::models::BackendKind;
 use crate::paths::AppPaths;
-use crate::services::backend_mapping::resolve_vc_for_backend;
+use crate::services::backend_mapping::build_version_control;
 use crate::services::id_resolution;
 use crate::services::issue_ids;
 use crate::services::project_detection;
@@ -86,35 +86,17 @@ pub async fn run(paths: &AppPaths, mut args: StartArgs) -> Result<(), RiptskErro
     let id = issue.frontmatter.id.clone();
 
     // Check if VC is available for branch/PR
-    let backend = config
-        .backends
+    let repo_project = config
+        .projects
         .iter()
-        .find(|b| b.name == issue.frontmatter.project)
+        .find(|repo_project| repo_project.name == issue.frontmatter.project)
         .ok_or_else(|| RiptskError::Unregistered(issue.frontmatter.project.clone()))?;
 
-    let has_vc = match backend.backend {
-        Backend::Github | Backend::Gitlab => true,
-        Backend::Jira => backend.vc.is_some(),
-        Backend::Local => false,
-    };
+    let has_vc = repo_project.vc_backend.kind != BackendKind::Local;
 
     if !has_vc {
-        if backend.backend == Backend::Jira {
-            crate::ui::info(
-                "No version control backend configured — skipping branch and PR creation.",
-            );
-        }
+        crate::ui::info("No version control backend configured — skipping branch and PR creation.");
         return Ok(());
-    }
-
-    if backend.backend == Backend::Jira {
-        let vc_resolution = resolve_vc_for_backend(backend, &config)?;
-        if vc_resolution.is_none() {
-            crate::ui::info(
-                "No version control backend configured — skipping branch and PR creation.",
-            );
-            return Ok(());
-        }
     }
 
     // Create branch
@@ -142,20 +124,23 @@ async fn should_auto_create_from_changes(
     if !(args.title_pos.is_none() && args.title.is_none() && !args.pick) {
         return false;
     }
-    let Ok(Some(backend)) = project_detection::detect_from_cwd(cwd, config) else {
+    let Ok(Some(repo_project)) = project_detection::detect_from_cwd(cwd, config) else {
         return false;
     };
-    let Ok(Some((provider, vc_backend))) = resolve_vc_for_backend(&backend, config) else {
+    if repo_project.vc_backend.kind == BackendKind::Local {
         return false;
-    };
+    }
     let Ok(repo) = id_resolution::current_repo() else {
+        return false;
+    };
+    let Ok(provider) = build_version_control(&repo_project.vc_backend, &repo_project.name) else {
         return false;
     };
     let git = CliGit::new();
     let Ok(current) = git.current_branch(repo.as_path()) else {
         return false;
     };
-    let repo_name = vc_backend.repo.as_deref().unwrap_or_default();
+    let repo_name = repo_project.vc_backend.repo.as_deref().unwrap_or_default();
     let Ok(default) = crate::ui::spin_on_async("Checking default branch", async {
         provider.default_branch(repo_name).await
     })

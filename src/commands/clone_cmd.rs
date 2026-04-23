@@ -4,12 +4,10 @@ use crate::commands::branch::{backend_issue_number, cwd_utf8};
 use crate::config::load_config;
 use crate::domain::work_clone::WorkCloneMarker;
 use crate::error::RiptskError;
-use crate::models::Backend;
+use crate::models::BackendKind;
 use crate::paths::AppPaths;
 use crate::services::auto_commit::maybe_auto_commit;
-use crate::services::backend_mapping::{
-    build_version_control, resolve_git_auth, resolve_vc_for_backend,
-};
+use crate::services::backend_mapping::{build_version_control, resolve_git_auth};
 use crate::services::id_resolution;
 use crate::services::issue_service::generate_branch_slug;
 use crate::storage::{frontmatter, issue_store, work_clone};
@@ -26,38 +24,30 @@ pub async fn run(paths: &AppPaths, args: CloneArgs) -> Result<(), RiptskError> {
 
     let path = issue_store::find_issue(paths, &id)?;
     let mut issue = crate::commands::issues::load_issue_or_conflict_error(path.as_std_path(), &id)?;
-    let backend = config
-        .backends
+    let repo_project = config
+        .projects
         .iter()
-        .find(|b| b.name == issue.frontmatter.project)
+        .find(|rp| rp.name == issue.frontmatter.project)
         .ok_or_else(|| RiptskError::Unregistered(issue.frontmatter.project.clone()))?;
-    if backend.backend == Backend::Local {
+    if repo_project.vc_backend.kind == BackendKind::Local {
         return Err(RiptskError::Config(
             "cannot create remote branch for local-only project".into(),
         ));
     }
 
-    let issue_number = backend_issue_number(backend, &issue)?;
+    let issue_number = backend_issue_number(repo_project, &issue)?;
     let slug = generate_branch_slug(issue_number, &issue.frontmatter.title);
 
-    let (vc_provider, vc_backend, vc_issue_id) = if backend.backend == Backend::Jira {
-        let (provider, vc_backend) =
-            resolve_vc_for_backend(backend, &config)?.ok_or_else(|| {
-                RiptskError::Config(format!(
-                    "No version control backend configured for project '{}'. \
-                     Add 'vc: <github-or-gitlab-backend>' to the backend config.",
-                    backend.name
-                ))
-            })?;
-        (provider, vc_backend.clone(), None)
+    let vc_provider = build_version_control(&repo_project.vc_backend, &repo_project.name)?;
+    let vc_issue_id = if repo_project.tasks_backend.kind == BackendKind::Jira {
+        None
     } else {
-        let provider = build_version_control(backend)?;
-        (provider, backend.clone(), Some(issue_number))
+        Some(issue_number)
     };
 
-    let auth = resolve_git_auth(&vc_backend);
+    let auth = resolve_git_auth(&repo_project.vc_backend, &repo_project.name);
     let git = CliGit::with_auth(auth);
-    let repo_name = vc_backend.repo.as_deref().unwrap_or_default();
+    let repo_name = repo_project.vc_backend.repo.as_deref().unwrap_or_default();
     let base = crate::ui::spin_on_async("Fetching default branch", async {
         vc_provider.default_branch(repo_name).await
     })
@@ -77,7 +67,7 @@ pub async fn run(paths: &AppPaths, args: CloneArgs) -> Result<(), RiptskError> {
         }
         Err(error) => return Err(error),
     }
-    tracing::info!(branch = %slug, backend = %vc_backend.name, "ensured remote branch exists for clone");
+    tracing::info!(branch = %slug, backend = %repo_project.name, "ensured remote branch exists for clone");
 
     issue.frontmatter.id_slug = Some(slug.clone());
     issue.frontmatter.branch = Some(slug.clone());

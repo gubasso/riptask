@@ -198,14 +198,18 @@ defaults:
   priority: medium
   assignee: ~
   template: task
-backends:
+projects:
   - name: dev-tools
-    type: github
-    repo: GubCorp/dev-tools
+    vc_backend:
+      type: github
+      repo: GubCorp/dev-tools
+      path: {}
+    tasks_backend:
+      type: github
+      repo: GubCorp/dev-tools
     key: GH-GUB-DEV
     default_board: personal
     default_org: ~
-    path: {}
 boards:
   - name: personal
     statuses: [backlog, todo, in-progress, review, done]

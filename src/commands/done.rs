@@ -7,11 +7,11 @@ use crate::commands::{pr, sync_cmd};
 use crate::config::load_config;
 use crate::domain::issue::{IssueDocument, IssueState};
 use crate::error::RiptskError;
-use crate::models::Backend;
+use crate::models::BackendKind;
 use crate::paths::AppPaths;
 use crate::services::auto_commit::maybe_auto_commit;
 use crate::services::backend_mapping::{
-    build_provider_for_backend, resolve_git_auth, update_issue_from_backend,
+    build_hosted_provider, resolve_git_auth, update_issue_from_backend,
 };
 use crate::services::id_resolution;
 use crate::services::issue_service::now_utc;
@@ -94,17 +94,13 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
         crate::commands::issues::load_issue_or_conflict_error(issue_path.as_std_path(), &id)?;
 
     // Check if this is a Jira-only (no VC) project
-    let issue_backend = config
-        .backends
+    let repo_project = config
+        .projects
         .iter()
-        .find(|b| b.name == issue.frontmatter.project)
+        .find(|rp| rp.name == issue.frontmatter.project)
         .ok_or_else(|| RiptskError::Unregistered(issue.frontmatter.project.clone()))?;
 
-    let has_vc = match issue_backend.backend {
-        Backend::Github | Backend::Gitlab => true,
-        Backend::Jira => issue_backend.vc.is_some(),
-        Backend::Local => false,
-    };
+    let has_vc = repo_project.vc_backend.kind != BackendKind::Local;
 
     if !has_vc || issue.frontmatter.branch.is_none() {
         // Issue-only workflow: just mark done locally and sync
@@ -144,10 +140,13 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
 
     // Full VC workflow: merge PR, delete branch, close issue
     let branch_name = issue.frontmatter.branch.clone().unwrap();
-    let backend = pr::resolve_hosted_backend(&config, &issue)?;
-    let provider = build_provider_for_backend(backend)?;
-    let repo_name = backend.repo.as_deref().unwrap_or_default();
-    let git = CliGit::with_auth(resolve_git_auth(backend));
+    let repo_project = pr::resolve_hosted_repo_project(&config, &issue)?;
+    let provider = build_hosted_provider(&repo_project.vc_backend, &repo_project.name)?;
+    let repo_name = repo_project.vc_backend.repo.as_deref().unwrap_or_default();
+    let git = CliGit::with_auth(resolve_git_auth(
+        &repo_project.vc_backend,
+        &repo_project.name,
+    ));
     let repo_dir = current_repo()?;
     let original_branch = git.current_branch(repo_dir.as_path()).ok();
 
@@ -201,7 +200,7 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
             provider.as_ref(),
             &DialoguerPrompts,
             &git,
-            backend.backend.clone(),
+            repo_project.vc_backend.kind.clone(),
             repo_dir.as_path(),
             repo_name,
             pr_number,
@@ -215,7 +214,7 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
             return Ok(());
         }
 
-        let closed_record = match backend_issue_number(backend, &issue)
+        let closed_record = match backend_issue_number(repo_project, &issue)
             .ok()
             .zip(Some(repo_name))
         {
@@ -275,13 +274,18 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
                 issue_path.as_std_path(),
                 &id,
             )?;
-            update_issue_from_backend(&mut issue, record, backend);
+            update_issue_from_backend(&mut issue, record, repo_project);
             issue.frontmatter.branch = None;
             issue.frontmatter.id_slug = None;
             frontmatter::save_issue(issue_path.as_std_path(), &issue)
                 .map_err(RiptskError::Other)?;
-            cache::seed_backend_state_entry(paths, backend.backend.as_str(), repo_name, record)
-                .map_err(RiptskError::Other)?;
+            cache::seed_backend_state_entry(
+                paths,
+                repo_project.tasks_backend.kind.as_str(),
+                repo_name,
+                record,
+            )
+            .map_err(RiptskError::Other)?;
         } else {
             let mut issue =
                 frontmatter::load_issue(issue_path.as_std_path()).map_err(RiptskError::Other)?;

@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::error::RiptskError;
-use crate::models::BackendConfig;
+use crate::models::RepoProject;
 use crate::services::project_detection;
 use camino::Utf8Path;
 
@@ -34,15 +34,18 @@ pub fn resolve_scope(
         return Ok(ProjectScope::Explicit(projects.to_vec()));
     }
     match project_detection::detect_from_cwd(cwd, config)? {
-        Some(backend) => Ok(ProjectScope::CurrentProject(backend.name)),
+        Some(repo_project) => Ok(ProjectScope::CurrentProject(repo_project.name.clone())),
         None => Err(RiptskError::Config(
             "could not detect project from current directory; use -p <project> or -a to target all projects".into(),
         )),
     }
 }
 
-pub fn lookup_project<'a>(config: &'a Config, name: &str) -> Option<&'a BackendConfig> {
-    config.backends.iter().find(|backend| backend.name == name)
+pub fn lookup_project<'a>(config: &'a Config, name: &str) -> Option<&'a RepoProject> {
+    config
+        .projects
+        .iter()
+        .find(|repo_project| repo_project.name == name)
 }
 
 #[cfg(test)]

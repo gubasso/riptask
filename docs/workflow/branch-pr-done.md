@@ -1,6 +1,6 @@
 # Branch → PR → Done
 
-The main remote workflow for turning an issue into merged code. Works with GitHub, GitLab, or Jira-backed issues that delegate version control via `vc:`.
+The main remote workflow for turning an issue into merged code. Works with GitHub, GitLab, or Jira-backed issues that use a non-local VCBackend for branch and PR operations.
 
 ```bash
 tsk new --title "Fix login bug"
@@ -90,7 +90,7 @@ When a version-control backend is available and the issue has a branch, `tsk don
 7. syncs the issue back to its backend
 8. regenerates cached views
 
-When the issue is local-only or Jira-without-`vc`, `tsk done` skips PR merge, marks the issue `done`, syncs issue state if applicable, and regenerates views.
+When the issue is local-only or the RepoProject has a Jira TasksBackend plus a local VCBackend, `tsk done` skips PR merge, marks the issue `done`, syncs issue state if applicable, and regenerates views.
 
 Manual equivalent:
 

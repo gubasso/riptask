@@ -87,3 +87,13 @@ Lifecycle commands (`new`, `close`, `status`, `reopen`, `rm`) auto-commit `$RIPT
 **Commit message format:** `riptsk: <verb> <ID> — <title>` (see [15 — Version Control & Backup](archive/15-version-control-backup.md) for full conventions).
 
 Auto-commit does not auto-push. It goes through normal `git commit`, so the pre-commit hook ([25 — RIPTSK_REPO Hooks](archive/25-tsk-repo-hooks.md)) runs and validates the commit automatically.
+
+### 3.10 Terminology: RepoProject, VCBackend, TasksBackend
+
+`CLAUDE.md` is the canonical glossary for project-level terminology. Code, comments, specs, docs, tests, and CLI help should use those meanings consistently.
+
+`RepoProject` exists because "project" was overloaded across the registered working unit, the issue ID key prefix, and the external Jira container. The explicit name removes that ambiguity and reserves unqualified "project" for the user-facing working unit only.
+
+The split into `VCBackend` and `TasksBackend` reflects actual capability boundaries. GitHub and GitLab naturally provide both. Jira is issue-only, and Local is a special-case offline provider. Encoding both natures inline on the RepoProject is clearer than the old `vc:` indirection because the config states each responsibility directly.
+
+`JiraProject` is always the external Jira container and is never shortened to plain "project". That keeps Jira vocabulary pinned to its Jira-scoped meaning and prevents it from colliding with RepoProject.

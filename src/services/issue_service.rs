@@ -2,7 +2,7 @@ use crate::cli::{LsArgs, NewArgs};
 use crate::config::{Config, parse_priority, parse_state};
 use crate::domain::issue::{IssueDocument, IssueFrontmatter, IssueState, Priority};
 use crate::error::RiptskError;
-use crate::models::Backend;
+use crate::models::BackendKind;
 use crate::paths::AppPaths;
 use crate::services::issue_ids;
 use crate::services::templates::TemplateService;
@@ -35,8 +35,8 @@ pub struct IssueDraft {
     pub org: Option<String>,
     pub body: String,
     pub order: u32,
-    pub backend: Option<Backend>,
-    pub repo: Option<String>,
+    pub tasks_backend_kind: Option<BackendKind>,
+    pub tasks_repo: Option<String>,
 }
 
 pub struct ListMatchingResult {
@@ -64,7 +64,7 @@ impl<'a> IssueService<'a> {
                     .to_string(),
             );
             crate::services::project_detection::detect_from_cwd(&cwd, self.config)?
-                .map(|r| r.name)
+                .map(|r| r.name.clone())
                 .unwrap_or_else(|| "personal".into())
         };
         let template_name = args
@@ -108,8 +108,8 @@ impl<'a> IssueService<'a> {
             order: self
                 .next_order_for_lane(&board, status.as_str())
                 .map_err(RiptskError::Other)?,
-            backend: self.project_backend(&project),
-            repo: self.project_repo(&project),
+            tasks_backend_kind: self.project_tasks_backend_kind(&project),
+            tasks_repo: self.project_tasks_repo(&project),
         })
     }
 
@@ -367,43 +367,49 @@ impl<'a> IssueService<'a> {
         }
     }
 
-    fn project_backend(&self, project: &str) -> Option<Backend> {
+    fn project_tasks_backend_kind(&self, project: &str) -> Option<BackendKind> {
         self.config
-            .backends
+            .projects
             .iter()
-            .find(|backend| backend.name == project)
-            .map(|backend| backend.backend.clone())
+            .find(|repo_project| repo_project.name == project)
+            .map(|repo_project| repo_project.tasks_backend.kind.clone())
     }
 
-    fn project_repo(&self, project: &str) -> Option<String> {
+    fn project_tasks_repo(&self, project: &str) -> Option<String> {
         self.config
-            .backends
+            .projects
             .iter()
-            .find(|backend| backend.name == project)
-            .and_then(|backend| backend.repo.clone())
+            .find(|repo_project| repo_project.name == project)
+            .and_then(|repo_project| {
+                repo_project
+                    .tasks_backend
+                    .repo
+                    .clone()
+                    .or_else(|| repo_project.tasks_backend.jira_project.clone())
+            })
     }
 
     fn project_default_board(&self, project: &str) -> Option<String> {
         self.config
-            .backends
+            .projects
             .iter()
-            .find(|backend| backend.name == project)
-            .and_then(|backend| backend.default_board.clone())
+            .find(|repo_project| repo_project.name == project)
+            .and_then(|repo_project| repo_project.default_board.clone())
     }
 
     fn project_default_org(&self, project: &str) -> Option<String> {
         self.config
-            .backends
+            .projects
             .iter()
-            .find(|backend| backend.name == project)
-            .and_then(|backend| backend.default_org.clone())
+            .find(|repo_project| repo_project.name == project)
+            .and_then(|repo_project| repo_project.default_org.clone())
     }
 
     fn project_effective_key(&self, project: &str) -> String {
         self.config
-            .backends
+            .projects
             .iter()
-            .find(|backend| backend.name == project)
+            .find(|repo_project| repo_project.name == project)
             .map(issue_ids::effective_key)
             .unwrap_or_else(|| issue_ids::sanitize_key_candidate(project))
     }
