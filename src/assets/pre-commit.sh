@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# riptsk-hook-version: 2
+# riptask-hook-version: 3
 set -euo pipefail
 IFS=$'\n\t'
 
