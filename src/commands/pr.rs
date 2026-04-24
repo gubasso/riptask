@@ -586,7 +586,7 @@ fn sync_and_commit_pr(
         git,
         paths.riptask_repo.as_std_path(),
         &format!(
-            "riptsk: pr {} - {}",
+            "riptask: pr {} - {}",
             issue.frontmatter.id, issue.frontmatter.title
         ),
         &[path.as_std_path()],

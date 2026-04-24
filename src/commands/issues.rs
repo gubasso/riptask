@@ -361,7 +361,7 @@ pub(crate) async fn create_issue_from_args(
         &CliGit::new(),
         paths.riptask_repo.as_std_path(),
         &format!(
-            "riptsk: new {} - {}",
+            "riptask: new {} - {}",
             issue.frontmatter.id, issue.frontmatter.title
         ),
         &[issue_path.as_std_path()],
@@ -373,7 +373,7 @@ pub(crate) async fn create_issue_from_args(
             &CliGit::new(),
             paths.riptask_repo.as_std_path(),
             &format!(
-                "riptsk: edit {} - {}",
+                "riptask: edit {} - {}",
                 issue.frontmatter.id, issue.frontmatter.title
             ),
             &[issue_path.as_std_path()],
@@ -556,7 +556,7 @@ pub fn edit(paths: &AppPaths, args: IdArgs) -> Result<(), RiptaskError> {
             &config,
             &CliGit::new(),
             paths.riptask_repo.as_std_path(),
-            &format!("riptsk: edit {} - {}", id, issue.frontmatter.title),
+            &format!("riptask: edit {} - {}", id, issue.frontmatter.title),
             &[path.as_std_path()],
         )?;
     }
@@ -595,7 +595,7 @@ pub fn set_status(paths: &AppPaths, args: StatusArgs) -> Result<(), RiptaskError
         &config,
         &CliGit::new(),
         paths.riptask_repo.as_std_path(),
-        &format!("riptsk: status {} - {}", id, issue.frontmatter.title),
+        &format!("riptask: status {} - {}", id, issue.frontmatter.title),
         &[path.as_std_path()],
     )?;
     Ok(())
@@ -655,7 +655,7 @@ pub fn remove(paths: &AppPaths, args: IdArgs) -> Result<(), RiptaskError> {
         &config,
         &CliGit::new(),
         paths.riptask_repo.as_std_path(),
-        &format!("riptsk: rm {} - {}", id, issue.frontmatter.title),
+        &format!("riptask: rm {} - {}", id, issue.frontmatter.title),
         &[path.as_std_path()],
     )?;
     Ok(())

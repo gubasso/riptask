@@ -110,7 +110,7 @@ pub(crate) async fn create_branch_for_issue(
         &git,
         paths.riptask_repo.as_std_path(),
         &format!(
-            "riptsk: branch {} - {}",
+            "riptask: branch {} - {}",
             issue.frontmatter.id, issue.frontmatter.title
         ),
         &[path.as_std_path()],
@@ -230,7 +230,7 @@ async fn delete_branch(paths: &AppPaths, args: BranchArgs) -> Result<(), Riptask
             &git,
             paths.riptask_repo.as_std_path(),
             &format!(
-                "riptsk: delete branch {} - {}",
+                "riptask: delete branch {} - {}",
                 issue.frontmatter.id, issue.frontmatter.title
             ),
             &[path.as_std_path()],

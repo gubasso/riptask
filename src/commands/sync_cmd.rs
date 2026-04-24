@@ -161,7 +161,7 @@ async fn push(
             &config,
             &crate::adapters::git::CliGit::new(),
             paths.riptask_repo.as_std_path(),
-            &format!("riptsk: push local issues to {}", repo_project.name),
+            &format!("riptask: push local issues to {}", repo_project.name),
             &file_refs,
         )?;
     }
@@ -502,7 +502,7 @@ pub fn commit(paths: &AppPaths, args: StoreCommitArgs) -> Result<(), RiptaskErro
         .collect::<Vec<_>>();
     git.add(repo.as_path(), &refs)?;
     let message = format!(
-        "riptsk: manual commit {}",
+        "riptask: manual commit {}",
         crate::services::issue_service::now_utc()
     );
     if args.edit {
