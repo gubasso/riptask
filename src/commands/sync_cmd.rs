@@ -160,7 +160,7 @@ async fn push(
         maybe_auto_commit(
             &config,
             &crate::adapters::git::CliGit::new(),
-            paths.riptsk_repo.as_std_path(),
+            paths.riptask_repo.as_std_path(),
             &format!("riptsk: push local issues to {}", repo_project.name),
             &file_refs,
         )?;
@@ -490,10 +490,10 @@ pub fn session(paths: &AppPaths, args: SessionArgs) -> Result<(), RiptaskError> 
 pub fn commit(paths: &AppPaths, args: StoreCommitArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
     let git = CliGit::new();
-    let repo = paths.riptsk_repo.as_std_path().to_path_buf();
+    let repo = paths.riptask_repo.as_std_path().to_path_buf();
     let tracked = [
-        paths.riptsk_repo.join("issues"),
-        paths.riptsk_repo.join("templates"),
+        paths.riptask_repo.join("issues"),
+        paths.riptask_repo.join("templates"),
         paths.config_path(),
     ];
     let refs = tracked
@@ -582,7 +582,7 @@ fn session_end(paths: &AppPaths) -> Result<(), RiptaskError> {
     };
     let git = CliGit::new();
     let repo = current_repo()?;
-    if git.has_working_tree_changes(paths.riptsk_repo.as_std_path())? {
+    if git.has_working_tree_changes(paths.riptask_repo.as_std_path())? {
         commit(paths, StoreCommitArgs { edit: false })?;
     }
     git.checkout(repo.as_path(), &session.previous_branch)?;

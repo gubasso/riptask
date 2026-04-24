@@ -98,7 +98,7 @@ fn init_creates_repository_layout() {
     let cache = temp.path().join("cache");
     Command::cargo_bin("tsk")
         .expect("binary")
-        .env("RIPTSK_REPO", &repo)
+        .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .arg("init")
         .assert()
@@ -116,7 +116,7 @@ fn summarize_warns_when_ai_command_not_configured() {
 
     Command::cargo_bin("tsk")
         .expect("binary")
-        .env("RIPTSK_REPO", &repo)
+        .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .arg("init")
         .assert()
@@ -132,7 +132,7 @@ fn summarize_warns_when_ai_command_not_configured() {
 
     Command::cargo_bin("tsk")
         .expect("binary")
-        .env("RIPTSK_REPO", &repo)
+        .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .arg("summarize")
         .assert()
@@ -148,7 +148,7 @@ fn summarize_uses_echo_ai_command_end_to_end() {
 
     Command::cargo_bin("tsk")
         .expect("binary")
-        .env("RIPTSK_REPO", &repo)
+        .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .arg("init")
         .assert()
@@ -176,7 +176,7 @@ fn summarize_uses_echo_ai_command_end_to_end() {
 
     Command::cargo_bin("tsk")
         .expect("binary")
-        .env("RIPTSK_REPO", &repo)
+        .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .arg("summarize")
         .assert()

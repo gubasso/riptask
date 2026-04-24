@@ -5,33 +5,33 @@ use std::fs;
 
 #[derive(Debug, Clone)]
 pub struct AppPaths {
-    pub riptsk_repo: Utf8PathBuf,
+    pub riptask_repo: Utf8PathBuf,
     pub cache_root: Utf8PathBuf,
     pub state_root: Utf8PathBuf,
 }
 
 impl AppPaths {
     pub fn from_env() -> Result<Self> {
-        let riptsk_repo = resolve_riptsk_repo()?;
+        let riptask_repo = resolve_riptask_repo()?;
         let cache_root = resolve_cache_root()?;
         let state_root = resolve_state_root()?;
         Ok(Self {
-            riptsk_repo,
+            riptask_repo,
             cache_root,
             state_root,
         })
     }
 
     pub fn config_path(&self) -> Utf8PathBuf {
-        self.riptsk_repo.join("riptsk.yaml")
+        self.riptask_repo.join("riptsk.yaml")
     }
 
     pub fn issues_dir(&self) -> Utf8PathBuf {
-        self.riptsk_repo.join("issues")
+        self.riptask_repo.join("issues")
     }
 
     pub fn templates_dir(&self) -> Utf8PathBuf {
-        self.riptsk_repo.join("templates")
+        self.riptask_repo.join("templates")
     }
 
     pub fn views_root(&self) -> Utf8PathBuf {
@@ -75,8 +75,8 @@ impl AppPaths {
     }
 }
 
-pub fn resolve_riptsk_repo() -> Result<Utf8PathBuf> {
-    if let Ok(value) = std::env::var("RIPTSK_REPO") {
+pub fn resolve_riptask_repo() -> Result<Utf8PathBuf> {
+    if let Ok(value) = std::env::var("RIPTASK_REPO") {
         return Ok(Utf8PathBuf::from(value));
     }
 
@@ -93,7 +93,7 @@ pub fn resolve_riptsk_repo() -> Result<Utf8PathBuf> {
         .join("config.env");
     if let Ok(content) = fs::read_to_string(&config_home) {
         for line in content.lines() {
-            if let Some(rest) = line.strip_prefix("RIPTSK_REPO=") {
+            if let Some(rest) = line.strip_prefix("RIPTASK_REPO=") {
                 return Ok(Utf8PathBuf::from(rest.trim_matches('"')));
             }
         }
@@ -149,7 +149,7 @@ mod tests {
     #[test]
     fn builds_standard_subpaths() {
         let paths = AppPaths {
-            riptsk_repo: "/tmp/riptsk".into(),
+            riptask_repo: "/tmp/riptsk".into(),
             cache_root: "/tmp/cache".into(),
             state_root: "/tmp/state".into(),
         };

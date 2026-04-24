@@ -75,7 +75,7 @@ pub async fn run(paths: &AppPaths, args: CloneArgs) -> Result<(), RiptaskError> 
     maybe_auto_commit(
         &config,
         &git,
-        paths.riptsk_repo.as_std_path(),
+        paths.riptask_repo.as_std_path(),
         &format!(
             "riptsk: branch {} - {}",
             issue.frontmatter.id, issue.frontmatter.title

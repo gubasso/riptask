@@ -115,7 +115,7 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptaskError> {
         maybe_auto_commit(
             &config,
             &CliGit::new(),
-            paths.riptsk_repo.as_std_path(),
+            paths.riptask_repo.as_std_path(),
             &format!(
                 "riptsk: done {} - {}",
                 issue.frontmatter.id, issue.frontmatter.title
@@ -299,7 +299,7 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptaskError> {
         maybe_auto_commit(
             &config,
             &git,
-            paths.riptsk_repo.as_std_path(),
+            paths.riptask_repo.as_std_path(),
             &format!(
                 "riptsk: done {} - {}",
                 issue.frontmatter.id, issue.frontmatter.title

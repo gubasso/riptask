@@ -108,7 +108,7 @@ pub(crate) async fn create_branch_for_issue(
     maybe_auto_commit(
         &config,
         &git,
-        paths.riptsk_repo.as_std_path(),
+        paths.riptask_repo.as_std_path(),
         &format!(
             "riptsk: branch {} - {}",
             issue.frontmatter.id, issue.frontmatter.title
@@ -228,7 +228,7 @@ async fn delete_branch(paths: &AppPaths, args: BranchArgs) -> Result<(), Riptask
         maybe_auto_commit(
             &config,
             &git,
-            paths.riptsk_repo.as_std_path(),
+            paths.riptask_repo.as_std_path(),
             &format!(
                 "riptsk: delete branch {} - {}",
                 issue.frontmatter.id, issue.frontmatter.title

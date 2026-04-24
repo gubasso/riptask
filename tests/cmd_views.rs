@@ -10,7 +10,7 @@ fn view_builds_kanban_tree() {
     let cache = temp.path().join("cache");
     Command::cargo_bin("tsk")
         .expect("binary")
-        .env("RIPTSK_REPO", &repo)
+        .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .arg("init")
         .assert()
@@ -18,14 +18,14 @@ fn view_builds_kanban_tree() {
     Command::cargo_bin("tsk")
         .expect("binary")
         .current_dir(temp.path())
-        .env("RIPTSK_REPO", &repo)
+        .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .args(["new", "--title", "Build views"])
         .assert()
         .success();
     Command::cargo_bin("tsk")
         .expect("binary")
-        .env("RIPTSK_REPO", &repo)
+        .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .arg("view")
         .assert()
@@ -41,7 +41,7 @@ fn board_respects_explicit_multi_project_scope() {
 
     Command::cargo_bin("tsk")
         .expect("binary")
-        .env("RIPTSK_REPO", &repo)
+        .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .arg("init")
         .assert()
@@ -70,7 +70,7 @@ fn board_respects_explicit_multi_project_scope() {
 
     Command::cargo_bin("tsk")
         .expect("binary")
-        .env("RIPTSK_REPO", &repo)
+        .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .args([
             "new",
@@ -92,7 +92,7 @@ fn board_respects_explicit_multi_project_scope() {
 
     Command::cargo_bin("tsk")
         .expect("binary")
-        .env("RIPTSK_REPO", &repo)
+        .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .args([
             "board",
