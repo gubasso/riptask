@@ -103,6 +103,7 @@ mod tests {
         let temp = tempdir().expect("temp dir");
         let paths = AppPaths {
             riptask_repo: temp.path().join("repo").to_string_lossy().as_ref().into(),
+            user_config_root: temp.path().join("user").to_string_lossy().as_ref().into(),
             cache_root: temp.path().join("cache").to_string_lossy().as_ref().into(),
             state_root: temp.path().join("state").to_string_lossy().as_ref().into(),
         };

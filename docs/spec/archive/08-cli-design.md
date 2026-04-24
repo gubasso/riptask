@@ -129,7 +129,7 @@ tsk board --board penguin-chrono-labs
 # explicit board override
 
 tsk board --open
-# open using ui.opener from riptask.yaml (nvim -R, yazi, lf — see config)
+# open using ui.opener from config.yaml (nvim -R, yazi, lf — see config)
 
 tsk board --path
 # print path only, for composition:
@@ -140,7 +140,7 @@ tsk view
 # wipe and regenerate all views/
 ```
 
-When inside a project repo, `tsk board` resolves that project's `default_board` from `riptask.yaml` and shows `views/kanban/<board>/`. The kanban tree is board-keyed, not project-keyed.
+When inside a project repo, `tsk board` resolves that project's `default_board` from `config.yaml` and shows `views/kanban/<board>/`. The kanban tree is board-keyed, not project-keyed.
 
 #### Reordering
 
@@ -193,7 +193,7 @@ tsk sync pull --force
 
 tsk sync pull --triage
 # after pull: run AI triage on new issues (suggest state/priority/labels)
-# requires ai.enabled: true in riptask.yaml
+# requires ai.enabled: true in config.yaml
 
 tsk sync pull --triage --auto-triage
 # same as --triage, but applies suggestions without per-issue confirmation
@@ -221,11 +221,11 @@ tsk session end
 
 ```bash
 tsk recur list
-# list all recurring task definitions from riptask.yaml
+# list all recurring task definitions from config.yaml
 
 tsk recur new
 # interactive: choose template, set frequency, start/end dates
-# writes definition to riptask.yaml
+# writes definition to config.yaml
 
 tsk recur run
 # instantiate all recurring tasks that are due
@@ -298,7 +298,7 @@ tsk resolve <ID> --take-local
 tsk register
 # detect $PWD git remote
 # prompt for project config (prefix, board, org)
-# write entry to $RIPTASK_REPO/riptask.yaml
+# write entry to $RIPTASK_REPO/config.yaml
 
 tsk register --list
 # list all registered projects
@@ -343,13 +343,13 @@ See [25 — RIPTASK_REPO Data Repository Hooks](25-tsk-repo-hooks.md) for full d
 ```bash
 tsk init
 # initialize a new tasks repo in $RIPTASK_REPO (default: ~/.local/share/riptask)
-# creates: issues/ templates/ riptask.yaml .gitignore
+# creates: issues/ templates/ config.yaml .gitignore
 #   (.gitignore is comment-only; cache lives outside the repo)
 # also creates ~/.cache/riptask/ for cache files
 # runs git init + initial commit
 
 tsk config
-# show current riptask.yaml
+# show current config.yaml
 
 tsk config set <key> <value>
 # update a config value
@@ -363,7 +363,7 @@ tsk help [command]         # alias (same code path)
 
 ```bash
 tsk commit [-e|--edit]
-# stage issues/ templates/ riptask.yaml
+# stage issues/ templates/ config.yaml
 # generate commit message summarizing changes since last commit
 # without --edit: commit immediately with generated message
 # with --edit: open $EDITOR with generated message pre-filled, user can modify before commit

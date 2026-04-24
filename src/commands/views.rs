@@ -1,6 +1,6 @@
 use crate::adapters::picker::{FzfPicker, IssueDisplayMode, Picker};
 use crate::cli::{BoardArgs, IdArgs, ReorderArgs};
-use crate::config::{load_config, parse_state};
+use crate::config::{load_effective_config, parse_state};
 use crate::error::RiptaskError;
 use crate::paths::AppPaths;
 use crate::services::id_resolution;
@@ -13,7 +13,15 @@ use std::io::IsTerminal;
 
 pub fn view(paths: &AppPaths) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path())?;
+    let config = load_effective_config(
+        paths,
+        &camino::Utf8PathBuf::from(
+            std::env::current_dir()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
+        ),
+    )?;
     crate::ui::spin_on("Regenerating views", || {
         ViewBuilder::new(paths, &config)
             .regenerate_all(None)
@@ -23,7 +31,15 @@ pub fn view(paths: &AppPaths) -> Result<(), RiptaskError> {
 
 pub fn board(paths: &AppPaths, args: BoardArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path())?;
+    let config = load_effective_config(
+        paths,
+        &camino::Utf8PathBuf::from(
+            std::env::current_dir()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
+        ),
+    )?;
     let cwd = camino::Utf8PathBuf::from(
         std::env::current_dir()
             .unwrap_or_default()
@@ -171,7 +187,15 @@ fn color_issue_file(name: &str) -> String {
 
 pub fn reorder(paths: &AppPaths, args: ReorderArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path())?;
+    let config = load_effective_config(
+        paths,
+        &camino::Utf8PathBuf::from(
+            std::env::current_dir()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
+        ),
+    )?;
     let cwd = camino::Utf8PathBuf::from(
         std::env::current_dir()
             .unwrap_or_default()
@@ -236,7 +260,15 @@ pub fn reorder_down(paths: &AppPaths, args: IdArgs) -> Result<(), RiptaskError> 
 }
 
 fn shift(paths: &AppPaths, args: IdArgs, direction: ShiftDirection) -> Result<(), RiptaskError> {
-    let config = load_config(paths.config_path().as_std_path())?;
+    let config = load_effective_config(
+        paths,
+        &camino::Utf8PathBuf::from(
+            std::env::current_dir()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
+        ),
+    )?;
     let cwd = camino::Utf8PathBuf::from(
         std::env::current_dir()
             .unwrap_or_default()

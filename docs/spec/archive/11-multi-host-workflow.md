@@ -22,7 +22,7 @@
 | GitLab-synced issues | GitLab | `tsk sync` via `glab` — not $RIPTASK_REPO git |
 | Local project issues (non-gh/glab remote or no remote) | `$RIPTASK_REPO/issues/*.md` | `$RIPTASK_REPO` git push/pull |
 | Local-only issues (not tied to any project) | `$RIPTASK_REPO/issues/*.md` | `$RIPTASK_REPO` git push/pull |
-| Config | `$RIPTASK_REPO/riptask.yaml` | `$RIPTASK_REPO` git push/pull |
+| Config | `$RIPTASK_REPO/config.yaml` | `$RIPTASK_REPO` git push/pull |
 
 **`$RIPTASK_REPO` git is a backup and transport layer, not the sync mechanism for GitHub/GitLab-synced issues.** Remote-synced issue files do exist in `$RIPTASK_REPO` and are committed/pushed via git, but this is for backup and host migration — not for synchronization. Each host must independently run `tsk sync pull` against the remote to receive updates. Never rely on `$RIPTASK_REPO` git pull to get the latest GitHub/GitLab-synced issue state.
 
@@ -119,7 +119,7 @@ Prevention: **push before switching hosts**. `tsk session end` enforces this as 
 
 ### Failure modes and recovery
 
-**Git merge conflict in `$RIPTASK_REPO`.** When two hosts both modify `riptask.yaml` or create local-only issues with overlapping filenames, `git pull` in `tsk session start` may hit a merge conflict. Recovery: standard git merge resolution (`git mergetool` or manual edit), then re-run `tsk session start`. Since `riptask.yaml` is structured YAML, conflicts are usually in `recurring[].last_run` or newly added `remotes[]` entries — resolvable by keeping the later value.
+**Git merge conflict in `$RIPTASK_REPO`.** When two hosts both modify `config.yaml` or create local-only issues with overlapping filenames, `git pull` in `tsk session start` may hit a merge conflict. Recovery: standard git merge resolution (`git mergetool` or manual edit), then re-run `tsk session start`. Since `config.yaml` is structured YAML, conflicts are usually in `recurring[].last_run` or newly added `remotes[]` entries — resolvable by keeping the later value.
 
 **Forgotten `session end`.** If you switch hosts without running `session end`, local-only issues and config changes stay on host A. Remote-synced changes are also unpushed. Recovery: run `tsk session end` on host A when you return, or manually `tsk sync push && git -C $RIPTASK_REPO add -A && git commit && git push`. If host B has since made changes, the git pull on next `session start` will merge them (may conflict — see above). Note: auto-commit on lifecycle events (see [spec 15](15-version-control-backup.md)) reduces the blast radius for local issues — lifecycle changes (`new`, `close`, `move`, `reopen`, `rm`) are already committed, so only deferred changes (edits, comments, tags) and the git push are lost.
 

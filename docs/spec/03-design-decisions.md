@@ -68,6 +68,8 @@ For local projects (non-GitHub/GitLab remotes or no remote), IDs are assigned im
 
 The tasks data repo (`$RIPTASK_REPO`, defaulting to `~/.local/share/riptask/`) is never the working directory for `tsk` commands. It is a passive store that `tsk` reads and writes to. Commands are run from inside project repos, mirroring `glab`/`gh` behavior. The `RIPTASK_REPO` environment variable (or XDG default path) points to the data repo.
 
+riptask writes nothing inside user project repos except into an opt-in `.riptask/` directory when the user has explicitly invoked `tsk config edit --local`, `tsk config set --local`, or an unscoped config write while inside that project.
+
 ### 3.8 Two distinct sync layers, never conflated
 
 Issues that exist on GitHub/GitLab use those platforms as the shared state across hosts. `$RIPTASK_REPO` git is for local projects (non-GitHub/GitLab remotes or no remote), local-only issues, and config versioning. Never use `$RIPTASK_REPO` git push to share GitHub/GitLab-synced issue state across hosts — that's what `tsk sync` is for.

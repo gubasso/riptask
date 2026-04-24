@@ -336,6 +336,7 @@ mod tests {
         std::fs::create_dir_all(repo.join("templates")).expect("templates dir");
         AppPaths {
             riptask_repo: repo.to_string_lossy().as_ref().into(),
+            user_config_root: root.join("user").to_string_lossy().as_ref().into(),
             cache_root: cache.to_string_lossy().as_ref().into(),
             state_root: root.join("state").to_string_lossy().as_ref().into(),
         }

@@ -1,12 +1,12 @@
 use crate::assets::templates::embedded_templates;
-use crate::config::{default_config, save_config};
+use crate::config::{PartialConfig, default_config, save_layer};
 use crate::error::RiptaskError;
 use crate::paths::AppPaths;
 use anyhow::Context;
 use std::fs;
 
 pub fn run(paths: &AppPaths) -> Result<(), RiptaskError> {
-    if paths.config_path().exists() {
+    if paths.system_config_path().exists() {
         return Err(RiptaskError::General(format!(
             "repository already initialized at {}",
             paths.riptask_repo
@@ -14,7 +14,10 @@ pub fn run(paths: &AppPaths) -> Result<(), RiptaskError> {
     }
 
     paths.ensure_repo_dirs().map_err(RiptaskError::Other)?;
-    save_config(paths.config_path().as_std_path(), &default_config())?;
+    save_layer(
+        paths.system_config_path().as_std_path(),
+        &PartialConfig::from(default_config()),
+    )?;
 
     for (name, content) in embedded_templates() {
         fs::write(paths.templates_dir().join(name), content)
@@ -50,5 +53,6 @@ pub fn run(paths: &AppPaths) -> Result<(), RiptaskError> {
         "Initialized riptask repository at {}",
         paths.riptask_repo
     ));
+    crate::ui::success("Run `tsk config edit --local` inside a project to add local overrides.");
     Ok(())
 }

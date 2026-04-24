@@ -108,7 +108,7 @@ fn init_creates_repository_layout() {
         .success();
     assert!(repo.join("issues").exists());
     assert!(repo.join("templates").exists());
-    assert!(repo.join("riptask.yaml").exists());
+    assert!(repo.join("config.yaml").exists());
 }
 
 #[test]
@@ -125,7 +125,7 @@ fn summarize_warns_when_ai_command_not_configured() {
         .assert()
         .success();
 
-    let config_path = repo.join("riptask.yaml");
+    let config_path = repo.join("config.yaml");
     let config = fs::read_to_string(&config_path).expect("read config");
     fs::write(
         &config_path,
@@ -157,7 +157,7 @@ fn summarize_uses_echo_ai_command_end_to_end() {
         .assert()
         .success();
 
-    let config_path = repo.join("riptask.yaml");
+    let config_path = repo.join("config.yaml");
     let config = fs::read_to_string(&config_path).expect("read config");
     fs::write(
         &config_path,

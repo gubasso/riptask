@@ -1,4 +1,5 @@
 use crate::adapters::backend::MergeMethod;
+use crate::config::ConfigScope;
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 
 /// Maps each top-level subcommand to a help-output section. The order here
@@ -785,7 +786,39 @@ pub enum ConfigSubcommand {
         key: String,
         /// Value to set
         value: String,
+        #[command(flatten)]
+        scope: ScopeFlags,
     },
+    /// Edit a configuration layer
+    Edit {
+        #[command(flatten)]
+        scope: ScopeFlags,
+    },
+}
+
+#[derive(Debug, Clone, Args, Default)]
+#[group(multiple = false)]
+pub struct ScopeFlags {
+    #[arg(long)]
+    pub system: bool,
+    #[arg(long)]
+    pub global: bool,
+    #[arg(long)]
+    pub local: bool,
+}
+
+impl ScopeFlags {
+    pub fn scope(&self) -> Option<ConfigScope> {
+        if self.system {
+            Some(ConfigScope::System)
+        } else if self.global {
+            Some(ConfigScope::User)
+        } else if self.local {
+            Some(ConfigScope::Local)
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Debug, Clone, Args, Default)]

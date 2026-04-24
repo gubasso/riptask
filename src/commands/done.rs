@@ -4,7 +4,7 @@ use crate::adapters::prompts::DialoguerPrompts;
 use crate::cli::{DoneArgs, SyncArgs};
 use crate::commands::branch::{backend_issue_number, current_repo, cwd_utf8};
 use crate::commands::{pr, sync_cmd};
-use crate::config::load_config;
+use crate::config::load_effective_config;
 use crate::domain::issue::{IssueDocument, IssueState};
 use crate::error::RiptaskError;
 use crate::models::BackendKind;
@@ -76,7 +76,15 @@ async fn remote_pr_number_for_issue(
 
 pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path())?;
+    let config = load_effective_config(
+        paths,
+        &camino::Utf8PathBuf::from(
+            std::env::current_dir()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
+        ),
+    )?;
     let cwd = cwd_utf8();
     let id = match id_resolution::resolve_or_pick_id(
         paths,

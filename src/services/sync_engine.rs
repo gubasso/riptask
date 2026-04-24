@@ -1369,6 +1369,7 @@ mod tests {
         let cache_root = root.join("cache");
         let paths = AppPaths {
             riptask_repo: repo.to_string_lossy().as_ref().into(),
+            user_config_root: root.join("user").to_string_lossy().as_ref().into(),
             cache_root: cache_root.to_string_lossy().as_ref().into(),
             state_root: root.join("state").to_string_lossy().as_ref().into(),
         };

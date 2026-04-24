@@ -70,7 +70,7 @@ git -C "$RIPTASK_REPO" commit -m "riptask: sync pull — conflicts detected"
 unset RIPTASK_HOOK_ALLOW_REMOTE
 ```
 
-#### Config (`riptask.yaml`)
+#### Config (`config.yaml`)
 
 | Check | Method | Error |
 |---|---|---|
@@ -90,7 +90,7 @@ Config structure follows [16 — Configuration](16-configuration.md).
 | `default_state` enum (if set) | `backlog \| todo \| in-progress \| review \| done` | `invalid default_state: "<value>"` |
 | `default_priority` enum (if set) | `none \| low \| medium \| high \| critical` | `invalid default_priority: "<value>"` |
 
-Note: template `default_priority` uses a different enum than issue `priority` — it includes `none` and `critical` per [24 — Templates](24-templates.md). At issue creation time, `none` falls back to `defaults.priority` from `riptask.yaml` and `critical` maps to issue priority `urgent`.
+Note: template `default_priority` uses a different enum than issue `priority` — it includes `none` and `critical` per [24 — Templates](24-templates.md). At issue creation time, `none` falls back to `defaults.priority` from `config.yaml` and `critical` maps to issue priority `urgent`.
 
 ---
 
@@ -100,7 +100,7 @@ Note: template `default_priority` uses a different enum than issue `priority` �
 tsk pre-commit: FAIL issues/WHL-042.md
   missing required field: board
 
-tsk pre-commit: FAIL riptask.yaml
+tsk pre-commit: FAIL config.yaml
   duplicate project_prefix "WHL" in remotes "wormhole-router" and "other-project"
 
 tsk pre-commit: 2 errors, commit blocked
@@ -187,7 +187,7 @@ When the hook source is updated in a new tsk release, the version number is bump
 - [06 — Issue File Format](06-issue-file-format.md) — frontmatter schema, required fields, `.REMOTE.md` convention
 - [08 — CLI Design](08-cli-design.md) — `tsk hooks` subcommand listing
 - [10 — Sync Architecture](10-sync-architecture.md) — `tsk sync pull` commits `.REMOTE.md` files with `RIPTASK_HOOK_ALLOW_REMOTE=1`
-- [16 — Configuration](16-configuration.md) — `riptask.yaml` structure and uniqueness constraints
+- [16 — Configuration](16-configuration.md) — `config.yaml` structure and uniqueness constraints
 - [17 — Codebase Structure](17-codebase-structure.md) — `lib/hooks/pre-commit` and `lib/hooks.sh` file locations
 - [22 — Testing](22-testing.md) — `tests/unit/hooks.bats` and `tests/integration/hooks.bats`
 - [24 — Templates](24-templates.md) — template frontmatter schema, `default_priority` enum
