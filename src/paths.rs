@@ -55,7 +55,7 @@ impl AppPaths {
     }
 
     pub fn log_path(&self) -> Utf8PathBuf {
-        self.state_root.join("riptsk.log")
+        self.state_root.join("riptask.log")
     }
 
     pub fn ensure_repo_dirs(&self) -> Result<()> {
@@ -89,7 +89,7 @@ pub fn resolve_riptask_repo() -> Result<Utf8PathBuf> {
                 std::env::var("HOME").unwrap_or_else(|_| ".".into())
             ))
         })
-        .join("riptsk")
+        .join("riptask")
         .join("config.env");
     if let Ok(content) = fs::read_to_string(&config_home) {
         for line in content.lines() {
@@ -107,7 +107,7 @@ pub fn resolve_riptask_repo() -> Result<Utf8PathBuf> {
                 std::env::var("HOME").unwrap_or_else(|_| ".".into())
             ))
         })
-        .join("riptsk");
+        .join("riptask");
     Utf8PathBuf::from_path_buf(data_home)
         .map_err(|_| anyhow::anyhow!("XDG data home is not valid UTF-8"))
 }
@@ -122,7 +122,7 @@ pub fn resolve_cache_root() -> Result<Utf8PathBuf> {
                 std::env::var("HOME").unwrap_or_else(|_| ".".into())
             ))
         })
-        .join("riptsk");
+        .join("riptask");
     Utf8PathBuf::from_path_buf(cache_home)
         .map_err(|_| anyhow::anyhow!("XDG cache home is not valid UTF-8"))
 }
@@ -137,7 +137,7 @@ pub fn resolve_state_root() -> Result<Utf8PathBuf> {
                 std::env::var("HOME").unwrap_or_else(|_| ".".into())
             ))
         })
-        .join("riptsk");
+        .join("riptask");
     Utf8PathBuf::from_path_buf(state_home)
         .map_err(|_| anyhow::anyhow!("XDG state home is not valid UTF-8"))
 }
@@ -156,6 +156,6 @@ mod tests {
         assert_eq!(paths.config_path(), "/tmp/riptsk/riptask.yaml");
         assert_eq!(paths.backend_state_path(), "/tmp/cache/backend_state.json");
         assert_eq!(paths.deleted_keys_path(), "/tmp/cache/deleted_keys.json");
-        assert_eq!(paths.log_path(), "/tmp/state/riptsk.log");
+        assert_eq!(paths.log_path(), "/tmp/state/riptask.log");
     }
 }
