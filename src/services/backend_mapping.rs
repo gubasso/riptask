@@ -802,8 +802,8 @@ mod tests {
     #[test]
     fn non_empty_env_returns_none_for_unset_var() {
         let _lock = ENV_LOCK.lock().expect("env lock");
-        let _guard = EnvGuard::unset("RIPTSK_TEST_NON_EMPTY_ENV");
-        assert_eq!(non_empty_env("RIPTSK_TEST_NON_EMPTY_ENV"), None);
+        let _guard = EnvGuard::unset("RIPTASK_TEST_NON_EMPTY_ENV");
+        assert_eq!(non_empty_env("RIPTASK_TEST_NON_EMPTY_ENV"), None);
     }
 
     #[test]

@@ -102,7 +102,7 @@ mod tests {
     fn missing_cache_files_default_to_empty_maps() {
         let temp = tempdir().expect("temp dir");
         let paths = AppPaths {
-            riptsk_repo: temp.path().join("repo").to_string_lossy().as_ref().into(),
+            riptask_repo: temp.path().join("repo").to_string_lossy().as_ref().into(),
             cache_root: temp.path().join("cache").to_string_lossy().as_ref().into(),
             state_root: temp.path().join("state").to_string_lossy().as_ref().into(),
         };

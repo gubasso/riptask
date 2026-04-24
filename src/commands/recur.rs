@@ -156,7 +156,7 @@ fn run_due(paths: &AppPaths, date: Option<String>) -> Result<(), RiptaskError> {
         maybe_auto_commit(
             &config,
             &CliGit::new(),
-            paths.riptsk_repo.as_std_path(),
+            paths.riptask_repo.as_std_path(),
             &format!("riptsk: recur run {} - {}", id, title),
             &files,
         )?;

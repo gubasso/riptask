@@ -9,7 +9,7 @@ pub fn run(paths: &AppPaths) -> Result<(), RiptaskError> {
     if paths.config_path().exists() {
         return Err(RiptaskError::General(format!(
             "repository already initialized at {}",
-            paths.riptsk_repo
+            paths.riptask_repo
         )));
     }
 
@@ -23,8 +23,8 @@ pub fn run(paths: &AppPaths) -> Result<(), RiptaskError> {
     }
 
     fs::write(
-        paths.riptsk_repo.join(".gitignore"),
-        "# Cache and derived state live outside $RIPTSK_REPO by design.\n",
+        paths.riptask_repo.join(".gitignore"),
+        "# Cache and derived state live outside $RIPTASK_REPO by design.\n",
     )
     .context("failed to write .gitignore")
     .map_err(RiptaskError::Other)?;
@@ -32,7 +32,7 @@ pub fn run(paths: &AppPaths) -> Result<(), RiptaskError> {
     // Initialize git repo
     let output = std::process::Command::new("git")
         .arg("init")
-        .arg(paths.riptsk_repo.as_str())
+        .arg(paths.riptask_repo.as_str())
         .output()
         .context("failed to run git init")
         .map_err(RiptaskError::Other)?;
@@ -48,7 +48,7 @@ pub fn run(paths: &AppPaths) -> Result<(), RiptaskError> {
 
     crate::ui::success(&format!(
         "Initialized riptsk repository at {}",
-        paths.riptsk_repo
+        paths.riptask_repo
     ));
     Ok(())
 }
