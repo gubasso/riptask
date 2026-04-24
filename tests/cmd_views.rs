@@ -49,8 +49,8 @@ fn board_respects_explicit_multi_project_scope() {
 
     // Override tree_depth so board output includes issue filenames
     let config =
-        include_str!("fixtures/riptsk_multi.yaml").replace("tree_depth: 2", "tree_depth: 4");
-    fs::write(repo.join("riptsk.yaml"), config).expect("write config");
+        include_str!("fixtures/riptask_multi.yaml").replace("tree_depth: 2", "tree_depth: 4");
+    fs::write(repo.join("riptask.yaml"), config).expect("write config");
     fs::copy(
         format!(
             "{}/tests/fixtures/issues/GL-CHR-WOR--42.md",

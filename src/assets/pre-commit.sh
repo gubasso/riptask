@@ -97,7 +97,7 @@ validate_template_file() {
 while IFS= read -r file; do
     case "$file" in
         issues/*.md) validate_issue_file "$file" ;;
-        riptsk.yaml) validate_config_file "$file" ;;
+        riptask.yaml) validate_config_file "$file" ;;
         templates/*.md) validate_template_file "$file" ;;
     esac
 done < <(git diff --cached --name-only --diff-filter=ACM)

@@ -21,7 +21,7 @@ fn path_resolves_numeric_id_from_detected_project() {
         .success();
 
     fs::write(
-        repo.join("riptsk.yaml"),
+        repo.join("riptask.yaml"),
         config_with_backend_path(&worktree),
     )
     .expect("config");
@@ -93,7 +93,7 @@ fn id_prints_issue_id_for_current_branch() {
     init_worktree_branch(&worktree, "feature/hello");
 
     fs::write(
-        repo.join("riptsk.yaml"),
+        repo.join("riptask.yaml"),
         config_with_backend_path(&worktree),
     )
     .expect("config");
@@ -129,7 +129,7 @@ fn id_errors_when_current_branch_has_no_issue() {
     init_worktree_branch(&worktree, "feature/missing");
 
     fs::write(
-        repo.join("riptsk.yaml"),
+        repo.join("riptask.yaml"),
         config_with_backend_path(&worktree),
     )
     .expect("config");
