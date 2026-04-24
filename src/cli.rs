@@ -133,7 +133,29 @@ pub enum Commands {
     /// Change the status of an issue
     #[command(name = "status")]
     Status(StatusArgs),
-    /// Create, switch to, or delete an issue branch
+    /// Create, switch to, adopt, or delete an issue branch
+    ///
+    /// Default (no flag): creates (or checks out) the canonical branch for
+    /// the given issue on the remote, then stamps frontmatter.branch and
+    /// id_slug on the issue.
+    ///
+    /// --adopt: link the currently checked-out git branch to an issue
+    /// without touching the remote. Use this when a branch was created
+    /// outside of `tsk` (e.g. `git checkout -b`) and you want bare
+    /// commands like `tsk edit` or `tsk show` to auto-resolve to this
+    /// issue while on that branch.
+    ///
+    /// `tsk branch --adopt` infers the issue id from the leading
+    /// `<number>-` in the current branch name.
+    ///
+    /// `tsk branch --adopt <id>` links to the given issue.
+    ///
+    /// Refuses protected branches (main/master/develop/…); refuses
+    /// branches already linked to another issue; prompts before
+    /// overwriting an existing link on the target issue (use -y to
+    /// skip).
+    ///
+    /// -d / -D: delete the branch (safe / force).
     Branch(BranchArgs),
     /// Create a work-clone for an issue
     Clone(CloneArgs),
@@ -211,7 +233,15 @@ pub struct BranchArgs {
     #[arg(short = 'D', long = "force-delete", conflicts_with = "delete")]
     pub force_delete: bool,
 
-    /// Skip confirmation prompt (for -d/-D)
+    /// Link the currently checked-out git branch to an issue without
+    /// touching the remote. If [ID] is omitted, the issue number is
+    /// inferred from the leading `<number>-` of the branch name. Refuses
+    /// protected branches and branches already linked to another issue;
+    /// prompts before overwriting an existing link (use -y to skip).
+    #[arg(long = "adopt", conflicts_with_all = ["delete", "force_delete", "pick"])]
+    pub adopt: bool,
+
+    /// Skip confirmation prompts (for -d/-D and --adopt overwrite)
     #[arg(short = 'y', long = "yes")]
     pub yes: bool,
 }
