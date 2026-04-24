@@ -1,12 +1,12 @@
 use crate::adapters::prompts::DialoguerPrompts;
 use crate::cli::RegisterArgs;
 use crate::config::{load_config, save_config};
-use crate::error::RiptskError;
+use crate::error::RiptaskError;
 use crate::paths::AppPaths;
 use comfy_table::{Attribute, Cell, Color, ContentArrangement, Table, presets::NOTHING};
 use std::io::IsTerminal;
 
-pub fn run(paths: &AppPaths, args: RegisterArgs) -> Result<(), RiptskError> {
+pub fn run(paths: &AppPaths, args: RegisterArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
     let config = load_config(paths.config_path().as_std_path())?;
     if args.list {

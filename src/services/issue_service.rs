@@ -1,7 +1,7 @@
 use crate::cli::{LsArgs, NewArgs};
 use crate::config::{Config, parse_priority, parse_state};
 use crate::domain::issue::{IssueDocument, IssueFrontmatter, IssueState, Priority};
-use crate::error::RiptskError;
+use crate::error::RiptaskError;
 use crate::models::BackendKind;
 use crate::paths::AppPaths;
 use crate::services::issue_ids;
@@ -49,11 +49,11 @@ impl<'a> IssueService<'a> {
         Self { paths, config }
     }
 
-    pub fn prepare_issue_draft(&self, args: NewArgs) -> Result<IssueDraft, RiptskError> {
-        self.paths.ensure_repo_dirs().map_err(RiptskError::Other)?;
+    pub fn prepare_issue_draft(&self, args: NewArgs) -> Result<IssueDraft, RiptaskError> {
+        self.paths.ensure_repo_dirs().map_err(RiptaskError::Other)?;
         let title = args
             .title
-            .ok_or_else(|| RiptskError::General("missing title".into()))?;
+            .ok_or_else(|| RiptaskError::General("missing title".into()))?;
         let project = if let Some(p) = args.project {
             p
         } else {
@@ -74,7 +74,7 @@ impl<'a> IssueService<'a> {
         let template_service = TemplateService::new(self.paths, self.config);
         let template = template_service
             .load(&template_name)
-            .map_err(RiptskError::Other)?;
+            .map_err(RiptaskError::Other)?;
         let board = args
             .board
             .or_else(|| self.project_default_board(&project))
@@ -83,18 +83,18 @@ impl<'a> IssueService<'a> {
             .status
             .map(|value| parse_state(&value))
             .transpose()
-            .map_err(RiptskError::Other)?
+            .map_err(RiptaskError::Other)?
             .or(template.default_status)
             .unwrap_or_else(|| self.config.defaults.status.clone());
         let priority = args
             .priority
             .map(|value| parse_priority(&value))
             .transpose()
-            .map_err(RiptskError::Other)?
+            .map_err(RiptaskError::Other)?
             .or(template.default_priority)
             .unwrap_or_else(|| self.config.defaults.priority.clone());
         self.validate_state_for_board(&board, &status)
-            .map_err(RiptskError::Other)?;
+            .map_err(RiptaskError::Other)?;
         Ok(IssueDraft {
             title,
             project: project.clone(),
@@ -107,30 +107,30 @@ impl<'a> IssueService<'a> {
             body: template.body,
             order: self
                 .next_order_for_lane(&board, status.as_str())
-                .map_err(RiptskError::Other)?,
+                .map_err(RiptaskError::Other)?,
             tasks_backend_kind: self.project_tasks_backend_kind(&project),
             tasks_repo: self.project_tasks_repo(&project),
         })
     }
 
-    pub fn persist_issue(&self, document: &IssueDocument) -> Result<(), RiptskError> {
+    pub fn persist_issue(&self, document: &IssueDocument) -> Result<(), RiptaskError> {
         let path = self
             .paths
             .issues_dir()
             .join(format!("{}.md", document.frontmatter.id));
-        frontmatter::save_issue(path.as_std_path(), document).map_err(RiptskError::Other)?;
+        frontmatter::save_issue(path.as_std_path(), document).map_err(RiptaskError::Other)?;
         ViewBuilder::new(self.paths, self.config)
             .regenerate_all(None)
-            .map_err(RiptskError::Other)
+            .map_err(RiptaskError::Other)
     }
 
     pub fn build_local_issue_document(
         &self,
         draft: &IssueDraft,
-    ) -> Result<IssueDocument, RiptskError> {
+    ) -> Result<IssueDocument, RiptaskError> {
         let scope = self.project_effective_key(&draft.project);
         let sequence =
-            issue_ids::next_local_sequence(self.paths, &scope).map_err(RiptskError::Other)?;
+            issue_ids::next_local_sequence(self.paths, &scope).map_err(RiptaskError::Other)?;
         let id = issue_ids::format_id(&scope, sequence);
         Ok(IssueDocument {
             frontmatter: IssueFrontmatter {
@@ -170,8 +170,8 @@ impl<'a> IssueService<'a> {
         })
     }
 
-    pub fn edit_issue(&self, id: Option<String>) -> Result<(), RiptskError> {
-        let id = id.ok_or_else(|| RiptskError::General("<ID> required".into()))?;
+    pub fn edit_issue(&self, id: Option<String>) -> Result<(), RiptaskError> {
+        let id = id.ok_or_else(|| RiptaskError::General("<ID> required".into()))?;
         let path = issue_store::find_issue(self.paths, &id)?;
         let before = fs::metadata(&path)?.modified()?;
         let had_conflict = matches!(
@@ -189,54 +189,54 @@ impl<'a> IssueService<'a> {
                 return Ok(());
             }
             let mut issue =
-                frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
+                frontmatter::load_issue(path.as_std_path()).map_err(RiptaskError::Other)?;
             issue.frontmatter.local_updated_at = now_utc();
-            frontmatter::save_issue(path.as_std_path(), &issue).map_err(RiptskError::Other)?;
+            frontmatter::save_issue(path.as_std_path(), &issue).map_err(RiptaskError::Other)?;
             ViewBuilder::new(self.paths, self.config)
                 .regenerate_all(None)
-                .map_err(RiptskError::Other)?;
+                .map_err(RiptaskError::Other)?;
         }
         Ok(())
     }
 
-    pub fn move_issue(&self, id: &str, state: &str) -> Result<(), RiptskError> {
+    pub fn move_issue(&self, id: &str, state: &str) -> Result<(), RiptaskError> {
         let path = issue_store::find_issue(self.paths, id)?;
         let mut issue = match frontmatter::try_load_issue(path.as_std_path()) {
             frontmatter::IssueLoadResult::Ok(issue) => issue,
             frontmatter::IssueLoadResult::Conflict { .. } => {
-                return Err(RiptskError::Conflict(format!(
+                return Err(RiptaskError::Conflict(format!(
                     "issue {id} has unresolved sync conflicts"
                 )));
             }
-            frontmatter::IssueLoadResult::Err(error) => return Err(RiptskError::Other(error)),
+            frontmatter::IssueLoadResult::Err(error) => return Err(RiptaskError::Other(error)),
         };
-        let state = parse_state(state).map_err(RiptskError::Other)?;
+        let state = parse_state(state).map_err(RiptaskError::Other)?;
         self.validate_state_for_board(&issue.frontmatter.board, &state)
-            .map_err(RiptskError::Other)?;
+            .map_err(RiptaskError::Other)?;
         issue.frontmatter.status = state.clone();
         issue.frontmatter.order = Some(
             self.next_order_for_lane(&issue.frontmatter.board, state.as_str())
-                .map_err(RiptskError::Other)?,
+                .map_err(RiptaskError::Other)?,
         );
         issue.frontmatter.local_updated_at = now_utc();
-        frontmatter::save_issue(path.as_std_path(), &issue).map_err(RiptskError::Other)?;
+        frontmatter::save_issue(path.as_std_path(), &issue).map_err(RiptaskError::Other)?;
         ViewBuilder::new(self.paths, self.config)
             .regenerate_all(None)
-            .map_err(RiptskError::Other)
+            .map_err(RiptaskError::Other)
     }
 
-    pub fn remove_issue(&self, id: &str) -> Result<(), RiptskError> {
+    pub fn remove_issue(&self, id: &str) -> Result<(), RiptaskError> {
         issue_store::delete_issue_files(self.paths, id)?;
         ViewBuilder::new(self.paths, self.config)
             .regenerate_all(None)
-            .map_err(RiptskError::Other)
+            .map_err(RiptaskError::Other)
     }
 
     pub fn list_matching(
         &self,
         args: &LsArgs,
         scope: &crate::scope::ProjectScope,
-    ) -> Result<ListMatchingResult, RiptskError> {
+    ) -> Result<ListMatchingResult, RiptaskError> {
         let mut documents = Vec::new();
         let mut conflict_count = 0usize;
         for path in issue_store::list_issues(self.paths)? {
@@ -247,7 +247,7 @@ impl<'a> IssueService<'a> {
                     continue;
                 }
                 frontmatter::IssueLoadResult::Err(error) => {
-                    return Err(RiptskError::Other(error));
+                    return Err(RiptaskError::Other(error));
                 }
             };
             if !scope.matches(&document.frontmatter.project) {
@@ -288,23 +288,23 @@ impl<'a> IssueService<'a> {
         &self,
         id: &str,
         direction: ShiftDirection,
-    ) -> Result<(), RiptskError> {
+    ) -> Result<(), RiptaskError> {
         let target_path = issue_store::find_issue(self.paths, id)?;
         let target_issue = match frontmatter::try_load_issue(target_path.as_std_path()) {
             frontmatter::IssueLoadResult::Ok(issue) => *issue,
             frontmatter::IssueLoadResult::Conflict { .. } => {
-                return Err(RiptskError::Conflict(format!(
+                return Err(RiptaskError::Conflict(format!(
                     "issue {id} has unresolved sync conflicts"
                 )));
             }
-            frontmatter::IssueLoadResult::Err(error) => return Err(RiptskError::Other(error)),
+            frontmatter::IssueLoadResult::Err(error) => return Err(RiptaskError::Other(error)),
         };
         let mut lane = self.load_lane(
             &target_issue.frontmatter.board,
             &target_issue.frontmatter.status,
         )?;
         let Some(index) = lane.iter().position(|(issue_id, _)| issue_id == id) else {
-            return Err(RiptskError::NotFound(id.to_owned()));
+            return Err(RiptaskError::NotFound(id.to_owned()));
         };
         let swap_index = match direction {
             ShiftDirection::Up if index > 0 => index - 1,
@@ -321,7 +321,7 @@ impl<'a> IssueService<'a> {
         board: &str,
         state: &IssueState,
         ordered_ids: &[String],
-    ) -> Result<(), RiptskError> {
+    ) -> Result<(), RiptaskError> {
         let lane = self.load_lane(board, state)?;
         if lane.is_empty() || ordered_ids.is_empty() {
             return Ok(());
@@ -333,7 +333,7 @@ impl<'a> IssueService<'a> {
             .collect::<std::collections::HashSet<_>>();
         for id in ordered_ids {
             if !known_ids.contains(id.as_str()) {
-                return Err(RiptskError::NotFound(id.clone()));
+                return Err(RiptaskError::NotFound(id.clone()));
             }
         }
 
@@ -418,13 +418,13 @@ impl<'a> IssueService<'a> {
         &self,
         board: &str,
         state: &IssueState,
-    ) -> Result<Vec<(String, camino::Utf8PathBuf)>, RiptskError> {
+    ) -> Result<Vec<(String, camino::Utf8PathBuf)>, RiptaskError> {
         let mut lane = Vec::new();
         for path in issue_store::list_issues(self.paths)? {
             let issue = match frontmatter::try_load_issue(path.as_std_path()) {
                 frontmatter::IssueLoadResult::Ok(issue) => issue,
                 frontmatter::IssueLoadResult::Conflict { .. } => continue,
-                frontmatter::IssueLoadResult::Err(error) => return Err(RiptskError::Other(error)),
+                frontmatter::IssueLoadResult::Err(error) => return Err(RiptaskError::Other(error)),
             };
             if issue.frontmatter.board == board && issue.frontmatter.status == *state {
                 lane.push((issue.frontmatter.id, path));
@@ -446,24 +446,24 @@ impl<'a> IssueService<'a> {
         Ok(lane)
     }
 
-    fn persist_lane(&self, lane: &[(String, camino::Utf8PathBuf)]) -> Result<(), RiptskError> {
+    fn persist_lane(&self, lane: &[(String, camino::Utf8PathBuf)]) -> Result<(), RiptaskError> {
         for (index, (_, path)) in lane.iter().enumerate() {
             let mut issue = match frontmatter::try_load_issue(path.as_std_path()) {
                 frontmatter::IssueLoadResult::Ok(issue) => issue,
                 frontmatter::IssueLoadResult::Conflict { id, .. } => {
-                    return Err(RiptskError::Conflict(format!(
+                    return Err(RiptaskError::Conflict(format!(
                         "issue {id} has unresolved sync conflicts"
                     )));
                 }
-                frontmatter::IssueLoadResult::Err(error) => return Err(RiptskError::Other(error)),
+                frontmatter::IssueLoadResult::Err(error) => return Err(RiptaskError::Other(error)),
             };
             issue.frontmatter.order = Some((index + 1) as u32);
             issue.frontmatter.local_updated_at = now_utc();
-            frontmatter::save_issue(path.as_std_path(), &issue).map_err(RiptskError::Other)?;
+            frontmatter::save_issue(path.as_std_path(), &issue).map_err(RiptaskError::Other)?;
         }
         ViewBuilder::new(self.paths, self.config)
             .regenerate_all(None)
-            .map_err(RiptskError::Other)?;
+            .map_err(RiptaskError::Other)?;
         Ok(())
     }
 }

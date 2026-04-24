@@ -2,7 +2,7 @@ use crate::adapters::backend::{
     BackendIssueRecord, BackendIssueUpsert, BackendPrRecord, CiPresence, DeleteOutcome,
     IssueTracker, MergeMethod, PrChecksStatus, VersionControl,
 };
-use crate::error::RiptskError;
+use crate::error::RiptaskError;
 use async_trait::async_trait;
 use chrono::SecondsFormat;
 use octocrab::models;
@@ -28,24 +28,24 @@ pub struct GithubProvider {
 }
 
 impl GithubProvider {
-    pub fn new(token: &str) -> Result<Self, RiptskError> {
+    pub fn new(token: &str) -> Result<Self, RiptaskError> {
         let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
         let client = octocrab::Octocrab::builder()
             .personal_token(token.to_owned())
             .build()
-            .map_err(|error| RiptskError::Unreachable(format_octocrab_error(&error)))?;
+            .map_err(|error| RiptaskError::Unreachable(format_octocrab_error(&error)))?;
         Ok(Self { client })
     }
 
-    fn split_owner_repo<'a>(&self, repo: &'a str) -> Result<(&'a str, &'a str), RiptskError> {
+    fn split_owner_repo<'a>(&self, repo: &'a str) -> Result<(&'a str, &'a str), RiptaskError> {
         repo.split_once('/')
-            .ok_or_else(|| RiptskError::Config(format!("invalid github repo: {repo}")))
+            .ok_or_else(|| RiptaskError::Config(format!("invalid github repo: {repo}")))
     }
 }
 
 #[async_trait]
 impl IssueTracker for GithubProvider {
-    async fn list_issues(&self, repo: &str) -> Result<Vec<BackendIssueRecord>, RiptskError> {
+    async fn list_issues(&self, repo: &str) -> Result<Vec<BackendIssueRecord>, RiptaskError> {
         let (owner, repo_name) = self.split_owner_repo(repo)?;
         let page = self
             .client
@@ -55,12 +55,12 @@ impl IssueTracker for GithubProvider {
             .per_page(100)
             .send()
             .await
-            .map_err(|error| RiptskError::Unreachable(format_octocrab_error(&error)))?;
+            .map_err(|error| RiptaskError::Unreachable(format_octocrab_error(&error)))?;
         let issues = self
             .client
             .all_pages::<models::issues::Issue>(page)
             .await
-            .map_err(|error| RiptskError::Unreachable(format_octocrab_error(&error)))?;
+            .map_err(|error| RiptaskError::Unreachable(format_octocrab_error(&error)))?;
         Ok(issues
             .into_iter()
             .filter(|issue| issue.pull_request.is_none())
@@ -72,14 +72,14 @@ impl IssueTracker for GithubProvider {
         &self,
         repo: &str,
         issue_id: u64,
-    ) -> Result<BackendIssueRecord, RiptskError> {
+    ) -> Result<BackendIssueRecord, RiptaskError> {
         let (owner, repo_name) = self.split_owner_repo(repo)?;
         let issue = self
             .client
             .issues(owner, repo_name)
             .get(issue_id)
             .await
-            .map_err(|error| RiptskError::Unreachable(format_octocrab_error(&error)))?;
+            .map_err(|error| RiptaskError::Unreachable(format_octocrab_error(&error)))?;
         Ok(map_issue(issue))
     }
 
@@ -87,7 +87,7 @@ impl IssueTracker for GithubProvider {
         &self,
         repo: &str,
         issue: &BackendIssueUpsert,
-    ) -> Result<BackendIssueRecord, RiptskError> {
+    ) -> Result<BackendIssueRecord, RiptaskError> {
         let (owner, repo_name) = self.split_owner_repo(repo)?;
         let handler = self.client.issues(owner, repo_name);
         let mut builder = handler
@@ -103,7 +103,7 @@ impl IssueTracker for GithubProvider {
         let created = builder
             .send()
             .await
-            .map_err(|error| RiptskError::Unreachable(format_octocrab_error(&error)))?;
+            .map_err(|error| RiptaskError::Unreachable(format_octocrab_error(&error)))?;
         Ok(map_issue(created))
     }
 
@@ -112,7 +112,7 @@ impl IssueTracker for GithubProvider {
         repo: &str,
         issue_id: u64,
         issue: &BackendIssueUpsert,
-    ) -> Result<BackendIssueRecord, RiptskError> {
+    ) -> Result<BackendIssueRecord, RiptaskError> {
         let (owner, repo_name) = self.split_owner_repo(repo)?;
         let handler = self.client.issues(owner, repo_name);
         let mut builder = handler
@@ -133,7 +133,7 @@ impl IssueTracker for GithubProvider {
         let updated = builder
             .send()
             .await
-            .map_err(|error| RiptskError::Unreachable(format_octocrab_error(&error)))?;
+            .map_err(|error| RiptaskError::Unreachable(format_octocrab_error(&error)))?;
         Ok(map_issue(updated))
     }
 
@@ -142,7 +142,7 @@ impl IssueTracker for GithubProvider {
         repo: &str,
         issue_id: u64,
         state_reason: Option<&str>,
-    ) -> Result<(), RiptskError> {
+    ) -> Result<(), RiptaskError> {
         let (owner, repo_name) = self.split_owner_repo(repo)?;
         let issues = self.client.issues(owner, repo_name);
         let mut builder = issues.update(issue_id).state(models::IssueState::Closed);
@@ -152,11 +152,11 @@ impl IssueTracker for GithubProvider {
         builder
             .send()
             .await
-            .map_err(|error| RiptskError::Unreachable(format_octocrab_error(&error)))?;
+            .map_err(|error| RiptaskError::Unreachable(format_octocrab_error(&error)))?;
         Ok(())
     }
 
-    async fn reopen_issue(&self, repo: &str, issue_id: u64) -> Result<(), RiptskError> {
+    async fn reopen_issue(&self, repo: &str, issue_id: u64) -> Result<(), RiptaskError> {
         let (owner, repo_name) = self.split_owner_repo(repo)?;
         self.client
             .issues(owner, repo_name)
@@ -164,18 +164,18 @@ impl IssueTracker for GithubProvider {
             .state(models::IssueState::Open)
             .send()
             .await
-            .map_err(|error| RiptskError::Unreachable(format_octocrab_error(&error)))?;
+            .map_err(|error| RiptaskError::Unreachable(format_octocrab_error(&error)))?;
         Ok(())
     }
 
-    async fn delete_issue(&self, repo: &str, issue_id: u64) -> Result<DeleteOutcome, RiptskError> {
+    async fn delete_issue(&self, repo: &str, issue_id: u64) -> Result<DeleteOutcome, RiptaskError> {
         let (owner, repo_name) = self.split_owner_repo(repo)?;
         let issue = self
             .client
             .issues(owner, repo_name)
             .get(issue_id)
             .await
-            .map_err(|e| RiptskError::Unreachable(format_octocrab_error(&e)))?;
+            .map_err(|e| RiptaskError::Unreachable(format_octocrab_error(&e)))?;
         let node_id = issue.node_id;
 
         let query = r#"mutation($issueId: ID!) {
@@ -200,7 +200,7 @@ impl IssueTracker for GithubProvider {
                         self.close_issue(repo, issue_id, None).await?;
                         return Ok(DeleteOutcome::SoftClosed);
                     }
-                    return Err(RiptskError::Unreachable(format!(
+                    return Err(RiptaskError::Unreachable(format!(
                         "deleteIssue failed: {msg}"
                     )));
                 }
@@ -221,24 +221,24 @@ impl IssueTracker for GithubProvider {
         repo: &str,
         issue_id: u64,
         reason: Option<&str>,
-    ) -> Result<(), RiptskError> {
+    ) -> Result<(), RiptaskError> {
         let (owner, repo_name) = self.split_owner_repo(repo)?;
         let lock_reason = reason.and_then(parse_lock_reason);
         self.client
             .issues(owner, repo_name)
             .lock(issue_id, lock_reason)
             .await
-            .map_err(|e| RiptskError::Unreachable(format_octocrab_error(&e)))?;
+            .map_err(|e| RiptaskError::Unreachable(format_octocrab_error(&e)))?;
         Ok(())
     }
 
-    async fn unlock_issue(&self, repo: &str, issue_id: u64) -> Result<(), RiptskError> {
+    async fn unlock_issue(&self, repo: &str, issue_id: u64) -> Result<(), RiptaskError> {
         let (owner, repo_name) = self.split_owner_repo(repo)?;
         self.client
             .issues(owner, repo_name)
             .unlock(issue_id)
             .await
-            .map_err(|e| RiptskError::Unreachable(format_octocrab_error(&e)))?;
+            .map_err(|e| RiptaskError::Unreachable(format_octocrab_error(&e)))?;
         Ok(())
     }
 
@@ -247,13 +247,13 @@ impl IssueTracker for GithubProvider {
         repo: &str,
         issue_id: u64,
         labels: &[String],
-    ) -> Result<(), RiptskError> {
+    ) -> Result<(), RiptaskError> {
         let (owner, repo_name) = self.split_owner_repo(repo)?;
         self.client
             .issues(owner, repo_name)
             .replace_all_labels(issue_id, labels)
             .await
-            .map_err(|error| RiptskError::Unreachable(format_octocrab_error(&error)))?;
+            .map_err(|error| RiptaskError::Unreachable(format_octocrab_error(&error)))?;
         Ok(())
     }
 }
@@ -267,7 +267,7 @@ impl VersionControl for GithubProvider {
         base: &str,
         title: &str,
         body: &str,
-    ) -> Result<BackendPrRecord, RiptskError> {
+    ) -> Result<BackendPrRecord, RiptaskError> {
         let (owner, repo_name) = self.split_owner_repo(repo)?;
         let pull = self
             .client
@@ -276,18 +276,18 @@ impl VersionControl for GithubProvider {
             .body(body)
             .send()
             .await
-            .map_err(|error| RiptskError::Unreachable(format_octocrab_error(&error)))?;
+            .map_err(|error| RiptaskError::Unreachable(format_octocrab_error(&error)))?;
         map_pull_request(pull, repo)
     }
 
-    async fn get_pr(&self, repo: &str, number: u64) -> Result<BackendPrRecord, RiptskError> {
+    async fn get_pr(&self, repo: &str, number: u64) -> Result<BackendPrRecord, RiptaskError> {
         let (owner, repo_name) = self.split_owner_repo(repo)?;
         let pull = self
             .client
             .pulls(owner, repo_name)
             .get(number)
             .await
-            .map_err(|error| RiptskError::Unreachable(format_octocrab_error(&error)))?;
+            .map_err(|error| RiptaskError::Unreachable(format_octocrab_error(&error)))?;
         map_pull_request(pull, repo)
     }
 
@@ -297,7 +297,7 @@ impl VersionControl for GithubProvider {
         number: u64,
         title: &str,
         body: &str,
-    ) -> Result<BackendPrRecord, RiptskError> {
+    ) -> Result<BackendPrRecord, RiptaskError> {
         let (owner, repo_name) = self.split_owner_repo(repo)?;
         let pull = self
             .client
@@ -307,7 +307,7 @@ impl VersionControl for GithubProvider {
             .body(body)
             .send()
             .await
-            .map_err(|error| RiptskError::Unreachable(format_octocrab_error(&error)))?;
+            .map_err(|error| RiptaskError::Unreachable(format_octocrab_error(&error)))?;
         map_pull_request(pull, repo)
     }
 
@@ -316,7 +316,7 @@ impl VersionControl for GithubProvider {
         repo: &str,
         head: &str,
         base: &str,
-    ) -> Result<Option<BackendPrRecord>, RiptskError> {
+    ) -> Result<Option<BackendPrRecord>, RiptaskError> {
         let (owner, repo_name) = self.split_owner_repo(repo)?;
         let page = self
             .client
@@ -326,7 +326,7 @@ impl VersionControl for GithubProvider {
             .base(base)
             .send()
             .await
-            .map_err(|error| RiptskError::Unreachable(format_octocrab_error(&error)))?;
+            .map_err(|error| RiptaskError::Unreachable(format_octocrab_error(&error)))?;
         let Some(pull) = page.items.into_iter().next() else {
             return Ok(None);
         };
@@ -340,7 +340,7 @@ impl VersionControl for GithubProvider {
         method: MergeMethod,
         commit_title: Option<&str>,
         commit_message: Option<&str>,
-    ) -> Result<(), RiptskError> {
+    ) -> Result<(), RiptaskError> {
         let (owner, repo_name) = self.split_owner_repo(repo)?;
         let pulls = self.client.pulls(owner, repo_name);
         let mut builder = pulls.merge(number).method(match method {
@@ -355,7 +355,7 @@ impl VersionControl for GithubProvider {
             builder = builder.message(message);
         }
         builder.send().await.map_err(|error| {
-            RiptskError::General(format!("failed to merge PR #{number}: {error}"))
+            RiptaskError::General(format!("failed to merge PR #{number}: {error}"))
         })?;
         Ok(())
     }
@@ -364,12 +364,12 @@ impl VersionControl for GithubProvider {
         &self,
         repo: &str,
         number: u64,
-    ) -> Result<PrChecksStatus, RiptskError> {
+    ) -> Result<PrChecksStatus, RiptaskError> {
         let (owner, repo_name) = self.split_owner_repo(repo)?;
         let pr = self.get_pr(repo, number).await?;
         let head_sha = pr
             .head_sha
-            .ok_or_else(|| RiptskError::General("PR head SHA not available".into()))?;
+            .ok_or_else(|| RiptaskError::General("PR head SHA not available".into()))?;
 
         // Check commit statuses (legacy integrations)
         let status_result = self
@@ -447,7 +447,7 @@ impl VersionControl for GithubProvider {
         }
     }
 
-    async fn get_ci_presence(&self, repo: &str) -> Result<CiPresence, RiptskError> {
+    async fn get_ci_presence(&self, repo: &str) -> Result<CiPresence, RiptaskError> {
         let (owner, repo_name) = self.split_owner_repo(repo)?;
 
         // Try GitHub Actions workflows API. This may fail with 403 if the token
@@ -535,7 +535,7 @@ impl VersionControl for GithubProvider {
         branch_name: &str,
         base_ref: &str,
         issue_id: Option<u64>,
-    ) -> Result<(), RiptskError> {
+    ) -> Result<(), RiptaskError> {
         let (owner, repo_name) = self.split_owner_repo(repo)?;
 
         // Resolve base branch to SHA
@@ -546,12 +546,12 @@ impl VersionControl for GithubProvider {
                 base_ref.to_owned(),
             ))
             .await
-            .map_err(|e| RiptskError::Unreachable(format_octocrab_error(&e)))?;
+            .map_err(|e| RiptaskError::Unreachable(format_octocrab_error(&e)))?;
         let sha = match base.object {
             octocrab::models::repos::Object::Commit { sha, .. }
             | octocrab::models::repos::Object::Tag { sha, .. } => sha,
             _ => {
-                return Err(RiptskError::Unreachable(format!(
+                return Err(RiptaskError::Unreachable(format!(
                     "unsupported git ref object for base branch {base_ref}"
                 )));
             }
@@ -564,7 +564,7 @@ impl VersionControl for GithubProvider {
                 .issues(owner, repo_name)
                 .get(id)
                 .await
-                .map_err(|e| RiptskError::Unreachable(format_octocrab_error(&e)))?;
+                .map_err(|e| RiptaskError::Unreachable(format_octocrab_error(&e)))?;
             let issue_node_id = issue.node_id;
 
             // Use createLinkedBranch GraphQL mutation to create branch linked to issue
@@ -585,10 +585,10 @@ impl VersionControl for GithubProvider {
                 .client
                 .graphql(&payload)
                 .await
-                .map_err(|e| RiptskError::Unreachable(format_octocrab_error(&e)))?;
+                .map_err(|e| RiptaskError::Unreachable(format_octocrab_error(&e)))?;
 
             if let Some(errors) = response.get("errors") {
-                return Err(RiptskError::Unreachable(format!(
+                return Err(RiptaskError::Unreachable(format!(
                     "GitHub createLinkedBranch failed: {errors}"
                 )));
             }
@@ -604,9 +604,9 @@ impl VersionControl for GithubProvider {
                 .repos(owner, repo_name)
                 .get()
                 .await
-                .map_err(|e| RiptskError::Unreachable(format_octocrab_error(&e)))?;
+                .map_err(|e| RiptaskError::Unreachable(format_octocrab_error(&e)))?;
             let repo_node_id = repo_info.node_id.ok_or_else(|| {
-                RiptskError::Unreachable(format!("missing node_id for repo {repo}"))
+                RiptaskError::Unreachable(format!("missing node_id for repo {repo}"))
             })?;
             let payload = serde_json::json!({
                 "query": query,
@@ -620,10 +620,10 @@ impl VersionControl for GithubProvider {
                 .client
                 .graphql(&payload)
                 .await
-                .map_err(|e| RiptskError::Unreachable(format_octocrab_error(&e)))?;
+                .map_err(|e| RiptaskError::Unreachable(format_octocrab_error(&e)))?;
 
             if let Some(errors) = response.get("errors") {
-                return Err(RiptskError::Unreachable(format!(
+                return Err(RiptaskError::Unreachable(format!(
                     "GitHub createRef failed: {errors}"
                 )));
             }
@@ -632,20 +632,20 @@ impl VersionControl for GithubProvider {
         Ok(())
     }
 
-    async fn default_branch(&self, repo: &str) -> Result<String, RiptskError> {
+    async fn default_branch(&self, repo: &str) -> Result<String, RiptaskError> {
         let (owner, repo_name) = self.split_owner_repo(repo)?;
         let repository = self
             .client
             .repos(owner, repo_name)
             .get()
             .await
-            .map_err(|error| RiptskError::Unreachable(format_octocrab_error(&error)))?;
+            .map_err(|error| RiptaskError::Unreachable(format_octocrab_error(&error)))?;
         repository
             .default_branch
-            .ok_or_else(|| RiptskError::Unreachable(format!("missing default branch for {repo}")))
+            .ok_or_else(|| RiptaskError::Unreachable(format!("missing default branch for {repo}")))
     }
 
-    async fn delete_branch(&self, repo: &str, branch_name: &str) -> Result<(), RiptskError> {
+    async fn delete_branch(&self, repo: &str, branch_name: &str) -> Result<(), RiptaskError> {
         let (owner, repo_name) = self.split_owner_repo(repo)?;
         self.client
             .repos(owner, repo_name)
@@ -653,7 +653,7 @@ impl VersionControl for GithubProvider {
                 branch_name.to_owned(),
             ))
             .await
-            .map_err(|error| RiptskError::Unreachable(format_octocrab_error(&error)))?;
+            .map_err(|error| RiptaskError::Unreachable(format_octocrab_error(&error)))?;
         Ok(())
     }
 }
@@ -705,11 +705,11 @@ fn map_issue(issue: models::issues::Issue) -> BackendIssueRecord {
 fn map_pull_request(
     pull: models::pulls::PullRequest,
     repo: &str,
-) -> Result<BackendPrRecord, RiptskError> {
+) -> Result<BackendPrRecord, RiptaskError> {
     let url = pull
         .html_url
         .map(|url| url.to_string())
-        .ok_or_else(|| RiptskError::Unreachable(format!("missing PR url for {repo}")))?;
+        .ok_or_else(|| RiptaskError::Unreachable(format!("missing PR url for {repo}")))?;
     let state = if pull.merged_at.is_some() {
         "merged".into()
     } else {
@@ -747,11 +747,11 @@ fn github_state_reason_to_string(reason: models::issues::IssueStateReason) -> St
     }
 }
 
-fn parse_github_issue_state(state: &str) -> Result<models::IssueState, RiptskError> {
+fn parse_github_issue_state(state: &str) -> Result<models::IssueState, RiptaskError> {
     match state {
         "open" => Ok(models::IssueState::Open),
         "closed" => Ok(models::IssueState::Closed),
-        other => Err(RiptskError::Config(format!(
+        other => Err(RiptaskError::Config(format!(
             "unsupported github issue state: {other}"
         ))),
     }
@@ -759,13 +759,13 @@ fn parse_github_issue_state(state: &str) -> Result<models::IssueState, RiptskErr
 
 fn parse_github_state_reason(
     state_reason: &str,
-) -> Result<models::issues::IssueStateReason, RiptskError> {
+) -> Result<models::issues::IssueStateReason, RiptaskError> {
     match state_reason {
         "completed" => Ok(models::issues::IssueStateReason::Completed),
         "not_planned" => Ok(models::issues::IssueStateReason::NotPlanned),
         "reopened" => Ok(models::issues::IssueStateReason::Reopened),
         "duplicate" => Ok(models::issues::IssueStateReason::Duplicate),
-        other => Err(RiptskError::Config(format!(
+        other => Err(RiptaskError::Config(format!(
             "unsupported github issue state reason: {other}"
         ))),
     }

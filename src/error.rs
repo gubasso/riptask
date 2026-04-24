@@ -18,7 +18,7 @@ pub struct ProjectKeyCollision {
 }
 
 #[derive(Debug, Error)]
-pub enum RiptskError {
+pub enum RiptaskError {
     #[error("{0}")]
     General(String),
     #[error("not found: {0}")]
@@ -49,7 +49,7 @@ pub enum RiptskError {
     Other(#[from] anyhow::Error),
 }
 
-impl RiptskError {
+impl RiptaskError {
     pub fn exit_code(&self) -> i32 {
         match self {
             Self::General(_) | Self::Store(_) | Self::Io(_) | Self::Other(_) => 1,
@@ -81,17 +81,17 @@ pub enum StoreError {
 
 #[cfg(test)]
 mod tests {
-    use super::{ProjectKeyCollision, ProjectKeyProjectMeta, RiptskError};
+    use super::{ProjectKeyCollision, ProjectKeyProjectMeta, RiptaskError};
 
     #[test]
     fn exit_codes_match_contract() {
-        assert_eq!(RiptskError::General("x".into()).exit_code(), 1);
-        assert_eq!(RiptskError::NotFound("x".into()).exit_code(), 2);
-        assert_eq!(RiptskError::Conflict("x".into()).exit_code(), 3);
-        assert_eq!(RiptskError::Unreachable("x".into()).exit_code(), 4);
-        assert_eq!(RiptskError::Config("x".into()).exit_code(), 5);
+        assert_eq!(RiptaskError::General("x".into()).exit_code(), 1);
+        assert_eq!(RiptaskError::NotFound("x".into()).exit_code(), 2);
+        assert_eq!(RiptaskError::Conflict("x".into()).exit_code(), 3);
+        assert_eq!(RiptaskError::Unreachable("x".into()).exit_code(), 4);
+        assert_eq!(RiptaskError::Config("x".into()).exit_code(), 5);
         assert_eq!(
-            RiptskError::KeyCollision(Box::new(ProjectKeyCollision {
+            RiptaskError::KeyCollision(Box::new(ProjectKeyCollision {
                 attempted_key: "X".into(),
                 new_project: ProjectKeyProjectMeta {
                     name: "new".into(),
@@ -113,7 +113,7 @@ mod tests {
             .exit_code(),
             5
         );
-        assert_eq!(RiptskError::Unregistered("x".into()).exit_code(), 6);
-        assert_eq!(RiptskError::Auth("x".into()).exit_code(), 7);
+        assert_eq!(RiptaskError::Unregistered("x".into()).exit_code(), 6);
+        assert_eq!(RiptaskError::Auth("x".into()).exit_code(), 7);
     }
 }

@@ -1,5 +1,5 @@
 use crate::config::Config;
-use crate::error::RiptskError;
+use crate::error::RiptaskError;
 use crate::models::RepoProject;
 use crate::services::project_detection;
 use camino::Utf8Path;
@@ -26,7 +26,7 @@ pub fn resolve_scope(
     all_projects: bool,
     cwd: &Utf8Path,
     config: &Config,
-) -> Result<ProjectScope, RiptskError> {
+) -> Result<ProjectScope, RiptaskError> {
     if all_projects {
         return Ok(ProjectScope::AllProjects);
     }
@@ -35,7 +35,7 @@ pub fn resolve_scope(
     }
     match project_detection::detect_from_cwd(cwd, config)? {
         Some(repo_project) => Ok(ProjectScope::CurrentProject(repo_project.name.clone())),
-        None => Err(RiptskError::Config(
+        None => Err(RiptaskError::Config(
             "could not detect project from current directory; use -p <project> or -a to target all projects".into(),
         )),
     }

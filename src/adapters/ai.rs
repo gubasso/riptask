@@ -1,4 +1,4 @@
-use crate::error::RiptskError;
+use crate::error::RiptaskError;
 use regex::Regex;
 use shell_escape::escape;
 use std::borrow::Cow;
@@ -20,20 +20,20 @@ pub struct GeneratedIssueContent {
 }
 
 pub trait AiBackend {
-    fn generate_issue_content(&self, context: &str) -> Result<GeneratedIssueContent, RiptskError>;
-    fn generate_body(&self, context: &str) -> Result<String, RiptskError>;
+    fn generate_issue_content(&self, context: &str) -> Result<GeneratedIssueContent, RiptaskError>;
+    fn generate_body(&self, context: &str) -> Result<String, RiptaskError>;
     fn suggest_project_key(
         &self,
         repo_name: &str,
         backend_type: &str,
         existing_keys: &[String],
-    ) -> Result<String, RiptskError>;
-    fn generate_pr_description(&self, context: &str) -> Result<String, RiptskError>;
-    fn triage(&self, issue_context: &str) -> Result<TriageSuggestion, RiptskError>;
-    fn summarize(&self, issues: &str) -> Result<String, RiptskError>;
-    fn ask(&self, question: &str, context: &str) -> Result<String, RiptskError>;
-    fn update_pr_description(&self, context: &str) -> Result<String, RiptskError>;
-    fn generate_commit_message(&self, diff: &str) -> Result<String, RiptskError>;
+    ) -> Result<String, RiptaskError>;
+    fn generate_pr_description(&self, context: &str) -> Result<String, RiptaskError>;
+    fn triage(&self, issue_context: &str) -> Result<TriageSuggestion, RiptaskError>;
+    fn summarize(&self, issues: &str) -> Result<String, RiptaskError>;
+    fn ask(&self, question: &str, context: &str) -> Result<String, RiptaskError>;
+    fn update_pr_description(&self, context: &str) -> Result<String, RiptaskError>;
+    fn generate_commit_message(&self, diff: &str) -> Result<String, RiptaskError>;
 }
 
 #[derive(Debug, Clone)]
@@ -50,7 +50,7 @@ enum ErrorKind {
 }
 
 impl AiBackend for TemplateAiBackend {
-    fn generate_issue_content(&self, context: &str) -> Result<GeneratedIssueContent, RiptskError> {
+    fn generate_issue_content(&self, context: &str) -> Result<GeneratedIssueContent, RiptaskError> {
         let output = run_ai(
             &self.command_template,
             "Generate a concise issue title and body. Return strict JSON with exactly two keys: \"title\" (string) and \"body\" (string). The \"body\" value must contain ONLY the issue description body itself (no preamble like \"I'll generate...\" or \"Based on the context...\", no framing horizontal rules, no trailing questions or offers to revise, no meta commentary). Do not include any text outside the JSON object.",
@@ -59,7 +59,7 @@ impl AiBackend for TemplateAiBackend {
         parse_issue_content_output(&output)
     }
 
-    fn generate_body(&self, context: &str) -> Result<String, RiptskError> {
+    fn generate_body(&self, context: &str) -> Result<String, RiptaskError> {
         let raw = run_ai(
             &self.command_template,
             concat!(
@@ -88,7 +88,7 @@ impl AiBackend for TemplateAiBackend {
         repo_name: &str,
         backend_type: &str,
         existing_keys: &[String],
-    ) -> Result<String, RiptskError> {
+    ) -> Result<String, RiptaskError> {
         run_ai(
             &self.command_template,
             &format!(
@@ -99,7 +99,7 @@ impl AiBackend for TemplateAiBackend {
         )
     }
 
-    fn generate_pr_description(&self, context: &str) -> Result<String, RiptskError> {
+    fn generate_pr_description(&self, context: &str) -> Result<String, RiptaskError> {
         run_ai(
             &self.command_template,
             "Generate a concise PR description summarizing the changes. Include a summary section and key changes. Do not include the title.",
@@ -107,14 +107,14 @@ impl AiBackend for TemplateAiBackend {
         )
     }
 
-    fn triage(&self, issue_context: &str) -> Result<TriageSuggestion, RiptskError> {
+    fn triage(&self, issue_context: &str) -> Result<TriageSuggestion, RiptaskError> {
         let output = run_ai(
             &self.command_template,
             "Return JSON with keys status, priority, labels.",
             issue_context,
         )?;
         let parsed: serde_json::Value = serde_json::from_str(&output).map_err(|error| {
-            RiptskError::General(format!("invalid AI triage response: {error}"))
+            RiptaskError::General(format!("invalid AI triage response: {error}"))
         })?;
         Ok(TriageSuggestion {
             state: parsed
@@ -138,7 +138,7 @@ impl AiBackend for TemplateAiBackend {
         })
     }
 
-    fn summarize(&self, issues: &str) -> Result<String, RiptskError> {
+    fn summarize(&self, issues: &str) -> Result<String, RiptaskError> {
         run_ai(
             &self.command_template,
             "Summarize issue status concisely.",
@@ -146,7 +146,7 @@ impl AiBackend for TemplateAiBackend {
         )
     }
 
-    fn ask(&self, question: &str, context: &str) -> Result<String, RiptskError> {
+    fn ask(&self, question: &str, context: &str) -> Result<String, RiptaskError> {
         run_ai(
             &self.command_template,
             "Answer the user's question from the provided issue corpus.",
@@ -154,7 +154,7 @@ impl AiBackend for TemplateAiBackend {
         )
     }
 
-    fn update_pr_description(&self, context: &str) -> Result<String, RiptskError> {
+    fn update_pr_description(&self, context: &str) -> Result<String, RiptaskError> {
         run_ai(
             &self.command_template,
             "Update this PR description based on the current changes. Keep it concise and focused on implementation details.",
@@ -162,7 +162,7 @@ impl AiBackend for TemplateAiBackend {
         )
     }
 
-    fn generate_commit_message(&self, diff: &str) -> Result<String, RiptskError> {
+    fn generate_commit_message(&self, diff: &str) -> Result<String, RiptaskError> {
         run_ai(
             &self.command_template,
             concat!(
@@ -198,10 +198,10 @@ struct GeneratedIssueContentResponse {
     body: String,
 }
 
-fn parse_issue_content_output(output: &str) -> Result<GeneratedIssueContent, RiptskError> {
+fn parse_issue_content_output(output: &str) -> Result<GeneratedIssueContent, RiptaskError> {
     let trimmed = output.trim();
     if trimmed.is_empty() {
-        return Err(RiptskError::General(
+        return Err(RiptaskError::General(
             "AI returned empty output for issue generation".into(),
         ));
     }
@@ -211,12 +211,12 @@ fn parse_issue_content_output(output: &str) -> Result<GeneratedIssueContent, Rip
             let title = parsed.title.trim().to_owned();
             let body = sanitize_issue_body(&parsed.body).unwrap_or_default();
             if title.is_empty() {
-                return Err(RiptskError::General(
+                return Err(RiptaskError::General(
                     "AI issue generation returned an empty title".into(),
                 ));
             }
             if body.is_empty() {
-                return Err(RiptskError::General(
+                return Err(RiptaskError::General(
                     "AI issue generation returned an empty body".into(),
                 ));
             }
@@ -228,14 +228,14 @@ fn parse_issue_content_output(output: &str) -> Result<GeneratedIssueContent, Rip
                 let title = retry.title.trim().to_owned();
                 let body = sanitize_issue_body(&retry.body).unwrap_or_default();
                 if title.is_empty() || body.is_empty() {
-                    return Err(RiptskError::General(
+                    return Err(RiptaskError::General(
                         "AI issue generation returned empty title or body".into(),
                     ));
                 }
                 return Ok(GeneratedIssueContent { title, body });
             }
             if trimmed.starts_with('{') || stripped.starts_with('{') {
-                return Err(RiptskError::General(format!(
+                return Err(RiptaskError::General(format!(
                     "AI returned malformed JSON for issue generation: {json_err}"
                 )));
             }
@@ -257,7 +257,7 @@ fn strip_markdown_fences(text: &str) -> String {
     trimmed.to_owned()
 }
 
-fn sanitize_issue_body(raw: &str) -> Result<String, RiptskError> {
+fn sanitize_issue_body(raw: &str) -> Result<String, RiptaskError> {
     let trimmed = raw.trim();
     let lines: Vec<&str> = trimmed.lines().collect();
 
@@ -298,7 +298,7 @@ fn sanitize_issue_body(raw: &str) -> Result<String, RiptskError> {
 
     let sanitized = lines[start..end].join("\n").trim().to_owned();
     if sanitized.is_empty() {
-        return Err(RiptskError::General(
+        return Err(RiptaskError::General(
             "AI body sanitization removed all content".into(),
         ));
     }
@@ -355,33 +355,33 @@ fn is_horizontal_rule(line: &str) -> bool {
     line.trim() == "---"
 }
 
-fn fallback_issue_content(output: &str) -> Result<GeneratedIssueContent, RiptskError> {
+fn fallback_issue_content(output: &str) -> Result<GeneratedIssueContent, RiptaskError> {
     let body = sanitize_issue_body(output).unwrap_or_default();
     let Some(first_line) = body.lines().find(|line| !line.trim().is_empty()) else {
-        return Err(RiptskError::General(
+        return Err(RiptaskError::General(
             "AI issue generation fallback could not derive a title from empty output".into(),
         ));
     };
     let title = first_line.trim().trim_start_matches('#').trim().to_owned();
     if title.is_empty() {
-        return Err(RiptskError::General(
+        return Err(RiptaskError::General(
             "AI issue generation fallback derived an empty title".into(),
         ));
     }
     Ok(GeneratedIssueContent { title, body })
 }
 
-fn run_ai(template: &str, system: &str, input: &str) -> Result<String, RiptskError> {
+fn run_ai(template: &str, system: &str, input: &str) -> Result<String, RiptaskError> {
     let mut input_tempfile = tempfile::NamedTempFile::new()
         .map_err(|e| {
-            RiptskError::General(format!(
+            RiptaskError::General(format!(
                 "failed to create AI input temp file: {e}\n  hint: check filesystem permissions and temporary directory availability"
             ))
         })?;
     input_tempfile
         .write_all(input.as_bytes())
         .map_err(|e| {
-            RiptskError::General(format!(
+            RiptaskError::General(format!(
                 "failed to write AI input temp file: {e}\n  hint: check filesystem permissions and temporary directory availability"
             ))
         })?;
@@ -393,12 +393,12 @@ fn run_ai(template: &str, system: &str, input: &str) -> Result<String, RiptskErr
     let mut env = minijinja::Environment::new();
     env.set_undefined_behavior(minijinja::UndefinedBehavior::Strict);
     env.add_template("cmd", template).map_err(|e| {
-        RiptskError::Config(format!(
+        RiptaskError::Config(format!(
             "invalid ai.command template: {e}\n  hint: check ai.command syntax in riptsk.yaml"
         ))
     })?;
     let tmpl = env.get_template("cmd").map_err(|e| {
-        RiptskError::Config(format!(
+        RiptaskError::Config(format!(
             "invalid ai.command template: {e}\n  hint: check ai.command syntax in riptsk.yaml"
         ))
     })?;
@@ -409,7 +409,7 @@ fn run_ai(template: &str, system: &str, input: &str) -> Result<String, RiptskErr
             input_file => &input_file_path,
         })
         .map_err(|e| {
-            RiptskError::Config(format!(
+            RiptaskError::Config(format!(
                 "failed to render ai.command template: {e}\n  hint: check ai.command syntax in riptsk.yaml"
             ))
         })?;
@@ -419,7 +419,7 @@ fn run_ai(template: &str, system: &str, input: &str) -> Result<String, RiptskErr
         .arg(&rendered)
         .output()
         .map_err(|e| {
-            RiptskError::General(format!(
+            RiptaskError::General(format!(
                 "failed to execute ai.command via sh -c: {e}\n  hint: check that your shell environment and ai.command are valid"
             ))
         })?;
@@ -450,10 +450,10 @@ fn run_ai(template: &str, system: &str, input: &str) -> Result<String, RiptskErr
         }
         detail.push_str(&format!("\n  hint: {hint}"));
         match kind {
-            ErrorKind::Auth => Err(RiptskError::Auth(detail)),
-            ErrorKind::Config => Err(RiptskError::Config(detail)),
-            ErrorKind::Network => Err(RiptskError::Unreachable(detail)),
-            ErrorKind::Execution => Err(RiptskError::General(detail)),
+            ErrorKind::Auth => Err(RiptaskError::Auth(detail)),
+            ErrorKind::Config => Err(RiptaskError::Config(detail)),
+            ErrorKind::Network => Err(RiptaskError::Unreachable(detail)),
+            ErrorKind::Execution => Err(RiptaskError::General(detail)),
         }
     }
 }
@@ -769,7 +769,7 @@ mod tests {
             "in",
         );
         match result {
-            Err(RiptskError::Auth(message)) => assert!(message.contains("hint:")),
+            Err(RiptaskError::Auth(message)) => assert!(message.contains("hint:")),
             other => panic!("expected auth error, got {other:?}"),
         }
     }
@@ -777,7 +777,7 @@ mod tests {
     #[test]
     fn nonexistent_ai_command_maps_to_config() {
         let result = run_ai("nonexistent_command_xyz_12345 {{input}}", "sys", "in");
-        assert!(matches!(result, Err(RiptskError::Config(_))));
+        assert!(matches!(result, Err(RiptaskError::Config(_))));
     }
 
     #[test]
@@ -811,14 +811,14 @@ mod tests {
     #[test]
     fn auth_error_on_stdout_maps_to_auth() {
         let result = run_ai("echo '401 unauthorized' ; exit 1", "sys", "in");
-        assert!(matches!(result, Err(RiptskError::Auth(_))));
+        assert!(matches!(result, Err(RiptaskError::Auth(_))));
     }
 
     #[test]
     fn token_limit_errors_are_not_auth() {
         let result = run_ai("echo 'max tokens exceeded' >&2; exit 1", "sys", "in");
         assert!(
-            !matches!(result, Err(RiptskError::Auth(_))),
+            !matches!(result, Err(RiptaskError::Auth(_))),
             "token limit error should not be classified as auth"
         );
     }

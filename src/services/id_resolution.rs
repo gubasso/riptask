@@ -2,7 +2,7 @@ use crate::adapters::git::{CliGit, GitBackend};
 use crate::adapters::picker::{FzfPicker, IssueDisplayMode, Picker, format_issue_plain};
 use crate::cli::{LsArgs, ScopeArgs};
 use crate::config::Config;
-use crate::error::{RiptskError, StoreError};
+use crate::error::{RiptaskError, StoreError};
 use crate::paths::AppPaths;
 use crate::services::{issue_ids, issue_service::IssueService, project_detection};
 use crate::storage::{frontmatter, issue_store};
@@ -13,7 +13,7 @@ pub fn resolve_id(
     config: &Config,
     cwd: &Utf8Path,
     input: &str,
-) -> Result<String, RiptskError> {
+) -> Result<String, RiptaskError> {
     if input.contains("--") {
         return Ok(input.to_owned());
     }
@@ -24,7 +24,7 @@ pub fn resolve_id(
 
     let number = input
         .parse::<u64>()
-        .map_err(|_| RiptskError::General(format!("invalid numeric issue ID: {input}")))?;
+        .map_err(|_| RiptaskError::General(format!("invalid numeric issue ID: {input}")))?;
     let mut detected_candidate = None;
 
     if let Some(backend) = project_detection::detect_from_cwd(cwd, config)? {
@@ -53,7 +53,7 @@ pub fn resolve_id(
         0 => Err(
             StoreError::FileNotFound(detected_candidate.unwrap_or_else(|| input.to_owned())).into(),
         ),
-        _ => Err(RiptskError::General(format!(
+        _ => Err(RiptaskError::General(format!(
             "ambiguous numeric ID {number}: matches {}",
             matches.join(", ")
         ))),
@@ -66,7 +66,7 @@ pub fn require_id(
     cwd: &Utf8Path,
     id: Option<String>,
     scope_args: &ScopeArgs,
-) -> Result<Option<String>, RiptskError> {
+) -> Result<Option<String>, RiptaskError> {
     if let Some(input) = id {
         return resolve_id(paths, config, cwd, &input).map(Some);
     }
@@ -108,7 +108,7 @@ pub fn resolve_or_pick_id(
     id: Option<String>,
     pick: bool,
     scope_args: &ScopeArgs,
-) -> Result<Option<String>, RiptskError> {
+) -> Result<Option<String>, RiptaskError> {
     if let Some(input) = id {
         return resolve_id(paths, config, cwd, &input).map(Some);
     }
@@ -123,8 +123,8 @@ pub fn resolve_or_pick_id(
     }
 }
 
-pub(crate) fn current_repo() -> Result<std::path::PathBuf, RiptskError> {
-    std::env::current_dir().map_err(RiptskError::from)
+pub(crate) fn current_repo() -> Result<std::path::PathBuf, RiptaskError> {
+    std::env::current_dir().map_err(RiptaskError::from)
 }
 
 pub(crate) fn cwd_utf8() -> camino::Utf8PathBuf {
@@ -139,7 +139,7 @@ pub(crate) fn cwd_utf8() -> camino::Utf8PathBuf {
 pub(crate) fn find_issue_for_branch(
     paths: &AppPaths,
     branch: &str,
-) -> Result<camino::Utf8PathBuf, RiptskError> {
+) -> Result<camino::Utf8PathBuf, RiptaskError> {
     for path in issue_store::list_issues(paths)? {
         match frontmatter::try_load_issue(path.as_std_path()) {
             frontmatter::IssueLoadResult::Ok(issue) => {
@@ -166,10 +166,10 @@ pub(crate) fn find_issue_for_branch(
                     }
                 }
             }
-            frontmatter::IssueLoadResult::Err(error) => return Err(RiptskError::Other(error)),
+            frontmatter::IssueLoadResult::Err(error) => return Err(RiptaskError::Other(error)),
         }
     }
-    Err(RiptskError::NotFound(format!(
+    Err(RiptaskError::NotFound(format!(
         "no issue found for branch {branch}"
     )))
 }
@@ -177,16 +177,16 @@ pub(crate) fn find_issue_for_branch(
 /// Resolve the issue id associated with a specific git branch, if any.
 ///
 /// Matches `frontmatter.branch` or `frontmatter.id_slug` via
-/// `find_issue_for_branch`. Returns `RiptskError::NotFound` when no issue is
+/// `find_issue_for_branch`. Returns `RiptaskError::NotFound` when no issue is
 /// associated with `branch`.
-pub(crate) fn id_for_branch(paths: &AppPaths, branch: &str) -> Result<String, RiptskError> {
+pub(crate) fn id_for_branch(paths: &AppPaths, branch: &str) -> Result<String, RiptaskError> {
     let path = find_issue_for_branch(paths, branch)?;
     Ok(path.file_stem().unwrap_or_default().to_string())
 }
 
 /// Resolve the issue id associated with the current git branch in the process
 /// cwd.
-pub fn id_for_current_branch(paths: &AppPaths) -> Result<String, RiptskError> {
+pub fn id_for_current_branch(paths: &AppPaths) -> Result<String, RiptaskError> {
     let repo = current_repo()?;
     let branch = CliGit::new().current_branch(repo.as_path())?;
     id_for_branch(paths, &branch)
@@ -196,7 +196,7 @@ pub fn id_for_current_branch(paths: &AppPaths) -> Result<String, RiptskError> {
 mod tests {
     use super::{id_for_branch, resolve_id};
     use crate::config::{Config, default_config};
-    use crate::error::RiptskError;
+    use crate::error::RiptaskError;
     use crate::models::{BackendKind, RepoProject, TasksBackendSpec, VCBackendSpec};
     use crate::paths::AppPaths;
     use camino::Utf8PathBuf;
@@ -326,7 +326,7 @@ mod tests {
 
         let error = id_for_branch(&paths, "feature/missing").expect_err("missing branch");
 
-        assert!(matches!(error, RiptskError::NotFound(_)));
+        assert!(matches!(error, RiptaskError::NotFound(_)));
     }
 
     fn app_paths(root: &std::path::Path) -> AppPaths {

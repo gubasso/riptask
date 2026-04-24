@@ -1,7 +1,7 @@
 use crate::adapters::git::CliGit;
 use crate::cli::{NewArgs, RecurArgs, RecurNewArgs, RecurSubcommand};
 use crate::config::{load_config, parse_priority, parse_state, save_config};
-use crate::error::RiptskError;
+use crate::error::RiptaskError;
 use crate::models::{RecurrenceFrequency, RecurringDef};
 use crate::paths::AppPaths;
 use crate::services::auto_commit::maybe_auto_commit;
@@ -12,7 +12,7 @@ use chrono::{NaiveDate, Utc};
 use comfy_table::{Attribute, Cell, Color, ContentArrangement, Table, presets::NOTHING};
 use std::io::IsTerminal;
 
-pub fn run(paths: &AppPaths, args: RecurArgs) -> Result<(), RiptskError> {
+pub fn run(paths: &AppPaths, args: RecurArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
     match args.subcommand.unwrap_or(RecurSubcommand::List) {
         RecurSubcommand::List => list(paths),
@@ -22,7 +22,7 @@ pub fn run(paths: &AppPaths, args: RecurArgs) -> Result<(), RiptskError> {
     }
 }
 
-fn list(paths: &AppPaths) -> Result<(), RiptskError> {
+fn list(paths: &AppPaths) -> Result<(), RiptaskError> {
     let config = load_config(paths.config_path().as_std_path())?;
     if std::io::stdout().is_terminal() {
         let mut table = Table::new();
@@ -65,13 +65,13 @@ fn list(paths: &AppPaths) -> Result<(), RiptskError> {
     Ok(())
 }
 
-fn run_due(paths: &AppPaths, date: Option<String>) -> Result<(), RiptskError> {
+fn run_due(paths: &AppPaths, date: Option<String>) -> Result<(), RiptaskError> {
     let mut config = load_config(paths.config_path().as_std_path())?;
     let today = date
         .as_deref()
         .map(str::parse::<NaiveDate>)
         .transpose()
-        .map_err(|error| RiptskError::Other(anyhow::Error::new(error)))?
+        .map_err(|error| RiptaskError::Other(anyhow::Error::new(error)))?
         .unwrap_or_else(|| Utc::now().date_naive());
 
     let existing_issues = issue_store::list_issues(paths)?;
@@ -88,7 +88,7 @@ fn run_due(paths: &AppPaths, date: Option<String>) -> Result<(), RiptskError> {
     let mut changed_paths = vec![paths.config_path()];
     let mut last_issue = None;
     for definition in config.recurring.clone() {
-        if !is_due(&definition, today).map_err(RiptskError::Other)? {
+        if !is_due(&definition, today).map_err(RiptaskError::Other)? {
             continue;
         }
         let expanded_title = expand_tokens(&definition.title_pattern, today);
@@ -164,22 +164,22 @@ fn run_due(paths: &AppPaths, date: Option<String>) -> Result<(), RiptskError> {
     Ok(())
 }
 
-fn skip(paths: &AppPaths, recur_id: Option<String>) -> Result<(), RiptskError> {
-    let recur_id = recur_id.ok_or_else(|| RiptskError::General("missing recurrence id".into()))?;
+fn skip(paths: &AppPaths, recur_id: Option<String>) -> Result<(), RiptaskError> {
+    let recur_id = recur_id.ok_or_else(|| RiptaskError::General("missing recurrence id".into()))?;
     let mut config = load_config(paths.config_path().as_std_path())?;
     let today = Utc::now().date_naive();
     update_last_run(&mut config, &recur_id, today);
     save_config(paths.config_path().as_std_path(), &config)
 }
 
-fn new_recur(paths: &AppPaths, args: RecurNewArgs) -> Result<(), RiptskError> {
+fn new_recur(paths: &AppPaths, args: RecurNewArgs) -> Result<(), RiptaskError> {
     let mut config = load_config(paths.config_path().as_std_path())?;
     if config
         .recurring
         .iter()
         .any(|definition| definition.id == args.id)
     {
-        return Err(RiptskError::Config(format!(
+        return Err(RiptaskError::Config(format!(
             "duplicate recurrence id: {}",
             args.id
         )));
@@ -191,7 +191,7 @@ fn new_recur(paths: &AppPaths, args: RecurNewArgs) -> Result<(), RiptskError> {
         "monthly" => RecurrenceFrequency::Monthly,
         "yearly" => RecurrenceFrequency::Yearly,
         _ => {
-            return Err(RiptskError::Config(format!(
+            return Err(RiptaskError::Config(format!(
                 "invalid frequency: {}",
                 args.frequency
             )));
@@ -203,25 +203,25 @@ fn new_recur(paths: &AppPaths, args: RecurNewArgs) -> Result<(), RiptskError> {
         .as_deref()
         .map(parse_state)
         .transpose()
-        .map_err(RiptskError::Other)?;
+        .map_err(RiptaskError::Other)?;
     let priority = args
         .priority
         .as_deref()
         .map(parse_priority)
         .transpose()
-        .map_err(RiptskError::Other)?;
+        .map_err(RiptaskError::Other)?;
 
     if let Some(start) = args.start.as_deref() {
         start
             .parse::<NaiveDate>()
-            .map_err(|error| RiptskError::Config(error.to_string()))?;
+            .map_err(|error| RiptaskError::Config(error.to_string()))?;
     }
     if let Some(end) = args.end.as_deref() {
         end.parse::<NaiveDate>()
-            .map_err(|error| RiptskError::Config(error.to_string()))?;
+            .map_err(|error| RiptaskError::Config(error.to_string()))?;
     }
     if matches!(frequency, RecurrenceFrequency::Weekly) && args.day_of_week.is_none() {
-        return Err(RiptskError::Config(
+        return Err(RiptaskError::Config(
             "day_of_week is required for weekly recurrences".into(),
         ));
     }
@@ -236,20 +236,20 @@ fn new_recur(paths: &AppPaths, args: RecurNewArgs) -> Result<(), RiptskError> {
             "sunday",
         ];
         if !valid.contains(&day.to_lowercase().as_str()) {
-            return Err(RiptskError::Config(format!(
+            return Err(RiptaskError::Config(format!(
                 "invalid day_of_week: {day} (expected: monday-sunday)"
             )));
         }
     }
     if matches!(frequency, RecurrenceFrequency::Monthly) && args.day_of_month.is_none() {
-        return Err(RiptskError::Config(
+        return Err(RiptaskError::Config(
             "day_of_month is required for monthly recurrences".into(),
         ));
     }
     if let Some(day) = args.day_of_month
         && !(1..=31).contains(&day)
     {
-        return Err(RiptskError::Config(format!(
+        return Err(RiptaskError::Config(format!(
             "day_of_month must be 1-31, got {day}"
         )));
     }

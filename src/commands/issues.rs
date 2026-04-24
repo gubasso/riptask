@@ -10,7 +10,7 @@ use crate::domain::issue::{
     GithubIssueMeta, GitlabIssueMeta, IssueDocument, IssueFrontmatter, IssueState, JiraIssueMeta,
     Priority,
 };
-use crate::error::RiptskError;
+use crate::error::RiptaskError;
 use crate::models::{BackendKind, RepoProject};
 use crate::paths::AppPaths;
 use crate::services::auto_commit::maybe_auto_commit;
@@ -25,7 +25,7 @@ use comfy_table::{
 use console::style;
 use std::io::IsTerminal;
 
-pub fn show(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
+pub fn show(paths: &AppPaths, args: IdArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
     let IdArgs { scope, id, pick } = args;
     let config = load_config(paths.config_path().as_std_path())?;
@@ -50,7 +50,7 @@ pub fn show(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
     Ok(())
 }
 
-pub fn path(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
+pub fn path(paths: &AppPaths, args: IdArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
     let IdArgs { scope, id, pick } = args;
     let config = load_config(paths.config_path().as_std_path())?;
@@ -68,7 +68,7 @@ pub fn path(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
     Ok(())
 }
 
-pub fn list(paths: &AppPaths, args: LsArgs) -> Result<(), RiptskError> {
+pub fn list(paths: &AppPaths, args: LsArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
     let config = load_config(paths.config_path().as_std_path())?;
     let cwd = camino::Utf8PathBuf::from(
@@ -256,7 +256,7 @@ fn priority_color(priority: Option<&Priority>) -> Color {
 pub(crate) async fn create_issue_from_args(
     paths: &AppPaths,
     args: NewArgs,
-) -> Result<(IssueDocument, camino::Utf8PathBuf), RiptskError> {
+) -> Result<(IssueDocument, camino::Utf8PathBuf), RiptaskError> {
     paths.require_initialized()?;
     let config = load_config(paths.config_path().as_std_path())?;
     let mut args = args;
@@ -282,7 +282,7 @@ pub(crate) async fn create_issue_from_args(
         prompts
             .input("Describe the task for AI", None)
             .map_err(|error| {
-                RiptskError::General(format!(
+                RiptaskError::General(format!(
                     "AI issue generation failed and no --title provided\n{error}"
                 ))
             })
@@ -309,7 +309,7 @@ pub(crate) async fn create_issue_from_args(
                 }
             }
             Err(error) => {
-                return Err(RiptskError::General(format!(
+                return Err(RiptaskError::General(format!(
                     "AI issue generation failed and no --title provided\n{error}"
                 )));
             }
@@ -348,7 +348,7 @@ pub(crate) async fn create_issue_from_args(
             .projects
             .iter()
             .find(|repo_project| repo_project.name == draft.project)
-            .ok_or_else(|| RiptskError::Unregistered(draft.project.clone()))?;
+            .ok_or_else(|| RiptaskError::Unregistered(draft.project.clone()))?;
         create_backend_issue(paths, &service, &draft, repo_project).await?
     } else {
         create_local_issue(&service, &draft)?
@@ -382,7 +382,7 @@ pub(crate) async fn create_issue_from_args(
     Ok((issue, issue_path))
 }
 
-pub async fn new(paths: &AppPaths, args: NewArgs) -> Result<(), RiptskError> {
+pub async fn new(paths: &AppPaths, args: NewArgs) -> Result<(), RiptaskError> {
     let (issue, _path) = create_issue_from_args(paths, args).await?;
     print_issue_created(&issue);
     Ok(())
@@ -393,7 +393,7 @@ fn resolve_ai_context(
     config: &crate::config::Config,
     project: Option<&str>,
     cwd: &camino::Utf8Path,
-) -> Result<Option<String>, RiptskError> {
+) -> Result<Option<String>, RiptaskError> {
     let repo_path = resolve_project_repo_path(config, project, cwd);
     match git.has_uncommitted_changes(repo_path.as_std_path()) {
         Ok(true) => {
@@ -527,7 +527,7 @@ fn style_with_color(text: String, color: Color) -> console::StyledObject<String>
     }
 }
 
-pub fn edit(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
+pub fn edit(paths: &AppPaths, args: IdArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
     let IdArgs { scope, id, pick } = args;
     let config = load_config(paths.config_path().as_std_path())?;
@@ -551,7 +551,7 @@ pub fn edit(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
     }
     IssueService::new(paths, &config).edit_issue(Some(id.clone()))?;
     if !has_conflict {
-        let issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
+        let issue = frontmatter::load_issue(path.as_std_path()).map_err(RiptaskError::Other)?;
         maybe_auto_commit(
             &config,
             &CliGit::new(),
@@ -563,7 +563,7 @@ pub fn edit(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
     Ok(())
 }
 
-pub fn set_status(paths: &AppPaths, args: StatusArgs) -> Result<(), RiptskError> {
+pub fn set_status(paths: &AppPaths, args: StatusArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
     let StatusArgs {
         scope,
@@ -587,7 +587,7 @@ pub fn set_status(paths: &AppPaths, args: StatusArgs) -> Result<(), RiptskError>
     else {
         return Ok(());
     };
-    let status = status.ok_or_else(|| RiptskError::General("<status> required".into()))?;
+    let status = status.ok_or_else(|| RiptaskError::General("<status> required".into()))?;
     let path = issue_store::find_issue(paths, &id)?;
     let issue = load_issue_or_conflict_error(path.as_std_path(), &id)?;
     IssueService::new(paths, &config).move_issue(&id, &status)?;
@@ -601,7 +601,7 @@ pub fn set_status(paths: &AppPaths, args: StatusArgs) -> Result<(), RiptskError>
     Ok(())
 }
 
-pub fn close(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
+pub fn close(paths: &AppPaths, args: IdArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
     set_status(
         paths,
@@ -614,7 +614,7 @@ pub fn close(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
     )
 }
 
-pub fn reopen(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
+pub fn reopen(paths: &AppPaths, args: IdArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
     set_status(
         paths,
@@ -627,7 +627,7 @@ pub fn reopen(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
     )
 }
 
-pub fn remove(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
+pub fn remove(paths: &AppPaths, args: IdArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
     let IdArgs { scope, id, pick } = args;
     let config = load_config(paths.config_path().as_std_path())?;
@@ -648,7 +648,7 @@ pub fn remove(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
             paths,
             &crate::domain::backend_state::backend_state_key(provider, &repo, issue_id),
         )
-        .map_err(RiptskError::Other)?;
+        .map_err(RiptaskError::Other)?;
     }
     IssueService::new(paths, &config).remove_issue(&id)?;
     maybe_auto_commit(
@@ -666,12 +666,12 @@ async fn create_backend_issue(
     service: &IssueService<'_>,
     draft: &IssueDraft,
     repo_project: &RepoProject,
-) -> Result<IssueDocument, RiptskError> {
+) -> Result<IssueDocument, RiptaskError> {
     let provider = crate::services::backend_mapping::build_issue_tracker(repo_project)?;
     let repo = match repo_project.tasks_backend.kind {
         BackendKind::Github | BackendKind::Gitlab => {
             repo_project.tasks_backend.repo.as_deref().ok_or_else(|| {
-                RiptskError::Config(format!(
+                RiptaskError::Config(format!(
                     "RepoProject {} is missing TasksBackend repo",
                     repo_project.name
                 ))
@@ -682,13 +682,13 @@ async fn create_backend_issue(
             .jira_project
             .as_deref()
             .ok_or_else(|| {
-                RiptskError::Config(format!(
+                RiptaskError::Config(format!(
                     "RepoProject {} is missing JiraProject",
                     repo_project.name
                 ))
             })?,
         BackendKind::Local => {
-            return Err(RiptskError::Config(format!(
+            return Err(RiptaskError::Config(format!(
                 "RepoProject {} does not have a hosted TasksBackend",
                 repo_project.name
             )));
@@ -797,7 +797,7 @@ async fn create_backend_issue(
     };
     service.persist_issue(&document)?;
     cache::seed_backend_state_entry(paths, provider_name(repo_project), repo, &record)
-        .map_err(RiptskError::Other)?;
+        .map_err(RiptaskError::Other)?;
     tracing::info!(
         issue_id = %document.frontmatter.id,
         project = %document.frontmatter.project,
@@ -810,7 +810,7 @@ async fn create_backend_issue(
 fn create_local_issue(
     service: &IssueService<'_>,
     draft: &IssueDraft,
-) -> Result<IssueDocument, RiptskError> {
+) -> Result<IssueDocument, RiptaskError> {
     let document = service.build_local_issue_document(draft)?;
     service.persist_issue(&document)?;
     Ok(document)
@@ -847,10 +847,10 @@ fn backend_delete_target(issue: &IssueDocument) -> Option<(&'static str, String,
 pub fn load_issue_or_conflict_error(
     path: &std::path::Path,
     id: &str,
-) -> Result<IssueDocument, RiptskError> {
+) -> Result<IssueDocument, RiptaskError> {
     match frontmatter::try_load_issue(path) {
         frontmatter::IssueLoadResult::Ok(document) => Ok(*document),
-        frontmatter::IssueLoadResult::Conflict { .. } => Err(RiptskError::Conflict(format!(
+        frontmatter::IssueLoadResult::Conflict { .. } => Err(RiptaskError::Conflict(format!(
             "issue {id} has unresolved sync conflicts\n\n  \
              Edit the file to resolve:\n    \
              tsk edit {id}\n\n  \
@@ -860,11 +860,11 @@ pub fn load_issue_or_conflict_error(
              tsk sync resolve {id} --take-local\n    \
              tsk sync resolve {id} --take-remote"
         ))),
-        frontmatter::IssueLoadResult::Err(error) => Err(RiptskError::Other(error)),
+        frontmatter::IssueLoadResult::Err(error) => Err(RiptaskError::Other(error)),
     }
 }
 
-fn list_conflicted_ids(paths: &AppPaths) -> Result<Vec<String>, RiptskError> {
+fn list_conflicted_ids(paths: &AppPaths) -> Result<Vec<String>, RiptaskError> {
     let mut conflicts = Vec::new();
     for path in issue_store::list_issues(paths)? {
         let content = std::fs::read_to_string(&path)?;

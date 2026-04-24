@@ -1,4 +1,4 @@
-use crate::error::{ProjectKeyCollision, ProjectKeyProjectMeta, RiptskError};
+use crate::error::{ProjectKeyCollision, ProjectKeyProjectMeta, RiptaskError};
 use crate::models::{BackendKind, RepoProject};
 use crate::paths::AppPaths;
 use crate::storage::{frontmatter, issue_store};
@@ -81,7 +81,7 @@ pub fn next_local_sequence(paths: &AppPaths, scope: &str) -> Result<u64> {
 
 /// Populate `repo_project.key` on every group member so that all RepoProjects pointing
 /// at the same logical unit resolve to the same effective key at runtime.
-pub fn normalize_backend_keys(repo_projects: &mut [RepoProject]) -> Result<(), RiptskError> {
+pub fn normalize_backend_keys(repo_projects: &mut [RepoProject]) -> Result<(), RiptaskError> {
     let mut canonical: HashMap<String, String> = HashMap::new();
     let mut errors: Option<(String, Vec<String>)> = None;
     {
@@ -117,7 +117,7 @@ pub fn normalize_backend_keys(repo_projects: &mut [RepoProject]) -> Result<(), R
         }
     }
     if let Some((name, keys)) = errors {
-        return Err(RiptskError::Config(format!(
+        return Err(RiptaskError::Config(format!(
             "logical RepoProject '{}' declares multiple keys: {}",
             name,
             keys.join(", ")
@@ -134,7 +134,7 @@ pub fn normalize_backend_keys(repo_projects: &mut [RepoProject]) -> Result<(), R
 
 pub fn validate_no_key_collisions(
     repo_projects: &[RepoProject],
-) -> std::result::Result<(), RiptskError> {
+) -> std::result::Result<(), RiptaskError> {
     let mut groups: HashMap<String, Vec<&RepoProject>> = HashMap::new();
     for repo_project in repo_projects {
         groups
@@ -148,14 +148,14 @@ pub fn validate_no_key_collisions(
         let representative = members
             .first()
             .copied()
-            .ok_or_else(|| RiptskError::Config("empty RepoProject group".into()))?;
+            .ok_or_else(|| RiptaskError::Config("empty RepoProject group".into()))?;
         let explicit_keys = members
             .iter()
             .filter_map(|repo_project| repo_project.key.as_deref())
             .map(str::to_owned)
             .collect::<HashSet<_>>();
         if explicit_keys.len() > 1 {
-            return Err(RiptskError::Config(format!(
+            return Err(RiptaskError::Config(format!(
                 "logical RepoProject '{}' declares multiple keys: {}",
                 representative.name,
                 explicit_keys.into_iter().collect::<Vec<_>>().join(", ")
@@ -166,7 +166,7 @@ pub fn validate_no_key_collisions(
             .next()
             .unwrap_or_else(|| effective_key(representative));
         if let Some(existing) = seen.insert(key.clone(), representative) {
-            return Err(RiptskError::KeyCollision(Box::new(ProjectKeyCollision {
+            return Err(RiptaskError::KeyCollision(Box::new(ProjectKeyCollision {
                 attempted_key: key,
                 new_project: project_meta(representative),
                 conflicting_project: project_meta(existing),
@@ -281,7 +281,7 @@ mod tests {
         MAX_KEY_LEN, derive_default_key, effective_key, normalize_backend_keys,
         validate_explicit_key_syntax, validate_no_key_collisions,
     };
-    use crate::error::RiptskError;
+    use crate::error::RiptaskError;
     use crate::models::{BackendKind, RepoProject, TasksBackendSpec, VCBackendSpec};
 
     fn repo_project(
@@ -461,7 +461,7 @@ mod tests {
             None,
         );
         let error = validate_no_key_collisions(&[first, second]).expect_err("collision");
-        assert!(matches!(error, RiptskError::KeyCollision(_)));
+        assert!(matches!(error, RiptaskError::KeyCollision(_)));
     }
 
     #[test]
