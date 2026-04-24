@@ -123,11 +123,11 @@ pub fn validate_config(config: &mut Config) -> Result<(), RiptaskError> {
     issue_ids::validate_no_key_collisions(&config.projects)?;
     require_unique(
         config.projects.iter().map(|project| project.name.as_str()),
-        "duplicate RepoProject name in riptsk.yaml",
+        "duplicate RepoProject name in riptask.yaml",
     )?;
     require_unique(
         config.boards.iter().map(|board| board.name.as_str()),
-        "duplicate board name in riptsk.yaml",
+        "duplicate board name in riptask.yaml",
     )?;
     validate_ai_command(config)?;
     validate_projects(config)?;
@@ -311,7 +311,7 @@ mod tests {
 
     #[test]
     fn parses_fixture_config() {
-        let config = load_config(std::path::Path::new("tests/fixtures/riptsk.yaml"))
+        let config = load_config(std::path::Path::new("tests/fixtures/riptask.yaml"))
             .expect("load fixture config");
         assert_eq!(config.version, 1);
         assert_eq!(config.projects.len(), 1);
@@ -320,7 +320,7 @@ mod tests {
     #[test]
     fn config_set_whitelist_updates_expected_field() {
         let mut config =
-            load_config(std::path::Path::new("tests/fixtures/riptsk.yaml")).expect("load config");
+            load_config(std::path::Path::new("tests/fixtures/riptask.yaml")).expect("load config");
         config_set(&mut config, "ui.opener", "less").expect("set opener");
         assert_eq!(config.ui.opener.as_deref(), Some("less"));
         config_set(&mut config, "auto_commit", "true").expect("set auto_commit");
@@ -330,7 +330,7 @@ mod tests {
     #[test]
     fn config_save_round_trip_is_valid_yaml() {
         let config =
-            load_config(std::path::Path::new("tests/fixtures/riptsk.yaml")).expect("load config");
+            load_config(std::path::Path::new("tests/fixtures/riptask.yaml")).expect("load config");
         let file = NamedTempFile::new().expect("temp file");
         super::save_config(file.path(), &config).expect("save config");
         let reparsed = load_config(file.path()).expect("reload config");
@@ -351,14 +351,14 @@ mod tests {
 
     #[test]
     fn config_set_ai_command_stores_value() {
-        let mut config = load_config(Path::new("tests/fixtures/riptsk.yaml")).expect("load");
+        let mut config = load_config(Path::new("tests/fixtures/riptask.yaml")).expect("load");
         config_set(&mut config, "ai.command", "echo {{input}}").expect("set");
         assert_eq!(config.ai.command.as_deref(), Some("echo {{input}}"));
     }
 
     #[test]
     fn config_set_ai_command_empty_clears() {
-        let mut config = load_config(Path::new("tests/fixtures/riptsk.yaml")).expect("load");
+        let mut config = load_config(Path::new("tests/fixtures/riptask.yaml")).expect("load");
         config_set(&mut config, "ai.command", "echo {{input}}").expect("set");
         config_set(&mut config, "ai.command", "").expect("clear");
         assert!(config.ai.command.is_none());
@@ -366,7 +366,7 @@ mod tests {
 
     #[test]
     fn config_rejects_ai_command_without_input_placeholder() {
-        let mut config = load_config(Path::new("tests/fixtures/riptsk.yaml")).expect("load");
+        let mut config = load_config(Path::new("tests/fixtures/riptask.yaml")).expect("load");
         let result = config_set(&mut config, "ai.command", "echo hello");
         assert!(result.is_err());
     }
