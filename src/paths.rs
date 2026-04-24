@@ -149,11 +149,11 @@ mod tests {
     #[test]
     fn builds_standard_subpaths() {
         let paths = AppPaths {
-            riptask_repo: "/tmp/riptsk".into(),
+            riptask_repo: "/tmp/riptask".into(),
             cache_root: "/tmp/cache".into(),
             state_root: "/tmp/state".into(),
         };
-        assert_eq!(paths.config_path(), "/tmp/riptsk/riptask.yaml");
+        assert_eq!(paths.config_path(), "/tmp/riptask/riptask.yaml");
         assert_eq!(paths.backend_state_path(), "/tmp/cache/backend_state.json");
         assert_eq!(paths.deleted_keys_path(), "/tmp/cache/deleted_keys.json");
         assert_eq!(paths.log_path(), "/tmp/state/riptask.log");

@@ -1,6 +1,6 @@
 # Setup: Jira (issues) + GitLab (vc)
 
-Step-by-step guide to configure a riptsk RepoProject where **Jira** is the TasksBackend and **GitLab** is the VCBackend for branches, merge requests, and CI.
+Step-by-step guide to configure a riptask RepoProject where **Jira** is the TasksBackend and **GitLab** is the VCBackend for branches, merge requests, and CI.
 
 This is the common enterprise pattern: code review lives on GitLab, but ticketing, planning, and reporting live on Jira. Every branch and MR title carries a Jira key (e.g. `PROJ-123`) so Jira's Development panel auto-populates.
 
@@ -58,7 +58,7 @@ If you have never run `tsk`, initialize the local store:
 tsk init
 ```
 
-This creates `$RIPTSK_REPO` (defaults to `$XDG_DATA_HOME/riptsk`) with `issues/`, `templates/`, `riptsk.yaml`, and a git repo.
+This creates `$RIPTASK_REPO` (defaults to `$XDG_DATA_HOME/riptask`) with `issues/`, `templates/`, `riptask.yaml`, and a git repo.
 
 ## 4. Register the GitLab RepoProject
 
@@ -69,7 +69,7 @@ cd /path/to/your/project
 tsk register
 ```
 
-`tsk register` detects the `gitlab` remote and adds a RepoProject entry to `riptsk.yaml`. Confirm with:
+`tsk register` detects the `gitlab` remote and adds a RepoProject entry to `riptask.yaml`. Confirm with:
 
 ```bash
 tsk register --list
@@ -80,7 +80,7 @@ tsk register --list
 Jira is not auto-detected from git remotes. The supported config shape is:
 
 ```bash
-tsk config edit   # or: $EDITOR "$RIPTSK_REPO/riptsk.yaml"
+tsk config edit   # or: $EDITOR "$RIPTASK_REPO/riptask.yaml"
 ```
 
 ```yaml
@@ -126,7 +126,7 @@ tsk register --repo-project-label proj::platform-api
 # same result — passing the prefix explicitly is accepted
 ```
 
-`--project-label` is accepted as an alias. Labels stored in `riptsk.yaml` always carry the `proj::` prefix.
+`--project-label` is accepted as an alias. Labels stored in `riptask.yaml` always carry the `proj::` prefix.
 
 ## 7. Shared Jira project (label-partitioned)
 
@@ -247,5 +247,5 @@ If this panel is empty, the GitLab ↔ Jira integration app is not installed on 
 
 - [Backend Sync](backend-sync.md) — credentials, config, and `tsk sync` in depth
 - [Branch → PR → Done](branch-pr-done.md) — the full remote workflow
-- [Feature Lifecycle](feature-lifecycle.md) — riptsk contributor workflow (for reference)
-- [Branch Strategy](branch-strategy.md) — riptsk contributor workflow (for reference)
+- [Feature Lifecycle](feature-lifecycle.md) — riptask contributor workflow (for reference)
+- [Branch Strategy](branch-strategy.md) — riptask contributor workflow (for reference)

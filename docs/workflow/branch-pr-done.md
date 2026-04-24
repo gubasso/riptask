@@ -25,7 +25,7 @@ flowchart LR
 
 ## `tsk branch`
 
-Run `tsk branch` from the project repository, not from `$RIPTSK_REPO`.
+Run `tsk branch` from the project repository, not from `$RIPTASK_REPO`.
 
 ```bash
 tsk branch <ID>

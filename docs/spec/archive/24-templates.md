@@ -16,7 +16,7 @@
 
 ### Overview
 
-Templates live in `$RIPTSK_REPO/templates/` and define the starting content for new issues. `tsk init` ships default templates (`task.md`, `bug.md`, `feature.md`, `weekly-review.md`). Users can create, edit, and remove their own custom templates alongside the defaults.
+Templates live in `$RIPTASK_REPO/templates/` and define the starting content for new issues. `tsk init` ships default templates (`task.md`, `bug.md`, `feature.md`, `weekly-review.md`). Users can create, edit, and remove their own custom templates alongside the defaults.
 
 ### Template file format
 
@@ -49,13 +49,13 @@ default_priority: high
 |---|---|---|---|
 | `template_name` | string | No | Filename stem (e.g. `bug` from `bug.md`) |
 | `default_labels` | list | No | `[]` |
-| `default_state` | enum | No | Falls back to `defaults.state` in `riptsk.yaml`, then `todo` |
-| `default_priority` | enum | No | Falls back to `defaults.priority` in `riptsk.yaml`, then `medium` |
+| `default_state` | enum | No | Falls back to `defaults.state` in `riptask.yaml`, then `todo` |
+| `default_priority` | enum | No | Falls back to `defaults.priority` in `riptask.yaml`, then `medium` |
 
-All `default_*` fields are optional. When omitted, `tsk new` falls back to `riptsk.yaml` `defaults:` values, then hardcoded defaults.
+All `default_*` fields are optional. When omitted, `tsk new` falls back to `riptask.yaml` `defaults:` values, then hardcoded defaults.
 
 Priority mapping at issue creation time is explicit:
-- `none` → omit template priority and fall back to `defaults.priority` from `riptsk.yaml`
+- `none` → omit template priority and fall back to `defaults.priority` from `riptask.yaml`
 - `critical` → issue priority `urgent`
 - `low`, `medium`, `high` → map 1:1
 
@@ -65,7 +65,7 @@ The body (everything after the frontmatter closing `---`) is copied verbatim int
 
 ```bash
 tsk template list
-# List all templates in $RIPTSK_REPO/templates/
+# List all templates in $RIPTASK_REPO/templates/
 # Columnar output: filename, template_name
 # Exit 0 even if no templates exist (empty list)
 
@@ -75,26 +75,26 @@ tsk template show [<name>]
 # Exit 2 if template not found
 
 tsk template new [<name>]
-# Create $RIPTSK_REPO/templates/<name>.md from skeleton (see below)
+# Create $RIPTASK_REPO/templates/<name>.md from skeleton (see below)
 # Opens $EDITOR for immediate editing
 # If <name> omitted: prompt for name
 # Exit 1 if template already exists
 
 tsk template edit [<name>]
-# Open $RIPTSK_REPO/templates/<name>.md in $EDITOR
+# Open $RIPTASK_REPO/templates/<name>.md in $EDITOR
 # Runs validation after editor closes (see below)
 # If <name> omitted: fzf picker
 # Exit 2 if template not found
 
 tsk template rm [<name>]
-# Remove $RIPTSK_REPO/templates/<name>.md
+# Remove $RIPTASK_REPO/templates/<name>.md
 # Prompts for confirmation before deletion
 # If <name> omitted: fzf picker
 # Exit 2 if template not found
 
 tsk template validate [<name>]
 # Validate template YAML (see validation rules below)
-# If <name> omitted: validate all templates in $RIPTSK_REPO/templates/
+# If <name> omitted: validate all templates in $RIPTASK_REPO/templates/
 # Exit 0 if valid, exit 1 if any validation errors
 ```
 
@@ -138,8 +138,8 @@ tsk new -T feature
 **Selection order:**
 
 1. `--template` / `-T` flag — explicit selection
-2. Interactive mode (stdin is TTY, no `--template`): fzf picker over `$RIPTSK_REPO/templates/`
-3. Non-interactive fallback: `defaults.template` from `riptsk.yaml` (default: `task`)
+2. Interactive mode (stdin is TTY, no `--template`): fzf picker over `$RIPTASK_REPO/templates/`
+3. Non-interactive fallback: `defaults.template` from `riptask.yaml` (default: `task`)
 
 When a template is selected, `tsk new`:
 1. Copies the template body into the new issue

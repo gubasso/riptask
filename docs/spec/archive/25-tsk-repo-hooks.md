@@ -12,13 +12,13 @@
 >
 > ---
 
-# RIPTSK_REPO Data Repository Hooks
+# RIPTASK_REPO Data Repository Hooks
 
 ### Overview
 
-`tsk` stores issues as markdown+YAML-frontmatter files in a git repo at `$RIPTSK_REPO`. Since riptsk encourages an editor-first workflow (users edit issue files directly), invalid data can be committed, bypassing riptsk's application-layer validation. A native git pre-commit hook in `$RIPTSK_REPO/.git/hooks/` acts as the last safety net before bad data gets versioned.
+`tsk` stores issues as markdown+YAML-frontmatter files in a git repo at `$RIPTASK_REPO`. Since riptask encourages an editor-first workflow (users edit issue files directly), invalid data can be committed, bypassing riptask's application-layer validation. A native git pre-commit hook in `$RIPTASK_REPO/.git/hooks/` acts as the last safety net before bad data gets versioned.
 
-This is a self-contained bash script — **not** the Python pre-commit framework. It uses `yq` (already a riptsk dependency) for YAML validation.
+This is a self-contained bash script — **not** the Python pre-commit framework. It uses `yq` (already a riptask dependency) for YAML validation.
 
 Only staged files are validated (`git diff --cached --name-only --diff-filter=ACM`). Unstaged changes and deletions are ignored.
 
@@ -28,9 +28,9 @@ Only staged files are validated (`git diff --cached --name-only --diff-filter=AC
 
 The pre-commit hook is:
 
-- **Self-contained** — does NOT source `lib/*.sh`. `$RIPTSK_REPO` is separate from the riptsk install path; sourcing lib files would create a fragile runtime dependency on the install location.
-- Lives in riptsk source at `lib/hooks/pre-commit`, **copied** (not symlinked) to `$RIPTSK_REPO/.git/hooks/pre-commit` on install.
-- Includes a version header: `# riptsk-hook-version: 1` — enables update detection.
+- **Self-contained** — does NOT source `lib/*.sh`. `$RIPTASK_REPO` is separate from the riptask install path; sourcing lib files would create a fragile runtime dependency on the install location.
+- Lives in riptask source at `lib/hooks/pre-commit`, **copied** (not symlinked) to `$RIPTASK_REPO/.git/hooks/pre-commit` on install.
+- Includes a version header: `# riptask-hook-version: 1` — enables update detection.
 - Dependencies: `bash` ≥ 4.0, `yq` ≥ 4.0, `git` (all already tsk dependencies per [17 — Codebase Structure](17-codebase-structure.md)).
 
 ---
@@ -61,16 +61,16 @@ Required fields follow the issue file format defined in [06 — Issue File Forma
 
 `.REMOTE.md` files are temporary conflict files that should not normally be committed (see the `.REMOTE.md` convention in [06 — Issue File Format](06-issue-file-format.md)). However, `tsk sync pull` must commit them so conflict state survives host switches.
 
-The hook checks the `RIPTSK_HOOK_ALLOW_REMOTE=1` environment variable — set by `tsk sync pull` before its internal commit — to allow `.REMOTE.md` files through. This is more surgical than `--no-verify`, which would skip ALL validation.
+The hook checks the `RIPTASK_HOOK_ALLOW_REMOTE=1` environment variable — set by `tsk sync pull` before its internal commit — to allow `.REMOTE.md` files through. This is more surgical than `--no-verify`, which would skip ALL validation.
 
 ```bash
 # In tsk sync pull, before committing:
-export RIPTSK_HOOK_ALLOW_REMOTE=1
-git -C "$RIPTSK_REPO" commit -m "riptsk: sync pull — conflicts detected"
-unset RIPTSK_HOOK_ALLOW_REMOTE
+export RIPTASK_HOOK_ALLOW_REMOTE=1
+git -C "$RIPTASK_REPO" commit -m "riptask: sync pull — conflicts detected"
+unset RIPTASK_HOOK_ALLOW_REMOTE
 ```
 
-#### Config (`riptsk.yaml`)
+#### Config (`riptask.yaml`)
 
 | Check | Method | Error |
 |---|---|---|
@@ -90,7 +90,7 @@ Config structure follows [16 — Configuration](16-configuration.md).
 | `default_state` enum (if set) | `backlog \| todo \| in-progress \| review \| done` | `invalid default_state: "<value>"` |
 | `default_priority` enum (if set) | `none \| low \| medium \| high \| critical` | `invalid default_priority: "<value>"` |
 
-Note: template `default_priority` uses a different enum than issue `priority` — it includes `none` and `critical` per [24 — Templates](24-templates.md). At issue creation time, `none` falls back to `defaults.priority` from `riptsk.yaml` and `critical` maps to issue priority `urgent`.
+Note: template `default_priority` uses a different enum than issue `priority` — it includes `none` and `critical` per [24 — Templates](24-templates.md). At issue creation time, `none` falls back to `defaults.priority` from `riptask.yaml` and `critical` maps to issue priority `urgent`.
 
 ---
 
@@ -100,7 +100,7 @@ Note: template `default_priority` uses a different enum than issue `priority` �
 tsk pre-commit: FAIL issues/WHL-042.md
   missing required field: board
 
-tsk pre-commit: FAIL riptsk.yaml
+tsk pre-commit: FAIL riptask.yaml
   duplicate project_prefix "WHL" in remotes "wormhole-router" and "other-project"
 
 tsk pre-commit: 2 errors, commit blocked
@@ -117,13 +117,13 @@ tsk pre-commit: 2 errors, commit blocked
 
 ```bash
 tsk hooks install
-# Copy lib/hooks/pre-commit to $RIPTSK_REPO/.git/hooks/pre-commit
+# Copy lib/hooks/pre-commit to $RIPTASK_REPO/.git/hooks/pre-commit
 # chmod +x the installed hook
 # Refuse if a non-tsk hook already exists (no version header) — use --force to override
 # Exit 0 on success, exit 1 if refused
 
 tsk hooks install --force
-# Overwrite any existing hook, even non-riptsk-managed ones
+# Overwrite any existing hook, even non-riptask-managed ones
 
 tsk hooks update
 # Compare installed hook version vs source version
@@ -137,8 +137,8 @@ tsk hooks status
 # Exit 1 if hook is missing or outdated
 
 tsk hooks uninstall
-# Remove $RIPTSK_REPO/.git/hooks/pre-commit
-# Only if riptsk-managed (has version header) — refuse otherwise
+# Remove $RIPTASK_REPO/.git/hooks/pre-commit
+# Only if riptask-managed (has version header) — refuse otherwise
 # Use --force to remove non-tsk hooks
 ```
 
@@ -152,14 +152,14 @@ The hook script contains a version header on line 2:
 
 ```bash
 #!/usr/bin/env bash
-# riptsk-hook-version: 1
+# riptask-hook-version: 1
 ```
 
 Version management rules:
 
 - `tsk hooks install` writes the hook with the version from the tsk source.
 - `tsk hooks update` reads the installed version via `grep`, compares to source version, replaces if source is newer.
-- Non-tsk hooks (no `# riptsk-hook-version:` header) are never overwritten without `--force`.
+- Non-tsk hooks (no `# riptask-hook-version:` header) are never overwritten without `--force`.
 - `tsk hooks uninstall` reads the header before removing — refuses to remove non-tsk hooks without `--force`.
 
 When the hook source is updated in a new tsk release, the version number is bumped. Users run `tsk hooks update` to pick up the new version.
@@ -186,8 +186,8 @@ When the hook source is updated in a new tsk release, the version number is bump
 
 - [06 — Issue File Format](06-issue-file-format.md) — frontmatter schema, required fields, `.REMOTE.md` convention
 - [08 — CLI Design](08-cli-design.md) — `tsk hooks` subcommand listing
-- [10 — Sync Architecture](10-sync-architecture.md) — `tsk sync pull` commits `.REMOTE.md` files with `RIPTSK_HOOK_ALLOW_REMOTE=1`
-- [16 — Configuration](16-configuration.md) — `riptsk.yaml` structure and uniqueness constraints
+- [10 — Sync Architecture](10-sync-architecture.md) — `tsk sync pull` commits `.REMOTE.md` files with `RIPTASK_HOOK_ALLOW_REMOTE=1`
+- [16 — Configuration](16-configuration.md) — `riptask.yaml` structure and uniqueness constraints
 - [17 — Codebase Structure](17-codebase-structure.md) — `lib/hooks/pre-commit` and `lib/hooks.sh` file locations
 - [22 — Testing](22-testing.md) — `tests/unit/hooks.bats` and `tests/integration/hooks.bats`
 - [24 — Templates](24-templates.md) — template frontmatter schema, `default_priority` enum

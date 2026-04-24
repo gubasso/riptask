@@ -1,4 +1,4 @@
-# riptsk
+# riptask
 
 A plaintext issue tracker for the terminal.
 
@@ -45,8 +45,8 @@ High-level architecture:
 ```mermaid
 flowchart LR
     User[User terminal] --> CLI[tsk CLI]
-    CLI --> Repo[RIPTSK_REPO<br/>issues, templates, riptsk.yaml, .git]
-    CLI --> Cache[XDG_CACHE_HOME riptsk<br/>views, id_map, backend_state, session]
+    CLI --> Repo[RIPTASK_REPO<br/>issues, templates, riptask.yaml, .git]
+    CLI --> Cache[XDG_CACHE_HOME riptask<br/>views, id_map, backend_state, session]
     CLI --> ProjRepo[Project repo<br/>registered RepoProject cwd]
     CLI --> Sync[Sync engine]
     Sync --> GitHub[GitHub]
@@ -100,12 +100,12 @@ XDG and task store layout:
 
 ```mermaid
 flowchart TD
-    XDG[XDG env] --> Repo[RIPTSK_REPO<br/>default XDG_DATA_HOME riptsk]
-    XDG --> Conf[XDG_CONFIG_HOME riptsk config.env]
-    XDG --> Cache[XDG_CACHE_HOME riptsk]
+    XDG[XDG env] --> Repo[RIPTASK_REPO<br/>default XDG_DATA_HOME riptask]
+    XDG --> Conf[XDG_CONFIG_HOME riptask config.env]
+    XDG --> Cache[XDG_CACHE_HOME riptask]
     Repo --> R1[issues]
     Repo --> R2[templates]
-    Repo --> R3[riptsk.yaml]
+    Repo --> R3[riptask.yaml]
     Repo --> R4[.git]
     Cache --> C1[views]
     Cache --> C2[id_map.json]
@@ -138,9 +138,9 @@ tsk completions fish > ~/.config/fish/completions/tsk.fish
 
 ### Task store vs project repos
 
-`tsk` keeps issues, templates, and `riptsk.yaml` in one local task store repository. By default that repository lives at `$XDG_DATA_HOME/riptsk`, or `~/.local/share/riptsk` when `XDG_DATA_HOME` is unset.
+`tsk` keeps issues, templates, and `riptask.yaml` in one local task store repository. By default that repository lives at `$XDG_DATA_HOME/riptask`, or `~/.local/share/riptask` when `XDG_DATA_HOME` is unset.
 
-Project repositories are separate. Commands like `tsk branch`, `tsk pr`, `tsk done`, `tsk clone`, and `tsk unclone` operate in a project repo, while issue files and task-store commits live under `$RIPTSK_REPO`.
+Project repositories are separate. Commands like `tsk branch`, `tsk pr`, `tsk done`, `tsk clone`, and `tsk unclone` operate in a project repo, while issue files and task-store commits live under `$RIPTASK_REPO`.
 
 ### Directory layout
 
@@ -148,11 +148,11 @@ Project repositories are separate. Commands like `tsk branch`, `tsk pr`, `tsk do
 
 | Location | Default | Contents |
 |---|---|---|
-| `$RIPTSK_REPO` | `$XDG_DATA_HOME/riptsk` | `issues/`, `templates/`, `riptsk.yaml`, `.git/` |
-| `$XDG_CONFIG_HOME/riptsk/config.env` | `~/.config/riptsk/config.env` | Optional `RIPTSK_REPO=...` override |
-| `$XDG_CACHE_HOME/riptsk` | `~/.cache/riptsk` | `views/`, `backend_state.json`, `id_map.json`, `deleted_keys.json`, `session.json` |
+| `$RIPTASK_REPO` | `$XDG_DATA_HOME/riptask` | `issues/`, `templates/`, `riptask.yaml`, `.git/` |
+| `$XDG_CONFIG_HOME/riptask/config.env` | `~/.config/riptask/config.env` | Optional `RIPTASK_REPO=...` override |
+| `$XDG_CACHE_HOME/riptask` | `~/.cache/riptask` | `views/`, `backend_state.json`, `id_map.json`, `deleted_keys.json`, `session.json` |
 
-`tsk init` creates the task store, seeds built-in templates, writes `riptsk.yaml`, and initializes a git repo there.
+`tsk init` creates the task store, seeds built-in templates, writes `riptask.yaml`, and initializes a git repo there.
 
 ## Issue lifecycle
 
@@ -212,7 +212,7 @@ tsk reorder-up <ID>
 tsk reorder-down <ID>
 ```
 
-Custom boards and lane sets are defined in `riptsk.yaml` under `boards`.
+Custom boards and lane sets are defined in `riptask.yaml` under `boards`.
 
 ### Work-clones
 
@@ -231,7 +231,7 @@ tsk unclone --force
 All workflow documentation lives in [`docs/workflow/`](docs/workflow/README.md). Start there for end-to-end flows.
 
 - [Branch → PR → Done](docs/workflow/branch-pr-done.md) — `tsk branch`, `tsk pr`, `tsk done`, `tsk start`
-- [Backend Sync](docs/workflow/backend-sync.md) — credentials, `riptsk.yaml` backend config, `tsk sync`, conflict resolution
+- [Backend Sync](docs/workflow/backend-sync.md) — credentials, `riptask.yaml` backend config, `tsk sync`, conflict resolution
 - [Jira + GitLab Setup](docs/workflow/jira-gitlab-setup.md) — Jira for issues, GitLab for branches/MRs
 
 Quick reference:
@@ -284,7 +284,7 @@ Notes:
 
 ## Recurring tasks
 
-Recurring definitions live in `riptsk.yaml` under `recurring`.
+Recurring definitions live in `riptask.yaml` under `recurring`.
 
 ```bash
 tsk recur list
@@ -334,7 +334,7 @@ tsk session end
 
 `tsk session end`:
 
-- commits the task store if `$RIPTSK_REPO` has uncommitted changes
+- commits the task store if `$RIPTASK_REPO` has uncommitted changes
 - checks out the previous project branch
 - clears the saved session state
 
@@ -342,7 +342,7 @@ It does not run sync, pull, or push automation by itself.
 
 ## AI integration
 
-`tsk` is AI-provider agnostic. You configure one shell command template in `riptsk.yaml`, and `tsk` renders it with context before executing it with `sh -c`.
+`tsk` is AI-provider agnostic. You configure one shell command template in `riptask.yaml`, and `tsk` renders it with context before executing it with `sh -c`.
 
 ### Setup
 
@@ -455,7 +455,7 @@ tsk commit --message "docs(readme): refresh architecture docs"
 
 ## Configuration
 
-The main config file is `$RIPTSK_REPO/riptsk.yaml`.
+The main config file is `$RIPTASK_REPO/riptask.yaml`.
 
 Example:
 
@@ -534,7 +534,7 @@ Shared Jira project setup, including `repo_project_label` partitioning, is docum
 
 ## Issue format
 
-Issues are Markdown files in `$RIPTSK_REPO/issues/`.
+Issues are Markdown files in `$RIPTASK_REPO/issues/`.
 
 Example:
 
@@ -580,7 +580,7 @@ Legacy `assignee: <name>` is still accepted when reading older issue files, but 
 
 ## Task store maintenance
 
-The task store is the riptsk repository itself, not your project repository.
+The task store is the riptask repository itself, not your project repository.
 
 ```bash
 tsk store commit
@@ -592,7 +592,7 @@ tsk store hooks update
 tsk store hooks uninstall
 ```
 
-`tsk store commit` stages `issues/`, `templates/`, and `riptsk.yaml`, then creates a task-store commit. Hook management installs the bundled pre-commit hook into `$RIPTSK_REPO/.git/hooks/pre-commit`.
+`tsk store commit` stages `issues/`, `templates/`, and `riptask.yaml`, then creates a task-store commit. Hook management installs the bundled pre-commit hook into `$RIPTASK_REPO/.git/hooks/pre-commit`.
 
 ## Dependencies
 

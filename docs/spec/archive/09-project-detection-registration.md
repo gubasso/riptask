@@ -16,10 +16,10 @@
 
 ### Mental model
 
-- `$RIPTSK_REPO` (`~/.local/share/riptsk/`) is a **passive database**. It is never the working directory for `tsk` commands.
+- `$RIPTASK_REPO` (`~/.local/share/riptask/`) is a **passive database**. It is never the working directory for `tsk` commands.
 - Commands are run from **inside project repos** (`~/code/project-a/`, etc.)
 - `tsk` reads `git remote get-url origin` from `$PWD` to determine the project context
-- All `tsk` state lives in `$RIPTSK_REPO` — nothing is written back to project repos
+- All `tsk` state lives in `$RIPTASK_REPO` — nothing is written back to project repos
 
 ### Detection flow
 
@@ -38,10 +38,10 @@ On every `tsk` command that requires a project context:
 3. infer remote type from host:
    ├── host contains "github.com"  → type: github (SoT: gh)
    ├── host contains "gitlab"      → type: gitlab (SoT: glab)
-   └── anything else               → type: local  (SoT: $RIPTSK_REPO)
+   └── anything else               → type: local  (SoT: $RIPTASK_REPO)
        (codeberg, gitea, gitolite, self-hosted, etc.)
 
-4. look up project in $RIPTSK_REPO/riptsk.yaml remotes[]
+4. look up project in $RIPTASK_REPO/riptask.yaml remotes[]
    ├── remote-backed repo  → match normalized host:slug against remotes[].repo
    ├── no-remote repo      → match realpath($PWD) against remotes[].path
    └── not found           → trigger registration flow
@@ -53,14 +53,14 @@ A **project** is any git repository — with or without a remote. A **remote** i
 |---|---|---|
 | GitHub remote | `gh` | `tsk sync` via `gh` CLI |
 | GitLab remote | `glab` | `tsk sync` via `glab` CLI |
-| Other remote (codeberg, gitolite…) | local | `$RIPTSK_REPO` git only |
-| No remote | local | `$RIPTSK_REPO` git only |
+| Other remote (codeberg, gitolite…) | local | `$RIPTASK_REPO` git only |
+| No remote | local | `$RIPTASK_REPO` git only |
 
-For `type: local` projects, there is no bidirectional sync against a remote issue tracker. Issues are managed entirely within `$RIPTSK_REPO` and shared across hosts via `$RIPTSK_REPO` git push/pull. IDs are permanent (not provisional) since there is no remote to assign a "real" ID.
+For `type: local` projects, there is no bidirectional sync against a remote issue tracker. Issues are managed entirely within `$RIPTASK_REPO` and shared across hosts via `$RIPTASK_REPO` git push/pull. IDs are permanent (not provisional) since there is no remote to assign a "real" ID.
 
 ### First-run registration
 
-When a project is not yet in `riptsk.yaml`, `tsk` prompts for configuration and registers it. The remote type is auto-detected from the host — not prompted:
+When a project is not yet in `riptask.yaml`, `tsk` prompts for configuration and registers it. The remote type is auto-detected from the host — not prompted:
 
 ```
 $ cd ~/code/wormhole-router
@@ -125,14 +125,14 @@ Error: prefix "WHL" is already used by remote "wormhole-router".
 Issue prefix (e.g. WHL, FSH): _
 ```
 
-2. **Config load** — on every `tsk` invocation that parses `riptsk.yaml`, validate that all `project_prefix` values are unique. If a duplicate is found (e.g. from a manual edit or git merge), abort with a clear error:
+2. **Config load** — on every `tsk` invocation that parses `riptask.yaml`, validate that all `project_prefix` values are unique. If a duplicate is found (e.g. from a manual edit or git merge), abort with a clear error:
 
 ```
-Error: duplicate project_prefix "WHL" in riptsk.yaml (remotes "wormhole-router" and "other-project").
-Fix riptsk.yaml before continuing.
+Error: duplicate project_prefix "WHL" in riptask.yaml (remotes "wormhole-router" and "other-project").
+Fix riptask.yaml before continuing.
 ```
 
-Writes to `$RIPTSK_REPO/riptsk.yaml`:
+Writes to `$RIPTASK_REPO/riptask.yaml`:
 
 ```yaml
 # GitLab remote — syncs via glab
@@ -174,7 +174,7 @@ https://gitlab.penguin-labs.io/chrono/project    → gitlab.penguin-labs.io:chro
 https://gitlab.penguin-labs.io/chrono/project/   → gitlab.penguin-labs.io:chrono/project
 ```
 
-Normalization and type inference are both in `lib/detect.sh`. A single string comparison against the stored slug is sufficient — no need to enumerate URL variants in `riptsk.yaml`.
+Normalization and type inference are both in `lib/detect.sh`. A single string comparison against the stored slug is sufficient — no need to enumerate URL variants in `riptask.yaml`.
 
 ### Type inference rules
 
@@ -187,7 +187,7 @@ host is anything else          → type: local   (codeberg.org, gitea.*, gitolit
 no remote at all               → type: local
 ```
 
-The inferred type is shown during registration for confirmation but is not prompted. The `type` field is stored in `riptsk.yaml` and used for all subsequent operations. If the heuristic is wrong (e.g. a self-hosted GitHub Enterprise on a non-`github.com` domain), the user can override `type` manually in `riptsk.yaml`.
+The inferred type is shown during registration for confirmation but is not prompted. The `type` field is stored in `riptask.yaml` and used for all subsequent operations. If the heuristic is wrong (e.g. a self-hosted GitHub Enterprise on a non-`github.com` domain), the user can override `type` manually in `riptask.yaml`.
 
 ### No-remote project lookup
 

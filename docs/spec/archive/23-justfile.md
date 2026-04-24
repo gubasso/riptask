@@ -4,7 +4,7 @@ Status: archived
 
 > Source of truth has moved to code and tests. This document is retained as historical record.
 
-The `justfile` is a thin wrapper around Cargo commands for building, testing, linting, and installing the Rust implementation of `riptsk`.
+The `justfile` is a thin wrapper around Cargo commands for building, testing, linting, and installing the Rust implementation of `riptask`.
 
 ---
 
@@ -16,9 +16,9 @@ The `justfile` is a thin wrapper around Cargo commands for building, testing, li
 | `build` | Build the release binary |
 | `test` | Run the Rust test suite with `cargo nextest` |
 | `lint` | Run `cargo fmt --check` and `cargo clippy --all-targets --all-features -- -D warnings` |
-| `install` | Install `riptsk` from the current source tree |
-| `uninstall` | Remove the installed `riptsk` cargo package |
-| `clean` | Remove the local riptsk data directory |
+| `install` | Install `riptask` from the current source tree |
+| `uninstall` | Remove the installed `riptask` cargo package |
+| `clean` | Remove the local riptask data directory |
 | `check` | Run lint and test |
 
 ---
@@ -56,7 +56,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 ### `install` recipe
 
-Installs `riptsk` from the current path:
+Installs `riptask` from the current path:
 
 ```bash
 cargo install --path . --force
@@ -95,10 +95,10 @@ install:
   cargo install --path . --force
 
 uninstall:
-  cargo uninstall riptsk
+  cargo uninstall riptask
 
 clean:
-  rm -rf "${HOME}/.local/share/riptsk"
+  rm -rf "${HOME}/.local/share/riptask"
 
 check: lint test
 ```

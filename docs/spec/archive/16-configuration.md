@@ -8,16 +8,16 @@
 >
 > | Concern | Source of Truth |
 > |---------|----------------|
-> | riptsk.yaml loading and structure | `lib/tsk/core.sh, tests/integration/config.bats` |
+> | riptask.yaml loading and structure | `lib/tsk/core.sh, tests/integration/config.bats` |
 >
 > ---
 
 # Configuration
 
-`riptsk.yaml` lives at the root of `$RIPTSK_REPO`. It is git-versioned. It must not contain credentials or tokens — authentication is managed entirely by `glab` and `gh`.
+`riptask.yaml` lives at the root of `$RIPTASK_REPO`. It is git-versioned. It must not contain credentials or tokens — authentication is managed entirely by `glab` and `gh`.
 
 ```yaml
-# $RIPTSK_REPO/riptsk.yaml
+# $RIPTASK_REPO/riptask.yaml
 version: 1
 
 # Default values applied to new issues when not specified
@@ -111,7 +111,7 @@ recurring:
 
 ### Validation rules
 
-On config load, `tsk` validates `riptsk.yaml` and aborts with a clear error if any rule is violated:
+On config load, `tsk` validates `riptask.yaml` and aborts with a clear error if any rule is violated:
 
 - **`project_prefix` uniqueness** — no two entries in `remotes[]` may share the same `project_prefix`. Prefixes are the namespace that prevents ID collisions across projects; duplicates would make issue IDs ambiguous. See [09 — Project Detection & Registration](09-project-detection-registration.md#prefix-uniqueness-validation) for enforcement details.
 - **`name` uniqueness** — no two entries in `remotes[]` may share the same `name`.
@@ -121,16 +121,16 @@ On config load, `tsk` validates `riptsk.yaml` and aborts with a clear error if a
 ### Global `tsk` config (machine-local, not in repo)
 
 ```bash
-# ~/.config/riptsk/config.env  ($XDG_CONFIG_HOME/riptsk/config.env)
-RIPTSK_REPO=~/.local/share/riptsk
-RIPTSK_AI_MODEL=claude-haiku-4-5-20251001
+# ~/.config/riptask/config.env  ($XDG_CONFIG_HOME/riptask/config.env)
+RIPTASK_REPO=~/.local/share/riptask
+RIPTASK_AI_MODEL=claude-haiku-4-5-20251001
 ```
 
 Or set via environment:
 
 ```bash
 # ~/.bashrc
-export RIPTSK_REPO=~/.local/share/riptsk
+export RIPTASK_REPO=~/.local/share/riptask
 ```
 
 ### XDG Base Directory layout
@@ -139,12 +139,12 @@ export RIPTSK_REPO=~/.local/share/riptsk
 
 | XDG variable | Default | tsk path | Contents |
 |---|---|---|---|
-| `$XDG_DATA_HOME` | `~/.local/share` | `~/.local/share/riptsk/` | The git repo (`$RIPTSK_REPO`) — issues, templates, riptsk.yaml |
-| `$XDG_CONFIG_HOME` | `~/.config` | `~/.config/riptsk/config.env` | Machine-local config (not in git repo) |
-| `$XDG_CACHE_HOME` | `~/.cache` | `~/.cache/riptsk/` | Derived data — **views/**, remote_state.json, id_map.json, index.json |
+| `$XDG_DATA_HOME` | `~/.local/share` | `~/.local/share/riptask/` | The git repo (`$RIPTASK_REPO`) — issues, templates, riptask.yaml |
+| `$XDG_CONFIG_HOME` | `~/.config` | `~/.config/riptask/config.env` | Machine-local config (not in git repo) |
+| `$XDG_CACHE_HOME` | `~/.cache` | `~/.cache/riptask/` | Derived data — **views/**, remote_state.json, id_map.json, index.json |
 
-### `$RIPTSK_REPO` resolution order
+### `$RIPTASK_REPO` resolution order
 
-1. `$RIPTSK_REPO` environment variable (if set)
-2. `RIPTSK_REPO` value in `$XDG_CONFIG_HOME/riptsk/config.env` (i.e. `~/.config/riptsk/config.env`)
-3. Fallback: `$XDG_DATA_HOME/riptsk` (i.e. `~/.local/share/riptsk/`)
+1. `$RIPTASK_REPO` environment variable (if set)
+2. `RIPTASK_REPO` value in `$XDG_CONFIG_HOME/riptask/config.env` (i.e. `~/.config/riptask/config.env`)
+3. Fallback: `$XDG_DATA_HOME/riptask` (i.e. `~/.local/share/riptask/`)

@@ -15,9 +15,9 @@ Core issue management + GitLab sync. Usable as a daily driver.
 - `tsk sync pull` + `tsk sync push` (GitLab only)
 - `tsk resolve`
 - `tsk session start` + `tsk session end`
-- `riptsk.yaml` config loading
+- `riptask.yaml` config loading
 - bash completions
-- `tsk hooks install` / `update` / `status` / `uninstall` + pre-commit validation hook (see [25 — RIPTSK_REPO Data Repository Hooks](25-tsk-repo-hooks.md))
+- `tsk hooks install` / `update` / `status` / `uninstall` + pre-commit validation hook (see [25 — RIPTASK_REPO Data Repository Hooks](25-tsk-repo-hooks.md))
 - `lib/frontmatter.sh` with full yq integration
 - `lib/detect.sh` — project auto-detection from `$PWD`
 - `lib/fzf.sh` — fzf interactive selection for all ID-taking commands (see [21 — fzf Interactive Selection](21-fzf-interactive-selection.md))
@@ -73,7 +73,7 @@ The Bash roadmap above is retained as historical context. The Rust implementatio
 - Create Rust crate structure (`cli`, `error`, `paths`, `config`, `scope`, `domain`, `storage`)
 - Implement typed config, paths, frontmatter parsing, and cache loading
 - Land foundational commands: `version`, `help`, `config` (read and set), `show`, `path`, `ls`, `init`
-- `config set` is a write operation but belongs here because it only modifies `riptsk.yaml`, not issue files
+- `config set` is a write operation but belongs here because it only modifies `riptask.yaml`, not issue files
 - Bare `tsk sync` (no subcommand) dispatches to pull-then-push and is implemented in Phase 5
 
 #### Phase 2 — Local workflow

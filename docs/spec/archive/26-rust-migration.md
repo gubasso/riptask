@@ -4,7 +4,7 @@ Status: archived
 
 > Source of truth has moved to code and tests. This document is retained as historical record.
 
-This spec records the migration of `riptsk` from Bash to Rust: rationale, library choices, and the final runtime model now that the migration is complete.
+This spec records the migration of `riptask` from Bash to Rust: rationale, library choices, and the final runtime model now that the migration is complete.
 
 ### Migration rationale
 
@@ -61,9 +61,9 @@ Wrapped dependencies remain where the external tool's exact behavior is user-vis
 - `console` + `dialoguer` + `indicatif` chosen as cohesive mitsuhiko ecosystem, replacing `owo-colors` and `inquire`.
 - `inquire` was considered but `dialoguer` preferred for ecosystem cohesion with `console`/`indicatif`.
 - `std::process::Command` chosen over `duct`/`xshell` for better LLM code-generation reliability with stdlib APIs.
-- `gix` was considered for native git operations, but `riptsk` currently relies on user-visible `git` CLI behavior for branch creation, push/pull, commit hooks, and session flows. The compatibility-first decision is to wrap `git`.
+- `gix` was considered for native git operations, but `riptask` currently relies on user-visible `git` CLI behavior for branch creation, push/pull, commit hooks, and session flows. The compatibility-first decision is to wrap `git`.
 - `git2` was considered and rejected for the initial migration because it still would not guarantee CLI-parity workflows and adds a libgit2 dependency surface.
-- `gray_matter` was considered for frontmatter parsing. It is useful for extraction, but not strong enough as the sole read/write contract for `riptsk`'s Markdown files. The Rust implementation must own the exact frontmatter split/join semantics.
+- `gray_matter` was considered for frontmatter parsing. It is useful for extraction, but not strong enough as the sole read/write contract for `riptask`'s Markdown files. The Rust implementation must own the exact frontmatter split/join semantics.
 - `config-rs` was considered and rejected as the primary config layer because its own contract is read-focused and explicitly not a config write-back solution.
 
 ### Async architecture
@@ -105,7 +105,7 @@ See [[23-justfile]] for the full target list. Key targets:
 
 - `just build` — `cargo build --release`
 - `just install` — `cargo install --path .` (installs to `~/.cargo/bin/`)
-- `just uninstall` — `cargo uninstall riptsk`
+- `just uninstall` — `cargo uninstall riptask`
 - `just test` — `cargo nextest run`
 - `just lint` — `cargo fmt --check` + `cargo clippy`
 - `just check` — lint + test
@@ -137,7 +137,7 @@ As of 2026-03-19, the Bash implementation has been fully removed. The Rust binar
 | Command | Status | Notes |
 |---|---|---|
 | `init` | Done | Creates repo layout, default config, templates |
-| `config` / `config set` | Done | Read and write `riptsk.yaml` |
+| `config` / `config set` | Done | Read and write `riptask.yaml` |
 | `new` | Done | With auto-register-on-create and `--ai` fallback |
 | `edit` | Done | Opens `$EDITOR` |
 | `show` | Done | Prints issue frontmatter + body |

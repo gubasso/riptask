@@ -47,7 +47,7 @@ pub fn run(paths: &AppPaths) -> Result<(), RiptaskError> {
     }
 
     crate::ui::success(&format!(
-        "Initialized riptsk repository at {}",
+        "Initialized riptask repository at {}",
         paths.riptask_repo
     ));
     Ok(())

@@ -12,7 +12,7 @@ Version history, audit trail, and backup are handled entirely by git. No additio
 
 ### 2.3 Views are derived, never stored
 
-Kanban boards, RepoProject views, org views, cycle views — all are generated at runtime by reading issue frontmatter. They are never the source of truth. The `views/` directory lives in the cache (`$XDG_CACHE_HOME/riptsk/views/`), outside the repo, and is always regeneratable from scratch.
+Kanban boards, RepoProject views, org views, cycle views — all are generated at runtime by reading issue frontmatter. They are never the source of truth. The `views/` directory lives in the cache (`$XDG_CACHE_HOME/riptask/views/`), outside the repo, and is always regeneratable from scratch.
 
 ### 2.4 One source of truth per concern
 
