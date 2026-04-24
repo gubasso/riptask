@@ -41,7 +41,7 @@ On every `tsk` command that requires a project context:
    └── anything else               → type: local  (SoT: $RIPTASK_REPO)
        (codeberg, gitea, gitolite, self-hosted, etc.)
 
-4. look up project in $RIPTASK_REPO/riptask.yaml remotes[]
+4. look up project in $RIPTASK_REPO/config.yaml remotes[]
    ├── remote-backed repo  → match normalized host:slug against remotes[].repo
    ├── no-remote repo      → match realpath($PWD) against remotes[].path
    └── not found           → trigger registration flow
@@ -60,7 +60,7 @@ For `type: local` projects, there is no bidirectional sync against a remote issu
 
 ### First-run registration
 
-When a project is not yet in `riptask.yaml`, `tsk` prompts for configuration and registers it. The remote type is auto-detected from the host — not prompted:
+When a project is not yet in `config.yaml`, `tsk` prompts for configuration and registers it. The remote type is auto-detected from the host — not prompted:
 
 ```
 $ cd ~/code/wormhole-router
@@ -125,14 +125,14 @@ Error: prefix "WHL" is already used by remote "wormhole-router".
 Issue prefix (e.g. WHL, FSH): _
 ```
 
-2. **Config load** — on every `tsk` invocation that parses `riptask.yaml`, validate that all `project_prefix` values are unique. If a duplicate is found (e.g. from a manual edit or git merge), abort with a clear error:
+2. **Config load** — on every `tsk` invocation that parses `config.yaml`, validate that all `project_prefix` values are unique. If a duplicate is found (e.g. from a manual edit or git merge), abort with a clear error:
 
 ```
-Error: duplicate project_prefix "WHL" in riptask.yaml (remotes "wormhole-router" and "other-project").
-Fix riptask.yaml before continuing.
+Error: duplicate project_prefix "WHL" in config.yaml (remotes "wormhole-router" and "other-project").
+Fix config.yaml before continuing.
 ```
 
-Writes to `$RIPTASK_REPO/riptask.yaml`:
+Writes to `$RIPTASK_REPO/config.yaml`:
 
 ```yaml
 # GitLab remote — syncs via glab
@@ -174,7 +174,7 @@ https://gitlab.penguin-labs.io/chrono/project    → gitlab.penguin-labs.io:chro
 https://gitlab.penguin-labs.io/chrono/project/   → gitlab.penguin-labs.io:chrono/project
 ```
 
-Normalization and type inference are both in `lib/detect.sh`. A single string comparison against the stored slug is sufficient — no need to enumerate URL variants in `riptask.yaml`.
+Normalization and type inference are both in `lib/detect.sh`. A single string comparison against the stored slug is sufficient — no need to enumerate URL variants in `config.yaml`.
 
 ### Type inference rules
 
@@ -187,7 +187,7 @@ host is anything else          → type: local   (codeberg.org, gitea.*, gitolit
 no remote at all               → type: local
 ```
 
-The inferred type is shown during registration for confirmation but is not prompted. The `type` field is stored in `riptask.yaml` and used for all subsequent operations. If the heuristic is wrong (e.g. a self-hosted GitHub Enterprise on a non-`github.com` domain), the user can override `type` manually in `riptask.yaml`.
+The inferred type is shown during registration for confirmation but is not prompted. The `type` field is stored in `config.yaml` and used for all subsequent operations. If the heuristic is wrong (e.g. a self-hosted GitHub Enterprise on a non-`github.com` domain), the user can override `type` manually in `config.yaml`.
 
 ### No-remote project lookup
 

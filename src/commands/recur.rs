@@ -1,6 +1,6 @@
 use crate::adapters::git::CliGit;
 use crate::cli::{NewArgs, RecurArgs, RecurNewArgs, RecurSubcommand};
-use crate::config::{load_config, parse_priority, parse_state, save_config};
+use crate::config::{load_effective_config, load_layer, parse_priority, parse_state, save_layer};
 use crate::error::RiptaskError;
 use crate::models::{RecurrenceFrequency, RecurringDef};
 use crate::paths::AppPaths;
@@ -23,7 +23,7 @@ pub fn run(paths: &AppPaths, args: RecurArgs) -> Result<(), RiptaskError> {
 }
 
 fn list(paths: &AppPaths) -> Result<(), RiptaskError> {
-    let config = load_config(paths.config_path().as_std_path())?;
+    let config = load_effective_config(paths, &current_cwd())?;
     if std::io::stdout().is_terminal() {
         let mut table = Table::new();
         table
@@ -66,7 +66,10 @@ fn list(paths: &AppPaths) -> Result<(), RiptaskError> {
 }
 
 fn run_due(paths: &AppPaths, date: Option<String>) -> Result<(), RiptaskError> {
-    let mut config = load_config(paths.config_path().as_std_path())?;
+    let cwd = current_cwd();
+    let mut config = load_effective_config(paths, &cwd)?;
+    let sys_path = paths.system_config_path();
+    let mut partial = load_layer(sys_path.as_std_path())?.unwrap_or_default();
     let today = date
         .as_deref()
         .map(str::parse::<NaiveDate>)
@@ -85,9 +88,10 @@ fn run_due(paths: &AppPaths, date: Option<String>) -> Result<(), RiptaskError> {
         )
         .collect();
 
-    let mut changed_paths = vec![paths.config_path()];
+    let mut changed_paths = vec![sys_path.clone()];
     let mut last_issue = None;
-    for definition in config.recurring.clone() {
+    let mut changed_recurring = false;
+    for definition in partial.recurring.clone() {
         if !is_due(&definition, today).map_err(RiptaskError::Other)? {
             continue;
         }
@@ -146,8 +150,20 @@ fn run_due(paths: &AppPaths, date: Option<String>) -> Result<(), RiptaskError> {
         println!("{}", issue.frontmatter.id);
 
         update_last_run(&mut config, &definition.id, today);
+        if let Some(recurring) = partial
+            .recurring
+            .iter_mut()
+            .find(|candidate| candidate.id == definition.id)
+        {
+            recurring.last_run = Some(today.to_string());
+            changed_recurring = true;
+        }
     }
-    save_config(paths.config_path().as_std_path(), &config)?;
+    if changed_recurring {
+        save_layer(sys_path.as_std_path(), &partial)?;
+        load_effective_config(paths, &cwd)?;
+        // TODO(config-scope): honor --scope once vec-mutating commands accept it.
+    }
     if let Some((id, title)) = last_issue {
         let files = changed_paths
             .iter()
@@ -166,14 +182,29 @@ fn run_due(paths: &AppPaths, date: Option<String>) -> Result<(), RiptaskError> {
 
 fn skip(paths: &AppPaths, recur_id: Option<String>) -> Result<(), RiptaskError> {
     let recur_id = recur_id.ok_or_else(|| RiptaskError::General("missing recurrence id".into()))?;
-    let mut config = load_config(paths.config_path().as_std_path())?;
+    let cwd = current_cwd();
+    let sys_path = paths.system_config_path();
+    let mut partial = load_layer(sys_path.as_std_path())?.unwrap_or_default();
     let today = Utc::now().date_naive();
-    update_last_run(&mut config, &recur_id, today);
-    save_config(paths.config_path().as_std_path(), &config)
+    let Some(recurring) = partial
+        .recurring
+        .iter_mut()
+        .find(|definition| definition.id == recur_id)
+    else {
+        return Err(RiptaskError::Config(format!(
+            "unknown recurrence id: {recur_id}"
+        )));
+    };
+    recurring.last_run = Some(today.to_string());
+    save_layer(sys_path.as_std_path(), &partial)?;
+    load_effective_config(paths, &cwd)?;
+    // TODO(config-scope): honor --scope once vec-mutating commands accept it.
+    Ok(())
 }
 
 fn new_recur(paths: &AppPaths, args: RecurNewArgs) -> Result<(), RiptaskError> {
-    let mut config = load_config(paths.config_path().as_std_path())?;
+    let cwd = current_cwd();
+    let config = load_effective_config(paths, &cwd)?;
     if config
         .recurring
         .iter()
@@ -275,8 +306,21 @@ fn new_recur(paths: &AppPaths, args: RecurNewArgs) -> Result<(), RiptaskError> {
         end: args.end,
         last_run: None,
     };
-    config.recurring.push(definition);
-    save_config(paths.config_path().as_std_path(), &config)?;
+    let sys_path = paths.system_config_path();
+    let mut partial = load_layer(sys_path.as_std_path())?.unwrap_or_default();
+    partial.recurring.push(definition);
+    save_layer(sys_path.as_std_path(), &partial)?;
+    load_effective_config(paths, &cwd)?;
+    // TODO(config-scope): honor --scope once vec-mutating commands accept it.
     crate::ui::success(&format!("added recurrence {}", args.id));
     Ok(())
+}
+
+fn current_cwd() -> camino::Utf8PathBuf {
+    camino::Utf8PathBuf::from(
+        std::env::current_dir()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string(),
+    )
 }

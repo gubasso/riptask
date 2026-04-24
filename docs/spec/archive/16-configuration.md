@@ -8,16 +8,16 @@
 >
 > | Concern | Source of Truth |
 > |---------|----------------|
-> | riptask.yaml loading and structure | `lib/tsk/core.sh, tests/integration/config.bats` |
+> | config.yaml loading and structure | `lib/tsk/core.sh, tests/integration/config.bats` |
 >
 > ---
 
 # Configuration
 
-`riptask.yaml` lives at the root of `$RIPTASK_REPO`. It is git-versioned. It must not contain credentials or tokens — authentication is managed entirely by `glab` and `gh`.
+`config.yaml` lives at the root of `$RIPTASK_REPO`. It is git-versioned. It must not contain credentials or tokens — authentication is managed entirely by `glab` and `gh`.
 
 ```yaml
-# $RIPTASK_REPO/riptask.yaml
+# $RIPTASK_REPO/config.yaml
 version: 1
 
 # Default values applied to new issues when not specified
@@ -111,7 +111,7 @@ recurring:
 
 ### Validation rules
 
-On config load, `tsk` validates `riptask.yaml` and aborts with a clear error if any rule is violated:
+On config load, `tsk` validates `config.yaml` and aborts with a clear error if any rule is violated:
 
 - **`project_prefix` uniqueness** — no two entries in `remotes[]` may share the same `project_prefix`. Prefixes are the namespace that prevents ID collisions across projects; duplicates would make issue IDs ambiguous. See [09 — Project Detection & Registration](09-project-detection-registration.md#prefix-uniqueness-validation) for enforcement details.
 - **`name` uniqueness** — no two entries in `remotes[]` may share the same `name`.
@@ -139,7 +139,7 @@ export RIPTASK_REPO=~/.local/share/riptask
 
 | XDG variable | Default | tsk path | Contents |
 |---|---|---|---|
-| `$XDG_DATA_HOME` | `~/.local/share` | `~/.local/share/riptask/` | The git repo (`$RIPTASK_REPO`) — issues, templates, riptask.yaml |
+| `$XDG_DATA_HOME` | `~/.local/share` | `~/.local/share/riptask/` | The git repo (`$RIPTASK_REPO`) — issues, templates, config.yaml |
 | `$XDG_CONFIG_HOME` | `~/.config` | `~/.config/riptask/config.env` | Machine-local config (not in git repo) |
 | `$XDG_CACHE_HOME` | `~/.cache` | `~/.cache/riptask/` | Derived data — **views/**, remote_state.json, id_map.json, index.json |
 

@@ -20,7 +20,7 @@
 ~/.local/share/riptask/                    # $XDG_DATA_HOME/riptask — the git repo ($RIPTASK_REPO)
 ├── issues/
 ├── templates/
-├── riptask.yaml
+├── config.yaml
 └── .gitignore
 
 ~/.config/riptask/config.env                  # $XDG_CONFIG_HOME/riptask — machine-local config
@@ -48,7 +48,7 @@
 │   ├── task.md
 │   └── weekly-review.md
 │
-├── riptask.yaml                           # configuration (git-versioned)
+├── config.yaml                           # configuration (git-versioned)
 └── .gitignore
 ```
 

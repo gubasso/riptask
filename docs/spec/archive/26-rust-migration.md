@@ -137,7 +137,7 @@ As of 2026-03-19, the Bash implementation has been fully removed. The Rust binar
 | Command | Status | Notes |
 |---|---|---|
 | `init` | Done | Creates repo layout, default config, templates |
-| `config` / `config set` | Done | Read and write `riptask.yaml` |
+| `config` / `config set` | Done | Read and write `config.yaml` |
 | `new` | Done | With auto-register-on-create and `--ai` fallback |
 | `edit` | Done | Opens `$EDITOR` |
 | `show` | Done | Prints issue frontmatter + body |

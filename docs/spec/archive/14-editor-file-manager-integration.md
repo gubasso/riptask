@@ -154,7 +154,7 @@ desc = "riptask: move up in lane"
 ### UI opener config
 
 ```yaml
-# riptask.yaml
+# config.yaml
 ui:
   opener: nvim -R    # or: yazi, lf, ranger, nnn
                      # default: nvim -R

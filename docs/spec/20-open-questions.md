@@ -41,7 +41,7 @@ The `conflict:` field in frontmatter is the authoritative conflict indicator, no
 `.REMOTE.md` files are committed to `$RIPTASK_REPO` so conflict state survives host switches and `$RIPTASK_REPO` git pull/push. They are excluded from views and `tsk ls` by filtering on the `.REMOTE.md` suffix.
 
 **[RESOLVED] Recurring task `last_run` merge conflict.**
-When `riptask.yaml` is merged across hosts, `last_run` fields may conflict if both hosts ran `tsk recur run` independently. Resolution: keep the later date. The dedup check in `tsk recur run` (title pattern match) prevents duplicate issues even if `last_run` is stale.
+When `config.yaml` is merged across hosts, `last_run` fields may conflict if both hosts ran `tsk recur run` independently. Resolution: keep the later date. The dedup check in `tsk recur run` (title pattern match) prevents duplicate issues even if `last_run` is stale.
 
 **`index.json` cache — DEFERRED.** The index.json cache described in the original data repository spec was never implemented. Query operations work directly against issue files via frontmatter parsing. This is adequate for the current scale and may be revisited if performance requires it.
 

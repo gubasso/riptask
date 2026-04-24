@@ -55,7 +55,7 @@ ai_call() {
     local system_prompt="$1"
     local user_prompt="$2"
     local config_model
-    config_model="$(yq '.ai.model // ""' "$RIPTASK_REPO/riptask.yaml" 2>/dev/null || true)"
+    config_model="$(yq '.ai.model // ""' "$RIPTASK_REPO/config.yaml" 2>/dev/null || true)"
     local model="${RIPTASK_AI_MODEL:-${config_model:-claude-haiku-4-5-20251001}}"
 
     # uses claude CLI, llm (simonw/llm), or direct API call
@@ -71,9 +71,9 @@ ai_call() {
 }
 ```
 
-Model precedence is: `$RIPTASK_AI_MODEL` environment variable > `ai.model` in `riptask.yaml` > hardcoded default.
+Model precedence is: `$RIPTASK_AI_MODEL` environment variable > `ai.model` in `config.yaml` > hardcoded default.
 
-### `riptask.yaml` AI config
+### `config.yaml` AI config
 
 ```yaml
 ai:

@@ -4,7 +4,9 @@ use crate::models::{
     AiConfig, AiFeatures, BackendKind, BoardConfig, DefaultsConfig, RecurringDef, RepoProject,
     SyncConfig, UiConfig,
 };
+use crate::paths::AppPaths;
 use crate::services::{issue_ids, repo_project_label};
+use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;
@@ -28,6 +30,345 @@ pub struct Config {
     pub sync: SyncConfig,
     #[serde(default)]
     pub recurring: Vec<RecurringDef>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfigScope {
+    System,
+    User,
+    Local,
+}
+
+impl ConfigScope {
+    pub fn resolve(self, paths: &AppPaths, cwd: &Utf8Path) -> Result<Utf8PathBuf, RiptaskError> {
+        match self {
+            ConfigScope::System => Ok(paths.system_config_path()),
+            ConfigScope::User => Ok(paths.user_config_path()),
+            ConfigScope::Local => paths.local_config_path(cwd).ok_or_else(|| {
+                RiptaskError::Config(
+                    "not inside a riptask project; use --system or --global".into(),
+                )
+            }),
+        }
+    }
+
+    pub fn exists(self, paths: &AppPaths, cwd: &Utf8Path) -> bool {
+        self.resolve(paths, cwd)
+            .map(|path| path.exists())
+            .unwrap_or(false)
+    }
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PartialConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_commit: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub defaults: Option<PartialDefaults>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub projects: Vec<RepoProject>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub boards: Vec<BoardConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui: Option<PartialUi>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai: Option<PartialAi>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sync: Option<PartialSync>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recurring: Vec<RecurringDef>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PartialDefaults {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub board: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<IssueState>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<Priority>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_option_value"
+    )]
+    pub assignee: Option<Option<String>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_option_value"
+    )]
+    pub template: Option<Option<String>>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PartialUi {
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_option_value"
+    )]
+    pub opener: Option<Option<String>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_option_value"
+    )]
+    pub tree_depth: Option<Option<u32>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_option_value"
+    )]
+    pub fzf_opts: Option<Option<String>>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PartialAi {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_option_value"
+    )]
+    pub command: Option<Option<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub features: Option<PartialAiFeatures>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PartialAiFeatures {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_body_gen: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub triage: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summarize: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ask: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit: Option<bool>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PartialSync {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conflict_detection: Option<bool>,
+}
+
+impl PartialConfig {
+    pub fn merge(lower: Self, higher: Self) -> Self {
+        Self {
+            version: higher.version.or(lower.version),
+            auto_commit: higher.auto_commit.or(lower.auto_commit),
+            defaults: merge_option_with(lower.defaults, higher.defaults, PartialDefaults::merge),
+            projects: merge_vec(lower.projects, higher.projects, |project| {
+                project.name.clone()
+            }),
+            boards: merge_vec(lower.boards, higher.boards, |board| board.name.clone()),
+            ui: merge_option_with(lower.ui, higher.ui, PartialUi::merge),
+            ai: merge_option_with(lower.ai, higher.ai, PartialAi::merge),
+            sync: merge_option_with(lower.sync, higher.sync, PartialSync::merge),
+            recurring: merge_vec(lower.recurring, higher.recurring, |recurring| {
+                recurring.id.clone()
+            }),
+        }
+    }
+
+    pub fn finalize(self) -> Result<Config, RiptaskError> {
+        let defaults = default_config();
+        let partial_defaults = self.defaults.unwrap_or_default();
+        let partial_ui = self.ui.unwrap_or_default();
+        let partial_ai = self.ai.unwrap_or_default();
+        let partial_features = partial_ai.features.unwrap_or_default();
+        let partial_sync = self.sync.unwrap_or_default();
+        let mut config = Config {
+            version: self.version.unwrap_or(defaults.version),
+            auto_commit: self.auto_commit.unwrap_or(defaults.auto_commit),
+            defaults: DefaultsConfig {
+                board: partial_defaults.board.unwrap_or(defaults.defaults.board),
+                status: partial_defaults.status.unwrap_or(defaults.defaults.status),
+                priority: partial_defaults
+                    .priority
+                    .unwrap_or(defaults.defaults.priority),
+                assignee: partial_defaults
+                    .assignee
+                    .unwrap_or(defaults.defaults.assignee),
+                template: partial_defaults
+                    .template
+                    .unwrap_or(defaults.defaults.template),
+            },
+            projects: self.projects,
+            boards: if self.boards.is_empty() {
+                defaults.boards
+            } else {
+                self.boards
+            },
+            ui: UiConfig {
+                opener: partial_ui.opener.unwrap_or(defaults.ui.opener),
+                tree_depth: partial_ui.tree_depth.unwrap_or(defaults.ui.tree_depth),
+                fzf_opts: partial_ui.fzf_opts.unwrap_or(defaults.ui.fzf_opts),
+            },
+            ai: AiConfig {
+                enabled: partial_ai.enabled.unwrap_or(defaults.ai.enabled),
+                command: partial_ai.command.unwrap_or(defaults.ai.command),
+                features: AiFeatures {
+                    new_body_gen: partial_features
+                        .new_body_gen
+                        .unwrap_or(defaults.ai.features.new_body_gen),
+                    triage: partial_features
+                        .triage
+                        .unwrap_or(defaults.ai.features.triage),
+                    summarize: partial_features
+                        .summarize
+                        .unwrap_or(defaults.ai.features.summarize),
+                    ask: partial_features.ask.unwrap_or(defaults.ai.features.ask),
+                    commit: partial_features
+                        .commit
+                        .unwrap_or(defaults.ai.features.commit),
+                },
+            },
+            sync: SyncConfig {
+                conflict_detection: partial_sync
+                    .conflict_detection
+                    .unwrap_or(defaults.sync.conflict_detection),
+            },
+            recurring: self.recurring,
+        };
+        validate_config(&mut config)?;
+        Ok(config)
+    }
+}
+
+impl From<Config> for PartialConfig {
+    fn from(config: Config) -> Self {
+        Self {
+            version: Some(config.version),
+            auto_commit: Some(config.auto_commit),
+            defaults: Some(PartialDefaults {
+                board: Some(config.defaults.board),
+                status: Some(config.defaults.status),
+                priority: Some(config.defaults.priority),
+                assignee: config.defaults.assignee.map(Some),
+                template: config.defaults.template.map(Some),
+            }),
+            projects: config.projects,
+            boards: config.boards,
+            ui: Some(PartialUi {
+                opener: config.ui.opener.map(Some),
+                tree_depth: config.ui.tree_depth.map(Some),
+                fzf_opts: config.ui.fzf_opts.map(Some),
+            }),
+            ai: Some(PartialAi {
+                enabled: Some(config.ai.enabled),
+                command: config.ai.command.map(Some),
+                features: Some(PartialAiFeatures {
+                    new_body_gen: Some(config.ai.features.new_body_gen),
+                    triage: Some(config.ai.features.triage),
+                    summarize: Some(config.ai.features.summarize),
+                    ask: Some(config.ai.features.ask),
+                    commit: Some(config.ai.features.commit),
+                }),
+            }),
+            sync: Some(PartialSync {
+                conflict_detection: Some(config.sync.conflict_detection),
+            }),
+            recurring: config.recurring,
+        }
+    }
+}
+
+impl PartialDefaults {
+    fn merge(lower: Self, higher: Self) -> Self {
+        Self {
+            board: higher.board.or(lower.board),
+            status: higher.status.or(lower.status),
+            priority: higher.priority.or(lower.priority),
+            assignee: higher.assignee.or(lower.assignee),
+            template: higher.template.or(lower.template),
+        }
+    }
+}
+
+impl PartialUi {
+    fn merge(lower: Self, higher: Self) -> Self {
+        Self {
+            opener: higher.opener.or(lower.opener),
+            tree_depth: higher.tree_depth.or(lower.tree_depth),
+            fzf_opts: higher.fzf_opts.or(lower.fzf_opts),
+        }
+    }
+}
+
+impl PartialAi {
+    fn merge(lower: Self, higher: Self) -> Self {
+        Self {
+            enabled: higher.enabled.or(lower.enabled),
+            command: higher.command.or(lower.command),
+            features: merge_option_with(lower.features, higher.features, PartialAiFeatures::merge),
+        }
+    }
+}
+
+impl PartialAiFeatures {
+    fn merge(lower: Self, higher: Self) -> Self {
+        Self {
+            new_body_gen: higher.new_body_gen.or(lower.new_body_gen),
+            triage: higher.triage.or(lower.triage),
+            summarize: higher.summarize.or(lower.summarize),
+            ask: higher.ask.or(lower.ask),
+            commit: higher.commit.or(lower.commit),
+        }
+    }
+}
+
+impl PartialSync {
+    fn merge(lower: Self, higher: Self) -> Self {
+        Self {
+            conflict_detection: higher.conflict_detection.or(lower.conflict_detection),
+        }
+    }
+}
+
+fn merge_option_with<T>(lower: Option<T>, higher: Option<T>, merge: fn(T, T) -> T) -> Option<T> {
+    match (lower, higher) {
+        (Some(lower), Some(higher)) => Some(merge(lower, higher)),
+        (lower, None) => lower,
+        (None, higher) => higher,
+    }
+}
+
+fn merge_vec<T, K, F>(lower: Vec<T>, higher: Vec<T>, key: F) -> Vec<T>
+where
+    K: Eq + std::hash::Hash,
+    F: Fn(&T) -> K,
+{
+    let combined: Vec<T> = lower.into_iter().chain(higher).collect();
+    let mut seen = HashSet::new();
+    let mut reversed: Vec<T> = combined
+        .into_iter()
+        .rev()
+        .filter(|item| seen.insert(key(item)))
+        .collect();
+    reversed.reverse();
+    reversed
+}
+
+fn deserialize_option_value<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
 }
 
 pub fn default_config() -> Config {
@@ -74,32 +415,64 @@ pub fn default_config() -> Config {
     }
 }
 
-pub fn load_config(path: &Path) -> Result<Config, RiptaskError> {
-    let content = fs::read_to_string(path)?;
-    let mut config: Config = serde_yaml_ng::from_str(&content).map_err(|error| {
-        RiptaskError::Config(format!("failed to parse {}: {error}", path.display()))
-    })?;
-    validate_config(&mut config)?;
-    Ok(config)
+pub fn load_layer(path: &Path) -> Result<Option<PartialConfig>, RiptaskError> {
+    match fs::read_to_string(path) {
+        Ok(content) => {
+            let partial: PartialConfig = serde_yaml_ng::from_str(&content).map_err(|error| {
+                RiptaskError::Config(format!("failed to parse {}: {error}", path.display()))
+            })?;
+            Ok(Some(partial))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(RiptaskError::Io(error)),
+    }
 }
 
-pub fn save_config(path: &Path, config: &Config) -> Result<(), RiptaskError> {
-    // `save_config` takes `&Config` to preserve callers that want to write out
-    // the exact struct they built. Callers that load via `load_config` already
-    // have a normalized `Config` in memory, and `config_set` normalizes before
-    // calling `save_config`.
-    let mut validation_view = config.clone();
-    validate_config(&mut validation_view)?;
-    let content = serde_yaml_ng::to_string(config)
+pub fn load_effective_config(paths: &AppPaths, cwd: &Utf8Path) -> Result<Config, RiptaskError> {
+    let mut merged = PartialConfig::default();
+    for path in [paths.system_config_path(), paths.user_config_path()]
+        .into_iter()
+        .chain(paths.local_config_path(cwd))
+    {
+        if let Some(layer) = load_layer(path.as_std_path())? {
+            merged = PartialConfig::merge(merged, layer);
+        }
+    }
+    merged.finalize()
+}
+
+pub fn save_layer(path: &Path, partial: &PartialConfig) -> Result<(), RiptaskError> {
+    let content = serde_yaml_ng::to_string(partial)
         .map_err(|error| RiptaskError::Config(format!("failed to serialize config: {error}")))?;
     let dir = path
         .parent()
         .ok_or_else(|| RiptaskError::Config("config path has no parent".into()))?;
+    fs::create_dir_all(dir)?;
     let mut file = tempfile::NamedTempFile::new_in(dir)?;
     use std::io::Write;
     file.write_all(content.as_bytes())?;
     file.persist(path)
         .map_err(|error| RiptaskError::Io(error.error))?;
+    Ok(())
+}
+
+pub fn config_set_scoped(
+    paths: &AppPaths,
+    cwd: &Utf8Path,
+    scope: ConfigScope,
+    key: &str,
+    value: &str,
+) -> Result<(), RiptaskError> {
+    let target = scope.resolve(paths, cwd)?;
+    let mut partial = load_layer(target.as_std_path())?.unwrap_or_default();
+    partial_config_set(&mut partial, key, value)?;
+    save_layer(target.as_std_path(), &partial)?;
+    load_effective_config(paths, cwd).map_err(|error| {
+        RiptaskError::Config(format!(
+            "validation failed after writing {}: {}",
+            target, error
+        ))
+    })?;
     Ok(())
 }
 
@@ -123,11 +496,11 @@ pub fn validate_config(config: &mut Config) -> Result<(), RiptaskError> {
     issue_ids::validate_no_key_collisions(&config.projects)?;
     require_unique(
         config.projects.iter().map(|project| project.name.as_str()),
-        "duplicate RepoProject name in riptask.yaml",
+        "duplicate RepoProject name in config.yaml",
     )?;
     require_unique(
         config.boards.iter().map(|board| board.name.as_str()),
-        "duplicate board name in riptask.yaml",
+        "duplicate board name in config.yaml",
     )?;
     validate_ai_command(config)?;
     validate_projects(config)?;
@@ -222,46 +595,78 @@ fn require_unique<'a>(
     Ok(())
 }
 
-pub fn config_set(config: &mut Config, key: &str, value: &str) -> Result<(), RiptaskError> {
+fn partial_config_set(
+    config: &mut PartialConfig,
+    key: &str,
+    value: &str,
+) -> Result<(), RiptaskError> {
     match key {
         "auto_commit" => {
-            config.auto_commit = value
-                .parse()
-                .map_err(|_| RiptaskError::Config("auto_commit must be true or false".into()))?
+            config.auto_commit =
+                Some(value.parse().map_err(|_| {
+                    RiptaskError::Config("auto_commit must be true or false".into())
+                })?)
         }
-        "defaults.board" => config.defaults.board = value.to_owned(),
+        "defaults.board" => {
+            config.defaults.get_or_insert_with(Default::default).board = Some(value.to_owned())
+        }
         "defaults.status" => {
-            config.defaults.status =
-                parse_state(value).map_err(|error| RiptaskError::Config(error.to_string()))?
+            config.defaults.get_or_insert_with(Default::default).status =
+                Some(parse_state(value).map_err(|error| RiptaskError::Config(error.to_string()))?)
         }
         "defaults.priority" => {
-            config.defaults.priority =
-                parse_priority(value).map_err(|error| RiptaskError::Config(error.to_string()))?
+            config
+                .defaults
+                .get_or_insert_with(Default::default)
+                .priority = Some(
+                parse_priority(value).map_err(|error| RiptaskError::Config(error.to_string()))?,
+            )
         }
-        "defaults.assignee" => config.defaults.assignee = some_if_not_empty(value),
-        "defaults.template" => config.defaults.template = some_if_not_empty(value),
-        "ui.opener" => config.ui.opener = some_if_not_empty(value),
+        "defaults.assignee" => {
+            config
+                .defaults
+                .get_or_insert_with(Default::default)
+                .assignee = Some(some_if_not_empty(value))
+        }
+        "defaults.template" => {
+            config
+                .defaults
+                .get_or_insert_with(Default::default)
+                .template = Some(some_if_not_empty(value))
+        }
+        "ui.opener" => {
+            config.ui.get_or_insert_with(Default::default).opener = Some(some_if_not_empty(value))
+        }
         "ui.tree_depth" => {
-            config.ui.tree_depth =
-                if value.is_empty() {
+            config.ui.get_or_insert_with(Default::default).tree_depth =
+                Some(if value.is_empty() {
                     None
                 } else {
                     Some(value.parse().map_err(|_| {
                         RiptaskError::Config("ui.tree_depth must be a number".into())
                     })?)
-                }
+                })
         }
-        "ui.fzf_opts" => config.ui.fzf_opts = some_if_not_empty(value),
+        "ui.fzf_opts" => {
+            config.ui.get_or_insert_with(Default::default).fzf_opts = Some(some_if_not_empty(value))
+        }
         "ai.enabled" => {
-            config.ai.enabled = value
-                .parse()
-                .map_err(|_| RiptaskError::Config("ai.enabled must be true or false".into()))?
+            config.ai.get_or_insert_with(Default::default).enabled = Some(
+                value
+                    .parse()
+                    .map_err(|_| RiptaskError::Config("ai.enabled must be true or false".into()))?,
+            )
         }
-        "ai.command" => config.ai.command = some_if_not_empty(value),
+        "ai.command" => {
+            config.ai.get_or_insert_with(Default::default).command = Some(some_if_not_empty(value))
+        }
         "sync.conflict_detection" => {
-            config.sync.conflict_detection = value.parse().map_err(|_| {
+            config
+                .sync
+                .get_or_insert_with(Default::default)
+                .conflict_detection = Some(value.parse().map_err(|_| {
                 RiptaskError::Config("sync.conflict_detection must be true or false".into())
-            })?
+            })?)
         }
         _ => {
             return Err(RiptaskError::Config(format!(
@@ -269,7 +674,7 @@ pub fn config_set(config: &mut Config, key: &str, value: &str) -> Result<(), Rip
             )));
         }
     }
-    validate_config(config)
+    Ok(())
 }
 
 fn some_if_not_empty(value: &str) -> Option<String> {
@@ -303,37 +708,141 @@ pub fn parse_priority(value: &str) -> anyhow::Result<Priority> {
 
 #[cfg(test)]
 mod tests {
-    use super::{config_set, load_config, parse_priority, parse_state};
+    use super::{
+        PartialConfig, PartialUi, load_effective_config, load_layer, parse_priority, parse_state,
+        save_layer,
+    };
     use crate::error::RiptaskError;
+    use crate::models::{BackendKind, RepoProject, TasksBackendSpec, VCBackendSpec};
+    use crate::paths::AppPaths;
     use std::fs;
     use std::path::Path;
-    use tempfile::NamedTempFile;
+    use tempfile::{NamedTempFile, tempdir};
 
     #[test]
     fn parses_fixture_config() {
-        let config = load_config(std::path::Path::new("tests/fixtures/riptask.yaml"))
-            .expect("load fixture config");
+        let config = load_layer(Path::new("tests/fixtures/config.yaml"))
+            .expect("load layer")
+            .expect("layer")
+            .finalize()
+            .expect("finalize fixture config");
         assert_eq!(config.version, 1);
         assert_eq!(config.projects.len(), 1);
     }
 
     #[test]
-    fn config_set_whitelist_updates_expected_field() {
-        let mut config =
-            load_config(std::path::Path::new("tests/fixtures/riptask.yaml")).expect("load config");
-        config_set(&mut config, "ui.opener", "less").expect("set opener");
-        assert_eq!(config.ui.opener.as_deref(), Some("less"));
-        config_set(&mut config, "auto_commit", "true").expect("set auto_commit");
-        assert!(config.auto_commit);
+    fn merge_scalars_higher_wins() {
+        let lower = PartialConfig {
+            auto_commit: Some(false),
+            ..Default::default()
+        };
+        let higher = PartialConfig {
+            auto_commit: Some(true),
+            ..Default::default()
+        };
+        let merged = PartialConfig::merge(lower, higher);
+        assert_eq!(merged.auto_commit, Some(true));
     }
 
     #[test]
-    fn config_save_round_trip_is_valid_yaml() {
-        let config =
-            load_config(std::path::Path::new("tests/fixtures/riptask.yaml")).expect("load config");
+    fn merge_option_none_preserves_lower() {
+        let lower = PartialConfig {
+            ui: Some(PartialUi {
+                opener: Some(Some("vim".into())),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let higher = PartialConfig {
+            ui: Some(PartialUi::default()),
+            ..Default::default()
+        };
+        let merged = PartialConfig::merge(lower, higher);
+        assert_eq!(merged.ui.unwrap().opener, Some(Some("vim".into())));
+    }
+
+    #[test]
+    fn merge_vec_concat_dedupe_higher_wins() {
+        let lower_project = project("foo", Some("ALPHA"));
+        let higher_project = project("foo", Some("BETA"));
+        let merged = PartialConfig::merge(
+            PartialConfig {
+                projects: vec![lower_project],
+                ..Default::default()
+            },
+            PartialConfig {
+                projects: vec![higher_project],
+                ..Default::default()
+            },
+        );
+        assert_eq!(merged.projects.len(), 1);
+        assert_eq!(merged.projects[0].key.as_deref(), Some("BETA"));
+    }
+
+    #[test]
+    fn merge_empty_vecs() {
+        let merged = PartialConfig::merge(PartialConfig::default(), PartialConfig::default());
+        assert!(merged.projects.is_empty());
+        assert!(merged.boards.is_empty());
+        assert!(merged.recurring.is_empty());
+    }
+
+    #[test]
+    fn finalize_missing_version_uses_default() {
+        let config = PartialConfig::default().finalize().expect("finalize");
+        assert_eq!(config.version, 1);
+    }
+
+    #[test]
+    fn finalize_runs_validate_config() {
+        let config = PartialConfig {
+            projects: vec![project("demo", None)],
+            ..Default::default()
+        }
+        .finalize()
+        .expect("finalize");
+        assert_eq!(config.projects[0].key.as_deref(), Some("DEMO"));
+    }
+
+    #[test]
+    fn finalize_rejects_invalid_merged_result() {
+        let error = PartialConfig {
+            projects: vec![project("one", Some("DUP")), project("two", Some("DUP"))],
+            ..Default::default()
+        }
+        .finalize()
+        .expect_err("collision");
+        assert!(matches!(error, RiptaskError::KeyCollision(_)));
+    }
+
+    #[test]
+    fn load_layer_rejects_unknown_field_with_file_in_message() {
         let file = NamedTempFile::new().expect("temp file");
-        super::save_config(file.path(), &config).expect("save config");
-        let reparsed = load_config(file.path()).expect("reload config");
+        fs::write(file.path(), "version: 1\nunknown: true\n").expect("write yaml");
+        let error = load_layer(file.path()).expect_err("unknown field");
+        match error {
+            RiptaskError::Config(message) => {
+                assert!(message.contains(&file.path().display().to_string()));
+                assert!(message.contains("unknown"));
+            }
+            other => panic!("expected config error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn save_layer_round_trip_is_valid_yaml() {
+        let config = load_layer(Path::new("tests/fixtures/config.yaml"))
+            .expect("load layer")
+            .expect("layer")
+            .finalize()
+            .expect("finalize");
+        let file = NamedTempFile::new().expect("temp file");
+        save_layer(file.path(), &PartialConfig::from(config)).expect("save layer");
+        let reparsed = load_layer(file.path())
+            .expect("reload layer")
+            .expect("layer")
+            .finalize()
+            .expect("finalize");
         assert_eq!(reparsed.version, 1);
     }
 
@@ -350,30 +859,12 @@ mod tests {
     }
 
     #[test]
-    fn config_set_ai_command_stores_value() {
-        let mut config = load_config(Path::new("tests/fixtures/riptask.yaml")).expect("load");
-        config_set(&mut config, "ai.command", "echo {{input}}").expect("set");
-        assert_eq!(config.ai.command.as_deref(), Some("echo {{input}}"));
-    }
-
-    #[test]
-    fn config_set_ai_command_empty_clears() {
-        let mut config = load_config(Path::new("tests/fixtures/riptask.yaml")).expect("load");
-        config_set(&mut config, "ai.command", "echo {{input}}").expect("set");
-        config_set(&mut config, "ai.command", "").expect("clear");
-        assert!(config.ai.command.is_none());
-    }
-
-    #[test]
-    fn config_rejects_ai_command_without_input_placeholder() {
-        let mut config = load_config(Path::new("tests/fixtures/riptask.yaml")).expect("load");
-        let result = config_set(&mut config, "ai.command", "echo hello");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn load_config_normalizes_legacy_key_without_rewriting_file() {
-        let file = NamedTempFile::new().expect("temp file");
+    fn load_effective_config_normalizes_legacy_key_without_rewriting_file() {
+        let temp = tempdir().expect("temp dir");
+        let system = temp.path().join("repo");
+        let user = temp.path().join("user");
+        fs::create_dir_all(&system).expect("system dir");
+        let config_path = system.join("config.yaml");
         let yaml = r#"version: 1
 defaults:
   board: personal
@@ -408,110 +899,60 @@ sync:
   conflict_detection: true
 recurring: []
 "#;
-        fs::write(file.path(), yaml).expect("write yaml");
-        let before = fs::read_to_string(file.path()).expect("before");
+        fs::write(&config_path, yaml).expect("write yaml");
+        let before = fs::read_to_string(&config_path).expect("before");
+        let paths = AppPaths {
+            riptask_repo: system.to_string_lossy().to_string().into(),
+            user_config_root: user.to_string_lossy().to_string().into(),
+            cache_root: temp
+                .path()
+                .join("cache")
+                .to_string_lossy()
+                .to_string()
+                .into(),
+            state_root: temp
+                .path()
+                .join("state")
+                .to_string_lossy()
+                .to_string()
+                .into(),
+        };
 
-        let config = load_config(file.path()).expect("load");
+        let config =
+            load_effective_config(&paths, camino::Utf8Path::new("/tmp")).expect("load effective");
 
-        // Normalization populates the in-memory key from the derived default.
         assert_eq!(config.projects[0].key.as_deref(), Some("DEMO"));
-        // But loading must never rewrite the file on disk.
-        let after = fs::read_to_string(file.path()).expect("after");
+        let after = fs::read_to_string(&config_path).expect("after");
         assert_eq!(before, after);
     }
 
     #[test]
-    fn load_config_returns_structured_key_collision() {
-        let file = NamedTempFile::new().expect("temp file");
-        let yaml = r#"version: 1
-defaults:
-  board: personal
-  status: todo
-  priority: medium
-  assignee: ~
-  template: task
-projects:
-  - name: alpha-one
-    vc_backend:
-      type: github
-      repo: owner/alpha
-    tasks_backend:
-      type: github
-      repo: owner/alpha
-    default_board: personal
-  - name: alpha-two
-    vc_backend:
-      type: github
-      repo: other/alpha
-    tasks_backend:
-      type: github
-      repo: other/alpha
-    default_board: personal
-boards:
-  - name: personal
-    statuses: [backlog, todo, in-progress, review, done]
-ui:
-  opener: "nvim -R"
-  tree_depth: 2
-  fzf_opts: "--border"
-ai:
-  enabled: false
-  features:
-    new_body_gen: true
-    triage: true
-    summarize: true
-    ask: true
-sync:
-  conflict_detection: true
-recurring: []
-"#;
-        fs::write(file.path(), yaml).expect("write yaml");
-
-        let error = load_config(file.path()).expect_err("collision");
+    fn load_effective_config_returns_structured_key_collision() {
+        let mut alpha_one = project("alpha-one", None);
+        alpha_one.vc_backend.repo = Some("owner/alpha".into());
+        alpha_one.tasks_backend.repo = Some("owner/alpha".into());
+        let mut alpha_two = project("alpha-two", None);
+        alpha_two.vc_backend.repo = Some("other/alpha".into());
+        alpha_two.tasks_backend.repo = Some("other/alpha".into());
+        let error = PartialConfig {
+            projects: vec![alpha_one, alpha_two],
+            ..Default::default()
+        }
+        .finalize()
+        .expect_err("collision");
         assert!(matches!(error, RiptaskError::KeyCollision(_)));
     }
 
     #[test]
-    fn load_config_rejects_repo_project_label_on_non_jira_backend() {
-        let file = NamedTempFile::new().expect("temp file");
-        let yaml = r#"version: 1
-defaults:
-  board: personal
-  status: todo
-  priority: medium
-  assignee: ~
-  template: task
-projects:
-  - name: demo
-    vc_backend:
-      type: github
-      repo: owner/demo
-    tasks_backend:
-      type: github
-      repo: owner/demo
-    default_board: personal
-    repo_project_label: proj::demo
-boards:
-  - name: personal
-    statuses: [backlog, todo, in-progress, review, done]
-ui:
-  opener: "nvim -R"
-  tree_depth: 2
-  fzf_opts: "--border"
-ai:
-  enabled: false
-  features:
-    new_body_gen: true
-    triage: true
-    summarize: true
-    ask: true
-sync:
-  conflict_detection: true
-recurring: []
-"#;
-        fs::write(file.path(), yaml).expect("write yaml");
-
-        let error = load_config(file.path()).expect_err("label on non-Jira should fail");
+    fn finalize_rejects_repo_project_label_on_non_jira_backend() {
+        let mut repo_project = project("demo", None);
+        repo_project.repo_project_label = Some("proj::demo".into());
+        let error = PartialConfig {
+            projects: vec![repo_project],
+            ..Default::default()
+        }
+        .finalize()
+        .expect_err("label on non-Jira should fail");
         match error {
             RiptaskError::Config(msg) => {
                 assert!(
@@ -520,6 +961,30 @@ recurring: []
                 );
             }
             other => panic!("expected RiptaskError::Config, got {other:?}"),
+        }
+    }
+
+    fn project(name: &str, key: Option<&str>) -> RepoProject {
+        RepoProject {
+            name: name.into(),
+            vc_backend: VCBackendSpec {
+                kind: BackendKind::Github,
+                host: None,
+                repo: Some(format!("owner/{name}")),
+                path: None,
+            },
+            tasks_backend: TasksBackendSpec {
+                kind: BackendKind::Github,
+                host: None,
+                repo: Some(format!("owner/{name}")),
+                jira_project: None,
+                default_issue_type: None,
+                path: None,
+            },
+            default_board: Some("personal".into()),
+            default_org: None,
+            key: key.map(str::to_owned),
+            repo_project_label: None,
         }
     }
 }

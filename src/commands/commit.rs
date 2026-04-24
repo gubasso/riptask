@@ -2,7 +2,7 @@ use crate::adapters::ai::AiBackend;
 use crate::adapters::git::{CliGit, GitBackend};
 use crate::cli::CommitArgs;
 use crate::commands::ai::optional_backend;
-use crate::config::load_config;
+use crate::config::load_effective_config;
 use crate::error::RiptaskError;
 use crate::paths::AppPaths;
 use std::process::Command;
@@ -15,7 +15,15 @@ enum ConfirmChoice {
 
 pub fn run(paths: &AppPaths, args: CommitArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path())?;
+    let config = load_effective_config(
+        paths,
+        &camino::Utf8PathBuf::from(
+            std::env::current_dir()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
+        ),
+    )?;
 
     let cwd = std::env::current_dir().map_err(|e| {
         RiptaskError::General(format!("failed to determine current directory: {e}"))

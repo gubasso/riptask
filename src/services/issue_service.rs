@@ -562,7 +562,7 @@ fn matches_issue(issue: &IssueDocument, args: &LsArgs) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{IssueService, generate_branch_slug, generate_slug};
-    use crate::config::load_config;
+    use crate::config::load_effective_config;
     use crate::paths::AppPaths;
     use tempfile::tempdir;
 
@@ -601,16 +601,26 @@ mod tests {
         std::fs::create_dir_all(repo.join("issues")).expect("issues dir");
         std::fs::create_dir_all(repo.join("templates")).expect("templates dir");
         std::fs::write(
-            repo.join("riptask.yaml"),
-            include_str!("../../tests/fixtures/riptask.yaml"),
+            repo.join("config.yaml"),
+            include_str!("../../tests/fixtures/config.yaml"),
         )
         .expect("config");
         let paths = AppPaths {
             riptask_repo: repo.to_string_lossy().as_ref().into(),
+            user_config_root: temp.path().join("user").to_string_lossy().as_ref().into(),
             cache_root: cache.to_string_lossy().as_ref().into(),
             state_root: temp.path().join("state").to_string_lossy().as_ref().into(),
         };
-        let config = load_config(paths.config_path().as_std_path()).expect("config");
+        let config = load_effective_config(
+            &paths,
+            &camino::Utf8PathBuf::from(
+                std::env::current_dir()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string(),
+            ),
+        )
+        .expect("config");
         let service = IssueService::new(&paths, &config);
         assert_eq!(
             service

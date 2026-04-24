@@ -5,7 +5,7 @@ use crate::adapters::picker::{
 };
 use crate::adapters::prompts::{DialoguerPrompts, PromptBackend};
 use crate::cli::{IdArgs, LsArgs, NewArgs, StatusArgs};
-use crate::config::{load_config, parse_state};
+use crate::config::{load_effective_config, parse_state};
 use crate::domain::issue::{
     GithubIssueMeta, GitlabIssueMeta, IssueDocument, IssueFrontmatter, IssueState, JiraIssueMeta,
     Priority,
@@ -28,7 +28,15 @@ use std::io::IsTerminal;
 pub fn show(paths: &AppPaths, args: IdArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
     let IdArgs { scope, id, pick } = args;
-    let config = load_config(paths.config_path().as_std_path())?;
+    let config = load_effective_config(
+        paths,
+        &camino::Utf8PathBuf::from(
+            std::env::current_dir()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
+        ),
+    )?;
     let cwd = camino::Utf8PathBuf::from(
         std::env::current_dir()
             .unwrap_or_default()
@@ -53,7 +61,15 @@ pub fn show(paths: &AppPaths, args: IdArgs) -> Result<(), RiptaskError> {
 pub fn path(paths: &AppPaths, args: IdArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
     let IdArgs { scope, id, pick } = args;
-    let config = load_config(paths.config_path().as_std_path())?;
+    let config = load_effective_config(
+        paths,
+        &camino::Utf8PathBuf::from(
+            std::env::current_dir()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
+        ),
+    )?;
     let cwd = camino::Utf8PathBuf::from(
         std::env::current_dir()
             .unwrap_or_default()
@@ -70,7 +86,15 @@ pub fn path(paths: &AppPaths, args: IdArgs) -> Result<(), RiptaskError> {
 
 pub fn list(paths: &AppPaths, args: LsArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path())?;
+    let config = load_effective_config(
+        paths,
+        &camino::Utf8PathBuf::from(
+            std::env::current_dir()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
+        ),
+    )?;
     let cwd = camino::Utf8PathBuf::from(
         std::env::current_dir()
             .unwrap_or_default()
@@ -258,7 +282,15 @@ pub(crate) async fn create_issue_from_args(
     args: NewArgs,
 ) -> Result<(IssueDocument, camino::Utf8PathBuf), RiptaskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path())?;
+    let config = load_effective_config(
+        paths,
+        &camino::Utf8PathBuf::from(
+            std::env::current_dir()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
+        ),
+    )?;
     let mut args = args;
     let cwd = camino::Utf8PathBuf::from(
         std::env::current_dir()
@@ -530,7 +562,15 @@ fn style_with_color(text: String, color: Color) -> console::StyledObject<String>
 pub fn edit(paths: &AppPaths, args: IdArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
     let IdArgs { scope, id, pick } = args;
-    let config = load_config(paths.config_path().as_std_path())?;
+    let config = load_effective_config(
+        paths,
+        &camino::Utf8PathBuf::from(
+            std::env::current_dir()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
+        ),
+    )?;
     let cwd = camino::Utf8PathBuf::from(
         std::env::current_dir()
             .unwrap_or_default()
@@ -571,7 +611,15 @@ pub fn set_status(paths: &AppPaths, args: StatusArgs) -> Result<(), RiptaskError
         status,
         pick,
     } = args;
-    let config = load_config(paths.config_path().as_std_path())?;
+    let config = load_effective_config(
+        paths,
+        &camino::Utf8PathBuf::from(
+            std::env::current_dir()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
+        ),
+    )?;
     let cwd = camino::Utf8PathBuf::from(
         std::env::current_dir()
             .unwrap_or_default()
@@ -630,7 +678,15 @@ pub fn reopen(paths: &AppPaths, args: IdArgs) -> Result<(), RiptaskError> {
 pub fn remove(paths: &AppPaths, args: IdArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
     let IdArgs { scope, id, pick } = args;
-    let config = load_config(paths.config_path().as_std_path())?;
+    let config = load_effective_config(
+        paths,
+        &camino::Utf8PathBuf::from(
+            std::env::current_dir()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
+        ),
+    )?;
     let cwd = camino::Utf8PathBuf::from(
         std::env::current_dir()
             .unwrap_or_default()

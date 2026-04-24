@@ -210,7 +210,7 @@ fn run_fzf_issue(
     run_fzf_with_args(input, prompt, extra_opts, &all_args)
 }
 
-fn run_fzf_with_args(
+pub(crate) fn run_fzf_with_args(
     input: &str,
     prompt: &str,
     extra_opts: Option<&str>,
@@ -226,7 +226,7 @@ fn run_fzf_with_args(
     command.args(args);
     command.stdin(Stdio::piped()).stdout(Stdio::piped());
     let mut child = command.spawn().map_err(|_| {
-        RiptaskError::General("<ID> required (install fzf for interactive selection)".into())
+        RiptaskError::General("fzf not found (required for interactive selection)".into())
     })?;
     if let Some(stdin) = child.stdin.as_mut() {
         use std::io::Write;

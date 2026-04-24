@@ -27,6 +27,16 @@ Rules:
 - The `--project` / `-p` CLI flag keeps its name; it now literally selects a RepoProject by name (no change in behavior — just cleanly matches the terminology).
 - `IssueFrontmatter.project: String` keeps its name; it stores `RepoProject.name`.
 
+## Config Hierarchy
+
+riptask loads config from three YAML layers, lowest precedence to highest:
+
+- System: `$RIPTASK_REPO/config.yaml`
+- User: `$XDG_CONFIG_HOME/riptask/config.yaml`
+- Local: `<project-root>/.riptask/config.yaml`
+
+Layer files are parsed as partial config and merged before validation. `tsk config set` and `tsk config edit` accept `--system`, `--global`, and `--local`; unscoped writes use Local inside a project and User otherwise.
+
 ## Pre-commit configs
 
 - `.pre-commit-config.yaml` — active repository config

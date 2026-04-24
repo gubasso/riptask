@@ -20,7 +20,7 @@
 ~/.local/share/riptask/  ($RIPTASK_REPO)
 ├── issues/        ✅ version — SoT for all issue content
 ├── templates/     ✅ version — SoT for templates
-└── riptask.yaml       ✅ version — config, registered remotes (no secrets)
+└── config.yaml       ✅ version — config, registered remotes (no secrets)
 
 ~/.cache/riptask/      (outside repo — not versioned, not gitignored, just absent)
 ├── views/         generated view tree (file copies from $RIPTASK_REPO/issues/)
@@ -68,7 +68,7 @@ riptask: session end host-a 2026-03-14
 ```bash
 git-crypt init
 echo "issues/** filter=git-crypt diff=git-crypt" >> .gitattributes
-echo "riptask.yaml filter=git-crypt diff=git-crypt" >> .gitattributes
+echo "config.yaml filter=git-crypt diff=git-crypt" >> .gitattributes
 git-crypt add-gpg-user YOUR_GPG_KEY_ID
 # from this point: normal git workflow, GitHub stores ciphertext
 ```

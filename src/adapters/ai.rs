@@ -394,12 +394,12 @@ fn run_ai(template: &str, system: &str, input: &str) -> Result<String, RiptaskEr
     env.set_undefined_behavior(minijinja::UndefinedBehavior::Strict);
     env.add_template("cmd", template).map_err(|e| {
         RiptaskError::Config(format!(
-            "invalid ai.command template: {e}\n  hint: check ai.command syntax in riptask.yaml"
+            "invalid ai.command template: {e}\n  hint: check ai.command syntax in config.yaml"
         ))
     })?;
     let tmpl = env.get_template("cmd").map_err(|e| {
         RiptaskError::Config(format!(
-            "invalid ai.command template: {e}\n  hint: check ai.command syntax in riptask.yaml"
+            "invalid ai.command template: {e}\n  hint: check ai.command syntax in config.yaml"
         ))
     })?;
     let rendered = tmpl
@@ -410,7 +410,7 @@ fn run_ai(template: &str, system: &str, input: &str) -> Result<String, RiptaskEr
         })
         .map_err(|e| {
             RiptaskError::Config(format!(
-                "failed to render ai.command template: {e}\n  hint: check ai.command syntax in riptask.yaml"
+                "failed to render ai.command template: {e}\n  hint: check ai.command syntax in config.yaml"
             ))
         })?;
 

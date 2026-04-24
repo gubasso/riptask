@@ -1,6 +1,6 @@
 # Sync with GitHub, GitLab, Jira
 
-RepoProjects are configured in `riptask.yaml` under `projects:`.
+RepoProjects are configured in `config.yaml` under `projects:`.
 
 Sync data flow:
 
@@ -63,7 +63,7 @@ Detection rules:
 - local git repo with no supported remote -> `local`
 - non-git directory -> `local`
 
-Jira TasksBackends are not auto-detected from git remotes. Add Jira-backed RepoProjects manually in `riptask.yaml`.
+Jira TasksBackends are not auto-detected from git remotes. Add Jira-backed RepoProjects manually in `config.yaml`.
 
 `tsk` also performs best-effort project auto-registration on startup when the current directory is not already registered.
 
