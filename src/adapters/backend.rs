@@ -12,7 +12,7 @@
 //! enabling natural configurations like "issues in Jira, PRs on GitHub" via the
 //! `vc` config field.
 
-use crate::error::RiptskError;
+use crate::error::RiptaskError;
 use async_trait::async_trait;
 use serde::Serialize;
 
@@ -133,20 +133,23 @@ pub struct CiPresence {
 /// - Jira: `"org/PROJECT_KEY"` — org is user-chosen, PROJECT_KEY is the Jira project
 #[async_trait]
 pub trait IssueTracker: Send + Sync {
-    async fn list_issues(&self, repo: &str) -> Result<Vec<BackendIssueRecord>, RiptskError>;
-    async fn get_issue(&self, repo: &str, issue_id: u64)
-    -> Result<BackendIssueRecord, RiptskError>;
+    async fn list_issues(&self, repo: &str) -> Result<Vec<BackendIssueRecord>, RiptaskError>;
+    async fn get_issue(
+        &self,
+        repo: &str,
+        issue_id: u64,
+    ) -> Result<BackendIssueRecord, RiptaskError>;
     async fn create_issue(
         &self,
         repo: &str,
         issue: &BackendIssueUpsert,
-    ) -> Result<BackendIssueRecord, RiptskError>;
+    ) -> Result<BackendIssueRecord, RiptaskError>;
     async fn update_issue(
         &self,
         repo: &str,
         issue_id: u64,
         issue: &BackendIssueUpsert,
-    ) -> Result<BackendIssueRecord, RiptskError>;
+    ) -> Result<BackendIssueRecord, RiptaskError>;
     /// Close an issue. `state_reason` maps to Jira resolutions ("completed" → "Done",
     /// "not_planned" → "Won't Do", "duplicate" → "Duplicate") and GitHub close reasons.
     async fn close_issue(
@@ -154,22 +157,22 @@ pub trait IssueTracker: Send + Sync {
         repo: &str,
         issue_id: u64,
         state_reason: Option<&str>,
-    ) -> Result<(), RiptskError>;
-    async fn reopen_issue(&self, repo: &str, issue_id: u64) -> Result<(), RiptskError>;
-    async fn delete_issue(&self, repo: &str, issue_id: u64) -> Result<DeleteOutcome, RiptskError>;
+    ) -> Result<(), RiptaskError>;
+    async fn reopen_issue(&self, repo: &str, issue_id: u64) -> Result<(), RiptaskError>;
+    async fn delete_issue(&self, repo: &str, issue_id: u64) -> Result<DeleteOutcome, RiptaskError>;
     async fn lock_issue(
         &self,
         repo: &str,
         issue_id: u64,
         reason: Option<&str>,
-    ) -> Result<(), RiptskError>;
-    async fn unlock_issue(&self, repo: &str, issue_id: u64) -> Result<(), RiptskError>;
+    ) -> Result<(), RiptaskError>;
+    async fn unlock_issue(&self, repo: &str, issue_id: u64) -> Result<(), RiptaskError>;
     async fn sync_labels(
         &self,
         repo: &str,
         issue_id: u64,
         labels: &[String],
-    ) -> Result<(), RiptskError>;
+    ) -> Result<(), RiptaskError>;
 }
 
 /// Version control operations — implemented by GitHub and GitLab only.
@@ -184,21 +187,21 @@ pub trait VersionControl: Send + Sync {
         base: &str,
         title: &str,
         body: &str,
-    ) -> Result<BackendPrRecord, RiptskError>;
-    async fn get_pr(&self, repo: &str, number: u64) -> Result<BackendPrRecord, RiptskError>;
+    ) -> Result<BackendPrRecord, RiptaskError>;
+    async fn get_pr(&self, repo: &str, number: u64) -> Result<BackendPrRecord, RiptaskError>;
     async fn update_pr(
         &self,
         repo: &str,
         number: u64,
         title: &str,
         body: &str,
-    ) -> Result<BackendPrRecord, RiptskError>;
+    ) -> Result<BackendPrRecord, RiptaskError>;
     async fn find_pr_by_branch(
         &self,
         repo: &str,
         head: &str,
         base: &str,
-    ) -> Result<Option<BackendPrRecord>, RiptskError>;
+    ) -> Result<Option<BackendPrRecord>, RiptaskError>;
     async fn merge_pr(
         &self,
         repo: &str,
@@ -206,13 +209,13 @@ pub trait VersionControl: Send + Sync {
         method: MergeMethod,
         commit_title: Option<&str>,
         commit_message: Option<&str>,
-    ) -> Result<(), RiptskError>;
+    ) -> Result<(), RiptaskError>;
     async fn get_pr_checks_status(
         &self,
         repo: &str,
         number: u64,
-    ) -> Result<PrChecksStatus, RiptskError>;
-    async fn get_ci_presence(&self, repo: &str) -> Result<CiPresence, RiptskError>;
+    ) -> Result<PrChecksStatus, RiptaskError>;
+    async fn get_ci_presence(&self, repo: &str) -> Result<CiPresence, RiptaskError>;
     /// Create a branch. `issue_id` is passed through so GitHub can create a
     /// linked branch (GraphQL `createLinkedBranch`). GitLab may ignore it.
     /// This is data flow from the calling command, not trait coupling.
@@ -222,9 +225,9 @@ pub trait VersionControl: Send + Sync {
         branch_name: &str,
         base_ref: &str,
         issue_id: Option<u64>,
-    ) -> Result<(), RiptskError>;
-    async fn default_branch(&self, repo: &str) -> Result<String, RiptskError>;
-    async fn delete_branch(&self, repo: &str, branch_name: &str) -> Result<(), RiptskError>;
+    ) -> Result<(), RiptaskError>;
+    async fn default_branch(&self, repo: &str) -> Result<String, RiptaskError>;
+    async fn delete_branch(&self, repo: &str, branch_name: &str) -> Result<(), RiptaskError>;
 }
 
 /// Convenience: backends that provide both issue tracking and version control (GitHub, GitLab).

@@ -3,7 +3,7 @@ use crate::adapters::git::{CliGit, GitBackend};
 use crate::cli::CommitArgs;
 use crate::commands::ai::optional_backend;
 use crate::config::load_config;
-use crate::error::RiptskError;
+use crate::error::RiptaskError;
 use crate::paths::AppPaths;
 use std::process::Command;
 
@@ -13,12 +13,13 @@ enum ConfirmChoice {
     Cancel,
 }
 
-pub fn run(paths: &AppPaths, args: CommitArgs) -> Result<(), RiptskError> {
+pub fn run(paths: &AppPaths, args: CommitArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
     let config = load_config(paths.config_path().as_std_path())?;
 
-    let cwd = std::env::current_dir()
-        .map_err(|e| RiptskError::General(format!("failed to determine current directory: {e}")))?;
+    let cwd = std::env::current_dir().map_err(|e| {
+        RiptaskError::General(format!("failed to determine current directory: {e}"))
+    })?;
 
     let git = CliGit::new();
     let repo = git.repo_root(&cwd)?;
@@ -28,7 +29,7 @@ pub fn run(paths: &AppPaths, args: CommitArgs) -> Result<(), RiptskError> {
     }
 
     if !git.has_staged_changes(&repo)? {
-        return Err(RiptskError::General("no staged changes to commit".into()));
+        return Err(RiptaskError::General("no staged changes to commit".into()));
     }
 
     if let Some(msg) = args.message {
@@ -54,7 +55,7 @@ pub fn run(paths: &AppPaths, args: CommitArgs) -> Result<(), RiptskError> {
 
     let diff = git.staged_diff(&repo)?;
     if diff.is_empty() {
-        return Err(RiptskError::General(
+        return Err(RiptaskError::General(
             "staged diff is empty, cannot generate commit message".into(),
         ));
     }
@@ -123,7 +124,7 @@ fn confirm_message(message: &str) -> ConfirmChoice {
     }
 }
 
-fn open_editor_commit(repo: &std::path::Path, seed: &str) -> Result<(), RiptskError> {
+fn open_editor_commit(repo: &std::path::Path, seed: &str) -> Result<(), RiptaskError> {
     let mut cmd = Command::new("git");
     cmd.arg("-C").arg(repo).arg("commit");
     if !seed.is_empty() {
@@ -131,35 +132,35 @@ fn open_editor_commit(repo: &std::path::Path, seed: &str) -> Result<(), RiptskEr
     }
     let status = cmd
         .status()
-        .map_err(|e| RiptskError::General(format!("failed to run git commit: {e}")))?;
+        .map_err(|e| RiptaskError::General(format!("failed to run git commit: {e}")))?;
     if !status.success() {
-        return Err(RiptskError::General("git commit failed".into()));
+        return Err(RiptaskError::General("git commit failed".into()));
     }
     Ok(())
 }
 
-fn run_git_commit(repo: &std::path::Path, message: &str) -> Result<(), RiptskError> {
+fn run_git_commit(repo: &std::path::Path, message: &str) -> Result<(), RiptaskError> {
     let status = Command::new("git")
         .arg("-C")
         .arg(repo)
         .args(["commit", "-m", message])
         .status()
-        .map_err(|e| RiptskError::General(format!("failed to run git commit: {e}")))?;
+        .map_err(|e| RiptaskError::General(format!("failed to run git commit: {e}")))?;
     if !status.success() {
-        return Err(RiptskError::General("git commit failed".into()));
+        return Err(RiptaskError::General("git commit failed".into()));
     }
     Ok(())
 }
 
-fn run_git_commit_edit(repo: &std::path::Path, message: &str) -> Result<(), RiptskError> {
+fn run_git_commit_edit(repo: &std::path::Path, message: &str) -> Result<(), RiptaskError> {
     let status = Command::new("git")
         .arg("-C")
         .arg(repo)
         .args(["commit", "--edit", "-m", message])
         .status()
-        .map_err(|e| RiptskError::General(format!("failed to run git commit: {e}")))?;
+        .map_err(|e| RiptaskError::General(format!("failed to run git commit: {e}")))?;
     if !status.success() {
-        return Err(RiptskError::General("git commit failed".into()));
+        return Err(RiptaskError::General("git commit failed".into()));
     }
     Ok(())
 }

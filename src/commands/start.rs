@@ -2,7 +2,7 @@ use crate::adapters::git::{CliGit, GitBackend};
 use crate::cli::{NewArgs, PrCreateArgs, ScopeArgs, StartArgs};
 use crate::commands::{branch, issues, pr};
 use crate::config::{Config, load_config};
-use crate::error::RiptskError;
+use crate::error::RiptaskError;
 use crate::models::BackendKind;
 use crate::paths::AppPaths;
 use crate::services::backend_mapping::build_version_control;
@@ -12,7 +12,7 @@ use crate::services::project_detection;
 use crate::storage::issue_store;
 use camino::Utf8Path;
 
-pub async fn run(paths: &AppPaths, mut args: StartArgs) -> Result<(), RiptskError> {
+pub async fn run(paths: &AppPaths, mut args: StartArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
     let config = load_config(paths.config_path().as_std_path())?;
     let cwd = id_resolution::cwd_utf8();
@@ -90,7 +90,7 @@ pub async fn run(paths: &AppPaths, mut args: StartArgs) -> Result<(), RiptskErro
         .projects
         .iter()
         .find(|repo_project| repo_project.name == issue.frontmatter.project)
-        .ok_or_else(|| RiptskError::Unregistered(issue.frontmatter.project.clone()))?;
+        .ok_or_else(|| RiptaskError::Unregistered(issue.frontmatter.project.clone()))?;
 
     let has_vc = repo_project.vc_backend.kind != BackendKind::Local;
 

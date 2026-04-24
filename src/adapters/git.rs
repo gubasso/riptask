@@ -1,77 +1,78 @@
-use crate::error::RiptskError;
+use crate::error::RiptaskError;
 use crate::services::backend_mapping::GitHttpAuth;
 use std::io::Write;
 use std::path::Path;
 use std::process::Command;
 
 pub trait GitBackend {
-    fn init(&self, path: &Path) -> Result<(), RiptskError>;
-    fn add(&self, repo: &Path, files: &[&Path]) -> Result<(), RiptskError>;
-    fn commit(&self, repo: &Path, message: &str) -> Result<(), RiptskError>;
-    fn repo_root(&self, cwd: &Path) -> Result<std::path::PathBuf, RiptskError>;
-    fn merge_file(&self, local: &Path, base: &Path, remote: &Path) -> Result<String, RiptskError>;
-    fn has_changes(&self, repo: &Path) -> Result<bool, RiptskError>;
-    fn has_uncommitted_changes(&self, repo: &Path) -> Result<bool, RiptskError>;
-    fn pull(&self, repo: &Path) -> Result<(), RiptskError>;
-    fn push(&self, repo: &Path) -> Result<(), RiptskError>;
-    fn checkout(&self, repo: &Path, branch: &str) -> Result<(), RiptskError>;
-    fn create_branch(&self, repo: &Path, name: &str) -> Result<(), RiptskError>;
-    fn branch_exists(&self, repo: &Path, name: &str) -> Result<bool, RiptskError>;
-    fn fetch_and_checkout_tracking(&self, repo: &Path, branch: &str) -> Result<(), RiptskError>;
-    fn push_with_upstream(&self, repo: &Path, branch: &str) -> Result<(), RiptskError>;
-    fn has_working_tree_changes(&self, repo: &Path) -> Result<bool, RiptskError>;
-    fn diff_names(&self, repo: &Path) -> Result<Vec<String>, RiptskError>;
-    fn current_branch(&self, repo: &Path) -> Result<String, RiptskError>;
-    fn remote_url(&self, repo: &Path, remote: &str) -> Result<String, RiptskError>;
+    fn init(&self, path: &Path) -> Result<(), RiptaskError>;
+    fn add(&self, repo: &Path, files: &[&Path]) -> Result<(), RiptaskError>;
+    fn commit(&self, repo: &Path, message: &str) -> Result<(), RiptaskError>;
+    fn repo_root(&self, cwd: &Path) -> Result<std::path::PathBuf, RiptaskError>;
+    fn merge_file(&self, local: &Path, base: &Path, remote: &Path) -> Result<String, RiptaskError>;
+    fn has_changes(&self, repo: &Path) -> Result<bool, RiptaskError>;
+    fn has_uncommitted_changes(&self, repo: &Path) -> Result<bool, RiptaskError>;
+    fn pull(&self, repo: &Path) -> Result<(), RiptaskError>;
+    fn push(&self, repo: &Path) -> Result<(), RiptaskError>;
+    fn checkout(&self, repo: &Path, branch: &str) -> Result<(), RiptaskError>;
+    fn create_branch(&self, repo: &Path, name: &str) -> Result<(), RiptaskError>;
+    fn branch_exists(&self, repo: &Path, name: &str) -> Result<bool, RiptaskError>;
+    fn fetch_and_checkout_tracking(&self, repo: &Path, branch: &str) -> Result<(), RiptaskError>;
+    fn push_with_upstream(&self, repo: &Path, branch: &str) -> Result<(), RiptaskError>;
+    fn has_working_tree_changes(&self, repo: &Path) -> Result<bool, RiptaskError>;
+    fn diff_names(&self, repo: &Path) -> Result<Vec<String>, RiptaskError>;
+    fn current_branch(&self, repo: &Path) -> Result<String, RiptaskError>;
+    fn remote_url(&self, repo: &Path, remote: &str) -> Result<String, RiptaskError>;
     fn delete_local_branch(
         &self,
         repo: &Path,
         branch: &str,
         force: bool,
-    ) -> Result<(), RiptskError>;
-    fn has_staged_changes(&self, repo: &Path) -> Result<bool, RiptskError>;
-    fn stage_all(&self, repo: &Path) -> Result<(), RiptskError>;
-    fn is_branch_merged(&self, repo: &Path, branch: &str, base: &str) -> Result<bool, RiptskError>;
-    fn fetch(&self, repo: &Path) -> Result<(), RiptskError>;
+    ) -> Result<(), RiptaskError>;
+    fn has_staged_changes(&self, repo: &Path) -> Result<bool, RiptaskError>;
+    fn stage_all(&self, repo: &Path) -> Result<(), RiptaskError>;
+    fn is_branch_merged(&self, repo: &Path, branch: &str, base: &str)
+    -> Result<bool, RiptaskError>;
+    fn fetch(&self, repo: &Path) -> Result<(), RiptaskError>;
     fn commits_ahead_of_base(
         &self,
         repo: &Path,
         branch: &str,
         base: &str,
-    ) -> Result<u64, RiptskError>;
-    fn create_empty_commit(&self, repo: &Path, message: &str) -> Result<(), RiptskError>;
+    ) -> Result<u64, RiptaskError>;
+    fn create_empty_commit(&self, repo: &Path, message: &str) -> Result<(), RiptaskError>;
     fn find_commit_by_subject(
         &self,
         repo: &Path,
         branch: &str,
         base: &str,
         subject: &str,
-    ) -> Result<Option<String>, RiptskError>;
+    ) -> Result<Option<String>, RiptaskError>;
     fn rebase_drop_commit(
         &self,
         repo: &Path,
         commit_sha: &str,
         branch: &str,
-    ) -> Result<(), RiptskError>;
-    fn force_push_with_lease(&self, repo: &Path, branch: &str) -> Result<(), RiptskError>;
-    fn force_push(&self, repo: &Path, branch: &str) -> Result<(), RiptskError>;
-    fn log_between(&self, repo: &Path, base: &str, head: &str) -> Result<String, RiptskError>;
-    fn diff_between(&self, repo: &Path, base: &str, head: &str) -> Result<String, RiptskError>;
-    fn working_tree_diff(&self, repo: &Path) -> Result<String, RiptskError>;
-    fn staged_diff(&self, repo: &Path) -> Result<String, RiptskError>;
-    fn head_sha(&self, repo: &Path) -> Result<String, RiptskError>;
+    ) -> Result<(), RiptaskError>;
+    fn force_push_with_lease(&self, repo: &Path, branch: &str) -> Result<(), RiptaskError>;
+    fn force_push(&self, repo: &Path, branch: &str) -> Result<(), RiptaskError>;
+    fn log_between(&self, repo: &Path, base: &str, head: &str) -> Result<String, RiptaskError>;
+    fn diff_between(&self, repo: &Path, base: &str, head: &str) -> Result<String, RiptaskError>;
+    fn working_tree_diff(&self, repo: &Path) -> Result<String, RiptaskError>;
+    fn staged_diff(&self, repo: &Path) -> Result<String, RiptaskError>;
+    fn head_sha(&self, repo: &Path) -> Result<String, RiptaskError>;
     fn clone_with_reference(
         &self,
         reference_repo: &Path,
         remote_url: &str,
         target_dir: &Path,
-    ) -> Result<(), RiptskError>;
+    ) -> Result<(), RiptaskError>;
     /// Stash uncommitted changes (staged, unstaged, and untracked) with a message.
     /// Returns `true` if a stash entry was created, `false` if there was nothing to stash.
-    fn stash_push(&self, repo: &Path, message: &str) -> Result<bool, RiptskError>;
+    fn stash_push(&self, repo: &Path, message: &str) -> Result<bool, RiptaskError>;
     /// Pop the most recent stash entry.
     /// Returns `true` on clean apply, `false` if conflicts occurred (stash is preserved).
-    fn stash_pop(&self, repo: &Path) -> Result<bool, RiptskError>;
+    fn stash_pop(&self, repo: &Path) -> Result<bool, RiptaskError>;
 }
 
 #[derive(Debug, Clone, Default)]
@@ -88,21 +89,21 @@ impl CliGit {
         Self { auth }
     }
 
-    fn run_git_remote(&self, repo: &Path, args: &[&str]) -> Result<(), RiptskError> {
+    fn run_git_remote(&self, repo: &Path, args: &[&str]) -> Result<(), RiptaskError> {
         let Some(auth) = self.auth.as_ref() else {
             return run_git_dynamic(repo, args);
         };
 
-        let mut askpass = tempfile::NamedTempFile::new().map_err(RiptskError::Io)?;
+        let mut askpass = tempfile::NamedTempFile::new().map_err(RiptaskError::Io)?;
         askpass
             .write_all(build_askpass_script(&auth.token).as_bytes())
-            .map_err(RiptskError::Io)?;
-        askpass.flush().map_err(RiptskError::Io)?;
+            .map_err(RiptaskError::Io)?;
+        askpass.flush().map_err(RiptaskError::Io)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(askpass.path(), std::fs::Permissions::from_mode(0o700))
-                .map_err(RiptskError::Io)?;
+                .map_err(RiptaskError::Io)?;
         }
         // Close the write fd so the OS allows exec (avoids ETXTBSY on Linux).
         let askpass_path = askpass.into_temp_path();
@@ -119,22 +120,22 @@ impl CliGit {
         status_to_result(command.output()?.status)
     }
 
-    fn prepare_auth_command(&self) -> Result<(Command, Option<tempfile::TempPath>), RiptskError> {
+    fn prepare_auth_command(&self) -> Result<(Command, Option<tempfile::TempPath>), RiptaskError> {
         let mut command = git_command();
         let Some(auth) = self.auth.as_ref() else {
             return Ok((command, None));
         };
 
-        let mut askpass = tempfile::NamedTempFile::new().map_err(RiptskError::Io)?;
+        let mut askpass = tempfile::NamedTempFile::new().map_err(RiptaskError::Io)?;
         askpass
             .write_all(build_askpass_script(&auth.token).as_bytes())
-            .map_err(RiptskError::Io)?;
-        askpass.flush().map_err(RiptskError::Io)?;
+            .map_err(RiptaskError::Io)?;
+        askpass.flush().map_err(RiptaskError::Io)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(askpass.path(), std::fs::Permissions::from_mode(0o700))
-                .map_err(RiptskError::Io)?;
+                .map_err(RiptaskError::Io)?;
         }
         let askpass_path = askpass.into_temp_path();
         command
@@ -145,11 +146,11 @@ impl CliGit {
 }
 
 impl GitBackend for CliGit {
-    fn init(&self, path: &Path) -> Result<(), RiptskError> {
+    fn init(&self, path: &Path) -> Result<(), RiptaskError> {
         run_git(path, ["init"])
     }
 
-    fn repo_root(&self, cwd: &Path) -> Result<std::path::PathBuf, RiptskError> {
+    fn repo_root(&self, cwd: &Path) -> Result<std::path::PathBuf, RiptaskError> {
         let output = git_command()
             .arg("-C")
             .arg(cwd)
@@ -160,13 +161,13 @@ impl GitBackend for CliGit {
                 String::from_utf8_lossy(&output.stdout).trim(),
             ))
         } else {
-            Err(RiptskError::General(
+            Err(RiptaskError::General(
                 "failed to determine git repository root".into(),
             ))
         }
     }
 
-    fn add(&self, repo: &Path, files: &[&Path]) -> Result<(), RiptskError> {
+    fn add(&self, repo: &Path, files: &[&Path]) -> Result<(), RiptaskError> {
         let mut command = git_command();
         command.arg("-C").arg(repo).arg("add");
         for file in files {
@@ -175,11 +176,11 @@ impl GitBackend for CliGit {
         status_to_result(command.output()?.status)
     }
 
-    fn commit(&self, repo: &Path, message: &str) -> Result<(), RiptskError> {
+    fn commit(&self, repo: &Path, message: &str) -> Result<(), RiptaskError> {
         run_git(repo, ["commit", "-m", message])
     }
 
-    fn merge_file(&self, local: &Path, base: &Path, remote: &Path) -> Result<String, RiptskError> {
+    fn merge_file(&self, local: &Path, base: &Path, remote: &Path) -> Result<String, RiptaskError> {
         let output = git_command()
             .args([
                 "merge-file",
@@ -197,46 +198,46 @@ impl GitBackend for CliGit {
             .output()?;
         match output.status.code() {
             Some(code) if code <= 127 => Ok(String::from_utf8_lossy(&output.stdout).into_owned()),
-            _ => Err(RiptskError::General(format!(
+            _ => Err(RiptaskError::General(format!(
                 "git merge-file failed: {}",
                 String::from_utf8_lossy(&output.stderr).trim()
             ))),
         }
     }
 
-    fn has_changes(&self, repo: &Path) -> Result<bool, RiptskError> {
+    fn has_changes(&self, repo: &Path) -> Result<bool, RiptaskError> {
         self.has_uncommitted_changes(repo)
     }
 
-    fn has_uncommitted_changes(&self, repo: &Path) -> Result<bool, RiptskError> {
+    fn has_uncommitted_changes(&self, repo: &Path) -> Result<bool, RiptaskError> {
         let output = git_command()
             .arg("-C")
             .arg(repo)
             .args(["status", "--porcelain"])
             .output()?;
         if !output.status.success() {
-            return Err(RiptskError::General("failed to inspect git status".into()));
+            return Err(RiptaskError::General("failed to inspect git status".into()));
         }
         Ok(!String::from_utf8_lossy(&output.stdout).trim().is_empty())
     }
 
-    fn pull(&self, repo: &Path) -> Result<(), RiptskError> {
+    fn pull(&self, repo: &Path) -> Result<(), RiptaskError> {
         self.run_git_remote(repo, &["pull"])
     }
 
-    fn push(&self, repo: &Path) -> Result<(), RiptskError> {
+    fn push(&self, repo: &Path) -> Result<(), RiptaskError> {
         self.run_git_remote(repo, &["push"])
     }
 
-    fn checkout(&self, repo: &Path, branch: &str) -> Result<(), RiptskError> {
+    fn checkout(&self, repo: &Path, branch: &str) -> Result<(), RiptaskError> {
         run_git_dynamic(repo, ["checkout", branch].as_slice())
     }
 
-    fn create_branch(&self, repo: &Path, name: &str) -> Result<(), RiptskError> {
+    fn create_branch(&self, repo: &Path, name: &str) -> Result<(), RiptaskError> {
         run_git(repo, ["checkout", "-b", name])
     }
 
-    fn branch_exists(&self, repo: &Path, name: &str) -> Result<bool, RiptskError> {
+    fn branch_exists(&self, repo: &Path, name: &str) -> Result<bool, RiptaskError> {
         let refname = format!("refs/heads/{name}");
         let status = git_command()
             .arg("-C")
@@ -246,28 +247,28 @@ impl GitBackend for CliGit {
         Ok(status.success())
     }
 
-    fn fetch_and_checkout_tracking(&self, repo: &Path, branch: &str) -> Result<(), RiptskError> {
+    fn fetch_and_checkout_tracking(&self, repo: &Path, branch: &str) -> Result<(), RiptaskError> {
         self.run_git_remote(repo, &["fetch", "origin", branch])?;
         let tracking = format!("origin/{branch}");
         run_git_dynamic(repo, &["checkout", "-b", branch, "--track", &tracking])
     }
 
-    fn push_with_upstream(&self, repo: &Path, branch: &str) -> Result<(), RiptskError> {
+    fn push_with_upstream(&self, repo: &Path, branch: &str) -> Result<(), RiptaskError> {
         self.run_git_remote(repo, &["push", "-u", "origin", branch])
     }
 
-    fn has_working_tree_changes(&self, repo: &Path) -> Result<bool, RiptskError> {
+    fn has_working_tree_changes(&self, repo: &Path) -> Result<bool, RiptaskError> {
         self.has_changes(repo)
     }
 
-    fn diff_names(&self, repo: &Path) -> Result<Vec<String>, RiptskError> {
+    fn diff_names(&self, repo: &Path) -> Result<Vec<String>, RiptaskError> {
         let output = git_command()
             .arg("-C")
             .arg(repo)
             .args(["diff", "--name-only"])
             .output()?;
         if !output.status.success() {
-            return Err(RiptskError::General("failed to inspect git diff".into()));
+            return Err(RiptaskError::General("failed to inspect git diff".into()));
         }
         Ok(String::from_utf8_lossy(&output.stdout)
             .lines()
@@ -275,7 +276,7 @@ impl GitBackend for CliGit {
             .collect())
     }
 
-    fn current_branch(&self, repo: &Path) -> Result<String, RiptskError> {
+    fn current_branch(&self, repo: &Path) -> Result<String, RiptaskError> {
         let output = git_command()
             .arg("-C")
             .arg(repo)
@@ -286,13 +287,13 @@ impl GitBackend for CliGit {
         if output.status.success() {
             Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
         } else {
-            Err(RiptskError::General(
+            Err(RiptaskError::General(
                 "failed to determine current branch".into(),
             ))
         }
     }
 
-    fn remote_url(&self, repo: &Path, remote: &str) -> Result<String, RiptskError> {
+    fn remote_url(&self, repo: &Path, remote: &str) -> Result<String, RiptaskError> {
         let output = git_command()
             .arg("-C")
             .arg(repo)
@@ -303,13 +304,13 @@ impl GitBackend for CliGit {
         if output.status.success() {
             Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
         } else {
-            Err(RiptskError::General(format!(
+            Err(RiptaskError::General(format!(
                 "failed to read git remote {remote}"
             )))
         }
     }
 
-    fn head_sha(&self, repo: &Path) -> Result<String, RiptskError> {
+    fn head_sha(&self, repo: &Path) -> Result<String, RiptaskError> {
         let output = git_command()
             .arg("-C")
             .arg(repo)
@@ -319,7 +320,7 @@ impl GitBackend for CliGit {
         if output.status.success() {
             Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
         } else {
-            Err(RiptskError::General("failed to determine HEAD SHA".into()))
+            Err(RiptaskError::General("failed to determine HEAD SHA".into()))
         }
     }
 
@@ -328,12 +329,12 @@ impl GitBackend for CliGit {
         repo: &Path,
         branch: &str,
         force: bool,
-    ) -> Result<(), RiptskError> {
+    ) -> Result<(), RiptaskError> {
         let flag = if force { "-D" } else { "-d" };
         run_git_dynamic(repo, &["branch", flag, branch])
     }
 
-    fn has_staged_changes(&self, repo: &Path) -> Result<bool, RiptskError> {
+    fn has_staged_changes(&self, repo: &Path) -> Result<bool, RiptaskError> {
         let output = git_command()
             .arg("-C")
             .arg(repo)
@@ -343,11 +344,16 @@ impl GitBackend for CliGit {
         Ok(!output.success())
     }
 
-    fn stage_all(&self, repo: &Path) -> Result<(), RiptskError> {
+    fn stage_all(&self, repo: &Path) -> Result<(), RiptaskError> {
         run_git_dynamic(repo, &["add", "-A"])
     }
 
-    fn is_branch_merged(&self, repo: &Path, branch: &str, base: &str) -> Result<bool, RiptskError> {
+    fn is_branch_merged(
+        &self,
+        repo: &Path,
+        branch: &str,
+        base: &str,
+    ) -> Result<bool, RiptaskError> {
         let status = git_command()
             .arg("-C")
             .arg(repo)
@@ -356,7 +362,7 @@ impl GitBackend for CliGit {
         Ok(status.success())
     }
 
-    fn fetch(&self, repo: &Path) -> Result<(), RiptskError> {
+    fn fetch(&self, repo: &Path) -> Result<(), RiptaskError> {
         self.run_git_remote(repo, &["fetch", "origin"])
     }
 
@@ -365,7 +371,7 @@ impl GitBackend for CliGit {
         repo: &Path,
         branch: &str,
         base: &str,
-    ) -> Result<u64, RiptskError> {
+    ) -> Result<u64, RiptaskError> {
         let range = format!("origin/{base}..{branch}");
         let output = git_command()
             .arg("-C")
@@ -373,7 +379,7 @@ impl GitBackend for CliGit {
             .args(["rev-list", "--count", &range])
             .output()?;
         if !output.status.success() {
-            return Err(RiptskError::General(
+            return Err(RiptaskError::General(
                 "failed to inspect commits ahead of base".into(),
             ));
         }
@@ -381,11 +387,11 @@ impl GitBackend for CliGit {
             .trim()
             .parse()
             .map_err(|error| {
-                RiptskError::General(format!("failed to parse commit count for {range}: {error}"))
+                RiptaskError::General(format!("failed to parse commit count for {range}: {error}"))
             })
     }
 
-    fn create_empty_commit(&self, repo: &Path, message: &str) -> Result<(), RiptskError> {
+    fn create_empty_commit(&self, repo: &Path, message: &str) -> Result<(), RiptaskError> {
         let mut args: Vec<&str> = vec!["commit", "--allow-empty"];
         for part in message.split("\n\n") {
             args.push("-m");
@@ -400,7 +406,7 @@ impl GitBackend for CliGit {
         branch: &str,
         base: &str,
         subject: &str,
-    ) -> Result<Option<String>, RiptskError> {
+    ) -> Result<Option<String>, RiptaskError> {
         let range = format!("origin/{base}..{branch}");
         let output = git_command()
             .arg("-C")
@@ -408,7 +414,7 @@ impl GitBackend for CliGit {
             .args(["log", "--format=%H%n%s", &range])
             .output()?;
         if !output.status.success() {
-            return Err(RiptskError::General(
+            return Err(RiptaskError::General(
                 "failed to inspect commit subjects".into(),
             ));
         }
@@ -432,7 +438,7 @@ impl GitBackend for CliGit {
         repo: &Path,
         commit_sha: &str,
         branch: &str,
-    ) -> Result<(), RiptskError> {
+    ) -> Result<(), RiptaskError> {
         let onto = format!("{commit_sha}^");
         let status = git_command()
             .arg("-C")
@@ -444,20 +450,20 @@ impl GitBackend for CliGit {
         }
 
         let _ = run_git_dynamic(repo, &["rebase", "--abort"]);
-        Err(RiptskError::General(format!(
+        Err(RiptaskError::General(format!(
             "failed to drop commit {commit_sha} via rebase"
         )))
     }
 
-    fn force_push_with_lease(&self, repo: &Path, branch: &str) -> Result<(), RiptskError> {
+    fn force_push_with_lease(&self, repo: &Path, branch: &str) -> Result<(), RiptaskError> {
         self.run_git_remote(repo, &["push", "--force-with-lease", "origin", branch])
     }
 
-    fn force_push(&self, repo: &Path, branch: &str) -> Result<(), RiptskError> {
+    fn force_push(&self, repo: &Path, branch: &str) -> Result<(), RiptaskError> {
         self.run_git_remote(repo, &["push", "--force", "origin", branch])
     }
 
-    fn log_between(&self, repo: &Path, base: &str, head: &str) -> Result<String, RiptskError> {
+    fn log_between(&self, repo: &Path, base: &str, head: &str) -> Result<String, RiptaskError> {
         let range = format!("origin/{base}..{head}");
         let output = git_command()
             .arg("-C")
@@ -465,12 +471,12 @@ impl GitBackend for CliGit {
             .args(["log", "--oneline", &range])
             .output()?;
         if !output.status.success() {
-            return Err(RiptskError::General("failed to read git log".into()));
+            return Err(RiptaskError::General("failed to read git log".into()));
         }
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
     }
 
-    fn diff_between(&self, repo: &Path, base: &str, head: &str) -> Result<String, RiptskError> {
+    fn diff_between(&self, repo: &Path, base: &str, head: &str) -> Result<String, RiptaskError> {
         let range = format!("origin/{base}..{head}");
         let output = git_command()
             .arg("-C")
@@ -478,14 +484,14 @@ impl GitBackend for CliGit {
             .args(["diff", &range])
             .output()?;
         if !output.status.success() {
-            return Err(RiptskError::General("failed to read git diff".into()));
+            return Err(RiptaskError::General("failed to read git diff".into()));
         }
         Ok(truncate_diff(
             String::from_utf8_lossy(&output.stdout).trim().to_owned(),
         ))
     }
 
-    fn working_tree_diff(&self, repo: &Path) -> Result<String, RiptskError> {
+    fn working_tree_diff(&self, repo: &Path) -> Result<String, RiptaskError> {
         let output = if has_head_commit(repo)? {
             git_command()
                 .arg("-C")
@@ -500,7 +506,7 @@ impl GitBackend for CliGit {
                 .output()?
         };
         if !output.status.success() {
-            return Err(RiptskError::General(
+            return Err(RiptaskError::General(
                 "failed to read working tree git diff".into(),
             ));
         }
@@ -509,14 +515,14 @@ impl GitBackend for CliGit {
         ))
     }
 
-    fn staged_diff(&self, repo: &Path) -> Result<String, RiptskError> {
+    fn staged_diff(&self, repo: &Path) -> Result<String, RiptaskError> {
         let output = git_command()
             .arg("-C")
             .arg(repo)
             .args(["diff", "--cached"])
             .output()?;
         if !output.status.success() {
-            return Err(RiptskError::General(
+            return Err(RiptaskError::General(
                 "failed to read staged git diff".into(),
             ));
         }
@@ -530,7 +536,7 @@ impl GitBackend for CliGit {
         reference_repo: &Path,
         remote_url: &str,
         target_dir: &Path,
-    ) -> Result<(), RiptskError> {
+    ) -> Result<(), RiptaskError> {
         let (mut command, _askpass_path) = self.prepare_auth_command()?;
         command
             .arg("clone")
@@ -541,20 +547,20 @@ impl GitBackend for CliGit {
         status_to_result(command.output()?.status)
     }
 
-    fn stash_push(&self, repo: &Path, message: &str) -> Result<bool, RiptskError> {
+    fn stash_push(&self, repo: &Path, message: &str) -> Result<bool, RiptaskError> {
         let output = git_command()
             .arg("-C")
             .arg(repo)
             .args(["stash", "push", "--include-untracked", "-m", message])
             .output()?;
         if !output.status.success() {
-            return Err(RiptskError::General("git stash push failed".into()));
+            return Err(RiptaskError::General("git stash push failed".into()));
         }
         let stdout = String::from_utf8_lossy(&output.stdout);
         Ok(!stdout.contains("No local changes to save"))
     }
 
-    fn stash_pop(&self, repo: &Path) -> Result<bool, RiptskError> {
+    fn stash_pop(&self, repo: &Path) -> Result<bool, RiptaskError> {
         let output = git_command()
             .arg("-C")
             .arg(repo)
@@ -568,7 +574,7 @@ impl GitBackend for CliGit {
         if stderr.contains("CONFLICT") || stderr.contains("could not apply") {
             return Ok(false);
         }
-        Err(RiptskError::General(format!(
+        Err(RiptaskError::General(format!(
             "git stash pop failed: {}",
             stderr.trim()
         )))
@@ -586,11 +592,11 @@ pub fn try_stash_pop(git: &dyn GitBackend, repo: &Path) {
     }
 }
 
-fn run_git<const N: usize>(repo: &Path, args: [&str; N]) -> Result<(), RiptskError> {
+fn run_git<const N: usize>(repo: &Path, args: [&str; N]) -> Result<(), RiptaskError> {
     run_git_dynamic(repo, &args)
 }
 
-fn run_git_dynamic(repo: &Path, args: &[&str]) -> Result<(), RiptskError> {
+fn run_git_dynamic(repo: &Path, args: &[&str]) -> Result<(), RiptaskError> {
     let mut command = git_command();
     command.arg("-C").arg(repo);
     for arg in args {
@@ -628,15 +634,15 @@ fn git_command() -> Command {
     cmd
 }
 
-fn status_to_result(status: std::process::ExitStatus) -> Result<(), RiptskError> {
+fn status_to_result(status: std::process::ExitStatus) -> Result<(), RiptaskError> {
     if status.success() {
         Ok(())
     } else {
-        Err(RiptskError::General("git command failed".into()))
+        Err(RiptaskError::General("git command failed".into()))
     }
 }
 
-fn has_head_commit(repo: &Path) -> Result<bool, RiptskError> {
+fn has_head_commit(repo: &Path) -> Result<bool, RiptaskError> {
     let status = git_command()
         .arg("-C")
         .arg(repo)

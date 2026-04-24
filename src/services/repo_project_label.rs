@@ -5,7 +5,7 @@
 //! tag). Derived labels always have the prefix; user input is normalized to
 //! the prefixed form.
 
-use crate::error::RiptskError;
+use crate::error::RiptaskError;
 use crate::models::{BackendKind, RepoProject};
 
 pub const MAX_LABEL_LEN: usize = 255;
@@ -87,29 +87,29 @@ pub fn sanitize(raw: &str) -> String {
 
 /// Validate a user-or-derived label. Enforces the `proj::` prefix, a
 /// non-empty suffix, the length bound, and the whitespace/quote ban.
-pub fn validate(label: &str) -> Result<(), RiptskError> {
+pub fn validate(label: &str) -> Result<(), RiptaskError> {
     if label.is_empty() {
-        return Err(RiptskError::Config(
+        return Err(RiptaskError::Config(
             "repo_project_label cannot be empty".into(),
         ));
     }
     if label.len() > MAX_LABEL_LEN {
-        return Err(RiptskError::Config(format!(
+        return Err(RiptaskError::Config(format!(
             "repo_project_label '{label}' exceeds {MAX_LABEL_LEN} chars"
         )));
     }
     if label.chars().any(|c| c.is_whitespace() || c == '"') {
-        return Err(RiptskError::Config(format!(
+        return Err(RiptaskError::Config(format!(
             "repo_project_label '{label}' must not contain whitespace or double quotes"
         )));
     }
     let Some(suffix) = label.strip_prefix(LABEL_PREFIX) else {
-        return Err(RiptskError::Config(format!(
+        return Err(RiptaskError::Config(format!(
             "repo_project_label '{label}' must start with '{LABEL_PREFIX}'"
         )));
     };
     if suffix.is_empty() {
-        return Err(RiptskError::Config(format!(
+        return Err(RiptaskError::Config(format!(
             "repo_project_label '{label}' is missing a suffix after '{LABEL_PREFIX}'"
         )));
     }

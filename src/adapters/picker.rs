@@ -1,5 +1,5 @@
 use crate::domain::issue::{IssueDocument, Priority};
-use crate::error::RiptskError;
+use crate::error::RiptaskError;
 use crate::services::issue_ids;
 use console::style;
 use std::process::{Command, Stdio};
@@ -19,15 +19,15 @@ pub trait Picker {
         prompt: &str,
         issues_dir: Option<&str>,
         mode: &IssueDisplayMode,
-    ) -> Result<Option<String>, RiptskError>;
+    ) -> Result<Option<String>, RiptaskError>;
     fn pick_many(
         &self,
         issues: &[IssueDocument],
         prompt: &str,
         issues_dir: Option<&str>,
         mode: &IssueDisplayMode,
-    ) -> Result<Vec<String>, RiptskError>;
-    fn pick_enum(&self, choices: &[String], prompt: &str) -> Result<Option<String>, RiptskError>;
+    ) -> Result<Vec<String>, RiptaskError>;
+    fn pick_enum(&self, choices: &[String], prompt: &str) -> Result<Option<String>, RiptaskError>;
 }
 
 #[derive(Debug, Clone, Default)]
@@ -42,7 +42,7 @@ impl Picker for FzfPicker {
         prompt: &str,
         issues_dir: Option<&str>,
         mode: &IssueDisplayMode,
-    ) -> Result<Option<String>, RiptskError> {
+    ) -> Result<Option<String>, RiptaskError> {
         let input = issues
             .iter()
             .map(|issue| format_issue_line(issue, mode, true))
@@ -58,7 +58,7 @@ impl Picker for FzfPicker {
         prompt: &str,
         issues_dir: Option<&str>,
         mode: &IssueDisplayMode,
-    ) -> Result<Vec<String>, RiptskError> {
+    ) -> Result<Vec<String>, RiptaskError> {
         let input = issues
             .iter()
             .map(|issue| format_issue_line(issue, mode, true))
@@ -81,7 +81,7 @@ impl Picker for FzfPicker {
             .collect())
     }
 
-    fn pick_enum(&self, choices: &[String], prompt: &str) -> Result<Option<String>, RiptskError> {
+    fn pick_enum(&self, choices: &[String], prompt: &str) -> Result<Option<String>, RiptaskError> {
         let input = choices.join("\n");
         run_fzf_with_args(&input, prompt, self.fzf_opts.as_deref(), &[])
     }
@@ -184,7 +184,7 @@ fn run_fzf_issue(
     extra_opts: Option<&str>,
     issues_dir: Option<&str>,
     extra_args: &[&str],
-) -> Result<Option<String>, RiptskError> {
+) -> Result<Option<String>, RiptaskError> {
     let mut args: Vec<String> = vec![
         "--height=100%".into(),
         "--layout=reverse".into(),
@@ -215,7 +215,7 @@ fn run_fzf_with_args(
     prompt: &str,
     extra_opts: Option<&str>,
     args: &[&str],
-) -> Result<Option<String>, RiptskError> {
+) -> Result<Option<String>, RiptaskError> {
     let mut command = Command::new("fzf");
     if let Some(extra_opts) = extra_opts {
         for option in extra_opts.split_whitespace() {
@@ -226,7 +226,7 @@ fn run_fzf_with_args(
     command.args(args);
     command.stdin(Stdio::piped()).stdout(Stdio::piped());
     let mut child = command.spawn().map_err(|_| {
-        RiptskError::General("<ID> required (install fzf for interactive selection)".into())
+        RiptaskError::General("<ID> required (install fzf for interactive selection)".into())
     })?;
     if let Some(stdin) = child.stdin.as_mut() {
         use std::io::Write;

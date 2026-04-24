@@ -1,12 +1,12 @@
 use crate::assets::hook::{HOOK_VERSION, PRE_COMMIT_HOOK};
 use crate::cli::{HooksArgs, HooksSubcommand};
-use crate::error::RiptskError;
+use crate::error::RiptaskError;
 use crate::paths::AppPaths;
 use console::style;
 use std::fs;
 use std::io::IsTerminal;
 
-pub fn run(paths: &AppPaths, args: HooksArgs) -> Result<(), RiptskError> {
+pub fn run(paths: &AppPaths, args: HooksArgs) -> Result<(), RiptaskError> {
     let hook_path = paths.riptsk_repo.join(".git/hooks/pre-commit");
     match args.subcommand.unwrap_or(HooksSubcommand::Status) {
         HooksSubcommand::Install { .. } => {
@@ -40,12 +40,12 @@ pub fn run(paths: &AppPaths, args: HooksArgs) -> Result<(), RiptskError> {
                 } else {
                     println!("not installed");
                 }
-                Err(RiptskError::General("hook not installed".into()))
+                Err(RiptaskError::General("hook not installed".into()))
             }
         }
         HooksSubcommand::Update { .. } => {
             if !hook_path.exists() {
-                return Err(RiptskError::General("hook not installed".into()));
+                return Err(RiptaskError::General("hook not installed".into()));
             }
             fs::write(&hook_path, PRE_COMMIT_HOOK)?;
             Ok(())

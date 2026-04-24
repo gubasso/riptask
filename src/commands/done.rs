@@ -6,7 +6,7 @@ use crate::commands::branch::{backend_issue_number, current_repo, cwd_utf8};
 use crate::commands::{pr, sync_cmd};
 use crate::config::load_config;
 use crate::domain::issue::{IssueDocument, IssueState};
-use crate::error::RiptskError;
+use crate::error::RiptaskError;
 use crate::models::BackendKind;
 use crate::paths::AppPaths;
 use crate::services::auto_commit::maybe_auto_commit;
@@ -25,10 +25,10 @@ async fn ensure_pr_number<F, Fut>(
     id: &str,
     issue: &IssueDocument,
     create_pr: F,
-) -> Result<(IssueDocument, u64), RiptskError>
+) -> Result<(IssueDocument, u64), RiptaskError>
 where
     F: FnOnce() -> Fut,
-    Fut: std::future::Future<Output = Result<(), RiptskError>>,
+    Fut: std::future::Future<Output = Result<(), RiptaskError>>,
 {
     if let Some(number) = remote_pr_number_for_issue(provider, repo_name, issue).await? {
         return Ok((issue.clone(), number));
@@ -49,7 +49,7 @@ async fn remote_pr_number_for_issue(
     provider: &dyn VersionControl,
     repo_name: &str,
     issue: &IssueDocument,
-) -> Result<Option<u64>, RiptskError> {
+) -> Result<Option<u64>, RiptaskError> {
     let Some(branch) = issue.frontmatter.branch.as_deref() else {
         return Ok(None);
     };
@@ -74,7 +74,7 @@ async fn remote_pr_number_for_issue(
         .map(|record| record.number))
 }
 
-pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
+pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
     let config = load_config(paths.config_path().as_std_path())?;
     let cwd = cwd_utf8();
@@ -98,7 +98,7 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
         .projects
         .iter()
         .find(|rp| rp.name == issue.frontmatter.project)
-        .ok_or_else(|| RiptskError::Unregistered(issue.frontmatter.project.clone()))?;
+        .ok_or_else(|| RiptaskError::Unregistered(issue.frontmatter.project.clone()))?;
 
     let has_vc = repo_project.vc_backend.kind != BackendKind::Local;
 
@@ -106,12 +106,12 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
         // Issue-only workflow: just mark done locally and sync
         crate::ui::info("No version control backend configured — skipping PR merge.");
         let mut issue =
-            frontmatter::load_issue(issue_path.as_std_path()).map_err(RiptskError::Other)?;
+            frontmatter::load_issue(issue_path.as_std_path()).map_err(RiptaskError::Other)?;
         issue.frontmatter.status = IssueState::Done;
         issue.frontmatter.local_updated_at = now_utc();
         issue.frontmatter.branch = None;
         issue.frontmatter.id_slug = None;
-        frontmatter::save_issue(issue_path.as_std_path(), &issue).map_err(RiptskError::Other)?;
+        frontmatter::save_issue(issue_path.as_std_path(), &issue).map_err(RiptaskError::Other)?;
         maybe_auto_commit(
             &config,
             &CliGit::new(),
@@ -133,7 +133,7 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
         crate::ui::spin_on("Regenerating views", || {
             ViewBuilder::new(paths, &config)
                 .regenerate_all(None)
-                .map_err(RiptskError::Other)
+                .map_err(RiptaskError::Other)
         })?;
         return Ok(());
     }
@@ -268,7 +268,7 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
             crate::commands::issues::load_issue_or_conflict_error(issue_path.as_std_path(), &id)?;
         issue.frontmatter.branch = None;
         issue.frontmatter.id_slug = None;
-        frontmatter::save_issue(issue_path.as_std_path(), &issue).map_err(RiptskError::Other)?;
+        frontmatter::save_issue(issue_path.as_std_path(), &issue).map_err(RiptaskError::Other)?;
         if let Some(record) = &closed_record {
             let mut issue = crate::commands::issues::load_issue_or_conflict_error(
                 issue_path.as_std_path(),
@@ -278,23 +278,23 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
             issue.frontmatter.branch = None;
             issue.frontmatter.id_slug = None;
             frontmatter::save_issue(issue_path.as_std_path(), &issue)
-                .map_err(RiptskError::Other)?;
+                .map_err(RiptaskError::Other)?;
             cache::seed_backend_state_entry(
                 paths,
                 repo_project.tasks_backend.kind.as_str(),
                 repo_name,
                 record,
             )
-            .map_err(RiptskError::Other)?;
+            .map_err(RiptaskError::Other)?;
         } else {
             let mut issue =
-                frontmatter::load_issue(issue_path.as_std_path()).map_err(RiptskError::Other)?;
+                frontmatter::load_issue(issue_path.as_std_path()).map_err(RiptaskError::Other)?;
             issue.frontmatter.status = IssueState::Done;
             issue.frontmatter.local_updated_at = now_utc();
             issue.frontmatter.branch = None;
             issue.frontmatter.id_slug = None;
             frontmatter::save_issue(issue_path.as_std_path(), &issue)
-                .map_err(RiptskError::Other)?;
+                .map_err(RiptaskError::Other)?;
         }
         maybe_auto_commit(
             &config,
@@ -317,7 +317,7 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
         crate::ui::spin_on("Regenerating views", || {
             ViewBuilder::new(paths, &config)
                 .regenerate_all(None)
-                .map_err(RiptskError::Other)
+                .map_err(RiptaskError::Other)
         })?;
         tracing::info!(issue_id = %id, "completed done workflow");
         Ok(())
@@ -340,7 +340,7 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptskError> {
     result
 }
 
-fn is_branch_not_found_error(error: &RiptskError) -> bool {
+fn is_branch_not_found_error(error: &RiptaskError) -> bool {
     let message = error.to_string().to_lowercase();
     message.contains("404") || message.contains("not found")
 }
@@ -352,7 +352,7 @@ mod tests {
         BackendPrRecord, CiPresence, MergeMethod, PrChecksStatus, VersionControl,
     };
     use crate::domain::issue::IssueDocument;
-    use crate::error::RiptskError;
+    use crate::error::RiptaskError;
     use crate::storage::frontmatter;
     use async_trait::async_trait;
     use std::sync::{Arc, Mutex};
@@ -395,11 +395,11 @@ mod tests {
             _base: &str,
             _title: &str,
             _body: &str,
-        ) -> Result<BackendPrRecord, RiptskError> {
+        ) -> Result<BackendPrRecord, RiptaskError> {
             unimplemented!()
         }
 
-        async fn get_pr(&self, _repo: &str, _number: u64) -> Result<BackendPrRecord, RiptskError> {
+        async fn get_pr(&self, _repo: &str, _number: u64) -> Result<BackendPrRecord, RiptaskError> {
             unimplemented!()
         }
 
@@ -409,7 +409,7 @@ mod tests {
             _number: u64,
             _title: &str,
             _body: &str,
-        ) -> Result<BackendPrRecord, RiptskError> {
+        ) -> Result<BackendPrRecord, RiptaskError> {
             unimplemented!()
         }
 
@@ -418,9 +418,9 @@ mod tests {
             _repo: &str,
             _head: &str,
             _base: &str,
-        ) -> Result<Option<BackendPrRecord>, RiptskError> {
+        ) -> Result<Option<BackendPrRecord>, RiptaskError> {
             if let Some(error) = self.branch_error.lock().expect("lock").clone() {
-                return Err(RiptskError::General(error));
+                return Err(RiptaskError::General(error));
             }
             Ok(self
                 .pr_number
@@ -448,7 +448,7 @@ mod tests {
             _method: MergeMethod,
             _commit_title: Option<&str>,
             _commit_message: Option<&str>,
-        ) -> Result<(), RiptskError> {
+        ) -> Result<(), RiptaskError> {
             unimplemented!()
         }
 
@@ -456,11 +456,11 @@ mod tests {
             &self,
             _repo: &str,
             _number: u64,
-        ) -> Result<PrChecksStatus, RiptskError> {
+        ) -> Result<PrChecksStatus, RiptaskError> {
             unimplemented!()
         }
 
-        async fn get_ci_presence(&self, _repo: &str) -> Result<CiPresence, RiptskError> {
+        async fn get_ci_presence(&self, _repo: &str) -> Result<CiPresence, RiptaskError> {
             unimplemented!()
         }
 
@@ -470,15 +470,15 @@ mod tests {
             _branch_name: &str,
             _base_ref: &str,
             _issue_id: Option<u64>,
-        ) -> Result<(), RiptskError> {
+        ) -> Result<(), RiptaskError> {
             unimplemented!()
         }
 
-        async fn default_branch(&self, _repo: &str) -> Result<String, RiptskError> {
+        async fn default_branch(&self, _repo: &str) -> Result<String, RiptaskError> {
             Ok(self.default_branch.clone())
         }
 
-        async fn delete_branch(&self, _repo: &str, _branch_name: &str) -> Result<(), RiptskError> {
+        async fn delete_branch(&self, _repo: &str, _branch_name: &str) -> Result<(), RiptaskError> {
             unimplemented!()
         }
     }
@@ -612,7 +612,7 @@ body\n",
         .expect_err("expected provider error");
 
         match error {
-            RiptskError::General(message) => assert_eq!(message, "backend exploded"),
+            RiptaskError::General(message) => assert_eq!(message, "backend exploded"),
             other => panic!("unexpected error: {other}"),
         }
         assert_eq!(*create_calls.lock().expect("lock"), 0);

@@ -9,7 +9,7 @@ use crate::commands::ai::{AI_BACKEND_MISSING, optional_backend};
 use crate::commands::branch::{backend_issue_number, current_repo, cwd_utf8};
 use crate::config::{Config, load_config};
 use crate::domain::issue::{IssueDocument, IssueState};
-use crate::error::RiptskError;
+use crate::error::RiptaskError;
 use crate::models::{BackendKind, RepoProject};
 use crate::paths::AppPaths;
 use crate::services::auto_commit::maybe_auto_commit;
@@ -27,7 +27,7 @@ const EMPTY_BRANCH_COMMIT_MESSAGE: &str = "chore: initialize branch for PR\n\n\
                                           Empty commit to allow PR creation on a branch with no changes yet.";
 const CHECKS_POLL_INTERVAL: Duration = Duration::from_secs(10);
 
-pub async fn run(paths: &AppPaths, args: PrArgs) -> Result<(), RiptskError> {
+pub async fn run(paths: &AppPaths, args: PrArgs) -> Result<(), RiptaskError> {
     match args.subcommand {
         Some(PrSubcommand::Create(args)) => create(paths, args).await,
         Some(PrSubcommand::Edit(args)) => edit(paths, args).await,
@@ -47,7 +47,7 @@ pub async fn run(paths: &AppPaths, args: PrArgs) -> Result<(), RiptskError> {
     }
 }
 
-pub(crate) async fn create(paths: &AppPaths, args: PrCreateArgs) -> Result<(), RiptskError> {
+pub(crate) async fn create(paths: &AppPaths, args: PrCreateArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
     let config = load_config(paths.config_path().as_std_path())?;
     let repo = current_repo()?;
@@ -57,9 +57,9 @@ pub(crate) async fn create(paths: &AppPaths, args: PrCreateArgs) -> Result<(), R
         .frontmatter
         .branch
         .clone()
-        .ok_or_else(|| RiptskError::General("run `tsk branch` first".into()))?;
+        .ok_or_else(|| RiptaskError::General("run `tsk branch` first".into()))?;
     if current_branch != branch {
-        return Err(RiptskError::General(
+        return Err(RiptaskError::General(
             "current branch does not match issue branch".into(),
         ));
     }
@@ -96,7 +96,7 @@ pub(crate) async fn create(paths: &AppPaths, args: PrCreateArgs) -> Result<(), R
                 .find_pr_by_branch(repo_name, &branch, &default_branch)
                 .await?
         };
-        Ok::<_, RiptskError>(existing_pr)
+        Ok::<_, RiptaskError>(existing_pr)
     })
     .await?;
     if let Some(existing) = existing_pr {
@@ -116,7 +116,7 @@ pub(crate) async fn create(paths: &AppPaths, args: PrCreateArgs) -> Result<(), R
         && git.commits_ahead_of_base(repo.as_path(), &branch, &default_branch)? == 0
     {
         if git.has_staged_changes(repo.as_path())? {
-            return Err(RiptskError::General(
+            return Err(RiptaskError::General(
                 "branch has no commits but has staged changes; commit or unstage them first".into(),
             ));
         }
@@ -181,13 +181,13 @@ pub(crate) async fn create(paths: &AppPaths, args: PrCreateArgs) -> Result<(), R
         issue.frontmatter.status = IssueState::InProgress;
         issue.frontmatter.local_updated_at = now_utc();
     }
-    frontmatter::save_issue(path.as_std_path(), &issue).map_err(RiptskError::Other)?;
+    frontmatter::save_issue(path.as_std_path(), &issue).map_err(RiptaskError::Other)?;
     sync_and_commit_pr(&config, &git, paths, &path, &mut issue, &record)?;
     println!("{}", record.url);
     Ok(())
 }
 
-async fn show(paths: &AppPaths, args: PrShowArgs) -> Result<(), RiptskError> {
+async fn show(paths: &AppPaths, args: PrShowArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
     let config = load_config(paths.config_path().as_std_path())?;
     let (_path, issue) = resolve_issue(paths, &config, &args.scope, args.id.as_deref())?;
@@ -202,7 +202,7 @@ async fn show(paths: &AppPaths, args: PrShowArgs) -> Result<(), RiptskError> {
 
     if args.json {
         let payload = serde_json::to_string_pretty(&record).map_err(|error| {
-            RiptskError::Other(anyhow::Error::from(error).context("failed to serialize PR JSON"))
+            RiptaskError::Other(anyhow::Error::from(error).context("failed to serialize PR JSON"))
         })?;
         println!("{payload}");
     } else {
@@ -217,7 +217,7 @@ async fn show(paths: &AppPaths, args: PrShowArgs) -> Result<(), RiptskError> {
     Ok(())
 }
 
-async fn merge(paths: &AppPaths, args: PrMergeArgs) -> Result<(), RiptskError> {
+async fn merge(paths: &AppPaths, args: PrMergeArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
     let config = load_config(paths.config_path().as_std_path())?;
     let (_path, issue) = resolve_issue(paths, &config, &args.scope, args.id.as_deref())?;
@@ -269,7 +269,7 @@ async fn merge(paths: &AppPaths, args: PrMergeArgs) -> Result<(), RiptskError> {
     result.map(|_| ())
 }
 
-async fn edit(paths: &AppPaths, args: PrEditArgs) -> Result<(), RiptskError> {
+async fn edit(paths: &AppPaths, args: PrEditArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
     let config = load_config(paths.config_path().as_std_path())?;
     let (path, mut issue) = resolve_issue(paths, &config, &args.scope, args.id.as_deref())?;
@@ -388,7 +388,7 @@ pub(crate) async fn merge_pr_workflow(
     pr_number: u64,
     issue: &IssueDocument,
     opts: &MergeOptions,
-) -> Result<MergeOutcome, RiptskError> {
+) -> Result<MergeOutcome, RiptaskError> {
     let initial_pr = ui::spin_on_async("Fetching PR details", async {
         provider.get_pr(repo_name, pr_number).await
     })
@@ -429,7 +429,7 @@ pub(crate) async fn merge_pr_workflow(
             git.rebase_drop_commit(repo_path, &sha, branch)?;
 
             if git.commits_ahead_of_base(repo_path, branch, &default_branch)? == 0 {
-                return Err(RiptskError::General(
+                return Err(RiptaskError::General(
                     "branch has no real commits; nothing to merge".into(),
                 ));
             }
@@ -490,7 +490,7 @@ fn resolve_issue(
     config: &Config,
     _scope: &ScopeArgs,
     id: Option<&str>,
-) -> Result<(camino::Utf8PathBuf, IssueDocument), RiptskError> {
+) -> Result<(camino::Utf8PathBuf, IssueDocument), RiptaskError> {
     let cwd = cwd_utf8();
     // When no ID given, resolve by current branch (scope unused in branch-based resolution)
     let path = if let Some(id) = id {
@@ -508,14 +508,14 @@ fn resolve_issue(
 pub(crate) fn resolve_hosted_repo_project<'a>(
     config: &'a Config,
     issue: &IssueDocument,
-) -> Result<&'a RepoProject, RiptskError> {
+) -> Result<&'a RepoProject, RiptaskError> {
     let repo_project = config
         .projects
         .iter()
         .find(|repo_project| repo_project.name == issue.frontmatter.project)
-        .ok_or_else(|| RiptskError::Unregistered(issue.frontmatter.project.clone()))?;
+        .ok_or_else(|| RiptaskError::Unregistered(issue.frontmatter.project.clone()))?;
     if repo_project.vc_backend.kind == BackendKind::Local {
-        Err(RiptskError::Config(format!(
+        Err(RiptaskError::Config(format!(
             "project {} does not have a hosted backend",
             repo_project.name
         )))
@@ -528,7 +528,7 @@ pub(crate) async fn resolve_pr_number(
     provider: &dyn crate::adapters::backend::VersionControl,
     repo_name: &str,
     issue: &IssueDocument,
-) -> Result<u64, RiptskError> {
+) -> Result<u64, RiptaskError> {
     if let Some(number) = issue.frontmatter.pr_number {
         return Ok(number);
     }
@@ -541,12 +541,12 @@ pub(crate) async fn resolve_pr_number(
         .frontmatter
         .branch
         .as_deref()
-        .ok_or_else(|| RiptskError::General("issue has no associated branch".into()))?;
+        .ok_or_else(|| RiptaskError::General("issue has no associated branch".into()))?;
     let base = provider.default_branch(repo_name).await?;
     if let Some(record) = provider.find_pr_by_branch(repo_name, branch, &base).await? {
         return Ok(record.number);
     }
-    Err(RiptskError::NotFound(format!(
+    Err(RiptaskError::NotFound(format!(
         "no PR found for issue {}",
         issue.frontmatter.id
     )))
@@ -556,7 +556,7 @@ fn sync_issue_pr_metadata(
     path: &camino::Utf8Path,
     issue: &mut IssueDocument,
     record: &crate::adapters::backend::BackendPrRecord,
-) -> Result<(), RiptskError> {
+) -> Result<(), RiptaskError> {
     let mut changed = false;
     if issue.frontmatter.pr_url.as_deref() != Some(record.url.as_str()) {
         issue.frontmatter.pr_url = Some(record.url.clone());
@@ -567,7 +567,7 @@ fn sync_issue_pr_metadata(
         changed = true;
     }
     if changed {
-        frontmatter::save_issue(path.as_std_path(), issue).map_err(RiptskError::Other)?;
+        frontmatter::save_issue(path.as_std_path(), issue).map_err(RiptaskError::Other)?;
     }
     Ok(())
 }
@@ -579,7 +579,7 @@ fn sync_and_commit_pr(
     path: &camino::Utf8Path,
     issue: &mut IssueDocument,
     record: &crate::adapters::backend::BackendPrRecord,
-) -> Result<(), RiptskError> {
+) -> Result<(), RiptaskError> {
     sync_issue_pr_metadata(path, issue, record)?;
     maybe_auto_commit(
         config,
@@ -598,7 +598,7 @@ fn confirm_merge(
     _issue: &IssueDocument,
     pr: &BackendPrRecord,
     method: MergeMethod,
-) -> Result<bool, RiptskError> {
+) -> Result<bool, RiptaskError> {
     ui::info(&pr.url);
     let prompt = format!("merge '{}' via {}?", pr.title, merge_method_label(method));
     prompts.confirm(&prompt, false)
@@ -653,7 +653,7 @@ async fn handle_ci_checks(
     pr_number: u64,
     backend_kind: &BackendKind,
     opts: &MergeOptions,
-) -> Result<PrChecksStatus, RiptskError> {
+) -> Result<PrChecksStatus, RiptaskError> {
     let has_local = has_local_ci(repo_path, backend_kind);
     let presence = provider.get_ci_presence(repo_name).await?;
     match (has_local, presence.has_remote_ci) {
@@ -684,7 +684,7 @@ async fn wait_for_checks(
     repo: &str,
     pr_number: u64,
     timeout_secs: u64,
-) -> Result<PrChecksStatus, RiptskError> {
+) -> Result<PrChecksStatus, RiptaskError> {
     wait_for_checks_inner(
         provider,
         repo,
@@ -701,7 +701,7 @@ async fn wait_for_checks_inner(
     pr_number: u64,
     timeout: Duration,
     poll_interval: Duration,
-) -> Result<PrChecksStatus, RiptskError> {
+) -> Result<PrChecksStatus, RiptaskError> {
     let started = Instant::now();
     let spinner = ui::spinner("waiting for checks to register");
     let mut saw_checks = false;
@@ -726,7 +726,7 @@ async fn wait_for_checks_inner(
                 finish_spinner(&spinner);
                 let elapsed = ui::format_elapsed(started.elapsed());
                 ui::error(&format!("checks failed ({elapsed})"));
-                return Err(RiptskError::General(format!(
+                return Err(RiptaskError::General(format!(
                     "checks failed for PR #{pr_number}"
                 )));
             }
@@ -745,7 +745,7 @@ async fn wait_for_checks_inner(
         if started.elapsed() >= timeout {
             finish_spinner(&spinner);
             if saw_checks {
-                return Err(RiptskError::General(format!(
+                return Err(RiptaskError::General(format!(
                     "timed out after {}s waiting for checks on PR #{pr_number}",
                     timeout.as_secs()
                 )));
@@ -764,7 +764,7 @@ async fn wait_for_pr_head_update(
     expected_sha: &str,
     timeout: Duration,
     poll_interval: Duration,
-) -> Result<(), RiptskError> {
+) -> Result<(), RiptaskError> {
     let started = Instant::now();
     loop {
         let pr = provider.get_pr(repo, pr_number).await?;
@@ -772,7 +772,7 @@ async fn wait_for_pr_head_update(
             return Ok(());
         }
         if started.elapsed() >= timeout {
-            return Err(RiptskError::General(format!(
+            return Err(RiptaskError::General(format!(
                 "timed out waiting for PR #{pr_number} head to update after force push"
             )));
         }
@@ -824,7 +824,7 @@ fn build_create_ai_context(
     repo: &Path,
     base: &str,
     branch: &str,
-) -> Result<String, RiptskError> {
+) -> Result<String, RiptaskError> {
     Ok(format!(
         "Issue: {} {}\n\nIssue body:\n{}\n\nCommits:\n{}\n\nDiff:\n{}",
         issue.frontmatter.id,
@@ -841,7 +841,7 @@ fn build_update_ai_context(
     repo: &Path,
     base: &str,
     branch: &str,
-) -> Result<String, RiptskError> {
+) -> Result<String, RiptaskError> {
     Ok(format!(
         "Current PR title: {}\n\nCurrent PR body:\n{}\n\nCommits:\n{}\n\nDiff:\n{}",
         current.title,
@@ -851,9 +851,9 @@ fn build_update_ai_context(
     ))
 }
 
-fn edit_buffer(title: &str, body: &str) -> Result<(String, String), RiptskError> {
-    let mut file = tempfile::NamedTempFile::new().map_err(RiptskError::Io)?;
-    write!(file, "{}", render_editor_buffer(title, body)).map_err(RiptskError::Io)?;
+fn edit_buffer(title: &str, body: &str) -> Result<(String, String), RiptaskError> {
+    let mut file = tempfile::NamedTempFile::new().map_err(RiptaskError::Io)?;
+    write!(file, "{}", render_editor_buffer(title, body)).map_err(RiptaskError::Io)?;
     open_in_editor(file.path())?;
     let content = fs::read_to_string(file.path())?;
     parse_editor_buffer(&content)
@@ -867,12 +867,12 @@ fn render_editor_buffer(title: &str, body: &str) -> String {
     }
 }
 
-fn parse_editor_buffer(content: &str) -> Result<(String, String), RiptskError> {
+fn parse_editor_buffer(content: &str) -> Result<(String, String), RiptaskError> {
     let normalized = content.replace("\r\n", "\n");
     let mut parts = normalized.splitn(2, '\n');
     let title = parts.next().unwrap_or_default().trim().to_owned();
     if title.is_empty() {
-        return Err(RiptskError::General("PR title cannot be empty".into()));
+        return Err(RiptaskError::General("PR title cannot be empty".into()));
     }
     let rest = parts.next().unwrap_or_default();
     let body = if rest.is_empty() {
@@ -880,19 +880,19 @@ fn parse_editor_buffer(content: &str) -> Result<(String, String), RiptskError> {
     } else if let Some(body) = rest.strip_prefix('\n') {
         body.to_owned()
     } else {
-        return Err(RiptskError::General(
+        return Err(RiptaskError::General(
             "expected a blank line between title and body".into(),
         ));
     };
     Ok((title, body))
 }
 
-fn open_in_editor(path: &Path) -> Result<(), RiptskError> {
+fn open_in_editor(path: &Path) -> Result<(), RiptaskError> {
     let status = crate::services::editor::open_in_editor(path)?;
     if status.success() {
         Ok(())
     } else {
-        Err(RiptskError::General("editor exited unsuccessfully".into()))
+        Err(RiptaskError::General("editor exited unsuccessfully".into()))
     }
 }
 
@@ -925,7 +925,7 @@ mod tests {
         BackendPrRecord, CiPresence, MergeMethod, PrChecksStatus, VersionControl,
     };
     use crate::adapters::prompts::PromptBackend;
-    use crate::error::RiptskError;
+    use crate::error::RiptaskError;
     use crate::models::BackendKind;
     use async_trait::async_trait;
     use std::collections::VecDeque;
@@ -989,17 +989,17 @@ mod tests {
     }
 
     impl PromptBackend for FakePrompts {
-        fn input(&self, _prompt: &str, _default: Option<&str>) -> Result<String, RiptskError> {
+        fn input(&self, _prompt: &str, _default: Option<&str>) -> Result<String, RiptaskError> {
             unimplemented!()
         }
 
-        fn confirm(&self, _prompt: &str, _default: bool) -> Result<bool, RiptskError> {
+        fn confirm(&self, _prompt: &str, _default: bool) -> Result<bool, RiptaskError> {
             *self.confirm_calls.lock().expect("lock") += 1;
             self.confirms
                 .lock()
                 .expect("lock")
                 .pop_front()
-                .ok_or_else(|| RiptskError::General("missing confirm response".into()))
+                .ok_or_else(|| RiptaskError::General("missing confirm response".into()))
         }
 
         fn select(
@@ -1007,7 +1007,7 @@ mod tests {
             _prompt: &str,
             _items: &[String],
             _default: usize,
-        ) -> Result<String, RiptskError> {
+        ) -> Result<String, RiptaskError> {
             unimplemented!()
         }
     }
@@ -1021,11 +1021,11 @@ mod tests {
             _base: &str,
             _title: &str,
             _body: &str,
-        ) -> Result<BackendPrRecord, RiptskError> {
+        ) -> Result<BackendPrRecord, RiptaskError> {
             unimplemented!()
         }
 
-        async fn get_pr(&self, _repo: &str, number: u64) -> Result<BackendPrRecord, RiptskError> {
+        async fn get_pr(&self, _repo: &str, number: u64) -> Result<BackendPrRecord, RiptaskError> {
             let mut head_shas = self.head_shas.lock().expect("lock");
             let head_sha = if head_shas.len() > 1 {
                 Some(head_shas.pop_front().expect("head_sha"))
@@ -1053,7 +1053,7 @@ mod tests {
             _number: u64,
             _title: &str,
             _body: &str,
-        ) -> Result<BackendPrRecord, RiptskError> {
+        ) -> Result<BackendPrRecord, RiptaskError> {
             unimplemented!()
         }
 
@@ -1062,7 +1062,7 @@ mod tests {
             _repo: &str,
             _head: &str,
             _base: &str,
-        ) -> Result<Option<BackendPrRecord>, RiptskError> {
+        ) -> Result<Option<BackendPrRecord>, RiptaskError> {
             unimplemented!()
         }
 
@@ -1073,7 +1073,7 @@ mod tests {
             _method: MergeMethod,
             _commit_title: Option<&str>,
             _commit_message: Option<&str>,
-        ) -> Result<(), RiptskError> {
+        ) -> Result<(), RiptaskError> {
             unimplemented!()
         }
 
@@ -1081,7 +1081,7 @@ mod tests {
             &self,
             _repo: &str,
             _number: u64,
-        ) -> Result<PrChecksStatus, RiptskError> {
+        ) -> Result<PrChecksStatus, RiptaskError> {
             *self.polls.lock().expect("lock") += 1;
             let mut statuses = self.statuses.lock().expect("lock");
             let status = if statuses.len() > 1 {
@@ -1092,7 +1092,7 @@ mod tests {
             Ok(status)
         }
 
-        async fn get_ci_presence(&self, _repo: &str) -> Result<CiPresence, RiptskError> {
+        async fn get_ci_presence(&self, _repo: &str) -> Result<CiPresence, RiptaskError> {
             Ok(self.ci_presence.clone())
         }
 
@@ -1102,15 +1102,15 @@ mod tests {
             _branch_name: &str,
             _base_ref: &str,
             _issue_id: Option<u64>,
-        ) -> Result<(), RiptskError> {
+        ) -> Result<(), RiptaskError> {
             unimplemented!()
         }
 
-        async fn default_branch(&self, _repo: &str) -> Result<String, RiptskError> {
+        async fn default_branch(&self, _repo: &str) -> Result<String, RiptaskError> {
             unimplemented!()
         }
 
-        async fn delete_branch(&self, _repo: &str, _branch_name: &str) -> Result<(), RiptskError> {
+        async fn delete_branch(&self, _repo: &str, _branch_name: &str) -> Result<(), RiptaskError> {
             unimplemented!()
         }
     }

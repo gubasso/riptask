@@ -9,7 +9,7 @@ use crate::domain::issue::{
     GithubIssueMeta, GitlabIssueMeta, IssueDocument, IssueFrontmatter, IssueState, JiraIssueMeta,
     Priority,
 };
-use crate::error::RiptskError;
+use crate::error::RiptaskError;
 use crate::models::{BackendKind, RepoProject, VCBackendSpec};
 use crate::services::issue_ids;
 use crate::services::issue_service::{generate_slug, now_utc};
@@ -38,7 +38,7 @@ impl std::fmt::Display for CredentialSource {
 pub fn build_hosted_provider(
     vc_backend: &VCBackendSpec,
     display_name: &str,
-) -> Result<Box<dyn BackendProvider>, RiptskError> {
+) -> Result<Box<dyn BackendProvider>, RiptaskError> {
     match vc_backend.kind {
         BackendKind::Github => {
             let (token, source) = resolve_github_token(display_name)?;
@@ -63,11 +63,11 @@ pub fn build_hosted_provider(
             ));
             Ok(Box::new(GitlabProvider::new(&host, &token)?))
         }
-        BackendKind::Local => Err(RiptskError::Config(format!(
+        BackendKind::Local => Err(RiptaskError::Config(format!(
             "RepoProject {}: VCBackend is local-only",
             display_name
         ))),
-        BackendKind::Jira => Err(RiptskError::Config(format!(
+        BackendKind::Jira => Err(RiptaskError::Config(format!(
             "RepoProject {}: VCBackend cannot be jira",
             display_name
         ))),
@@ -76,7 +76,7 @@ pub fn build_hosted_provider(
 
 pub fn build_issue_tracker(
     repo_project: &RepoProject,
-) -> Result<Box<dyn IssueTracker>, RiptskError> {
+) -> Result<Box<dyn IssueTracker>, RiptaskError> {
     match repo_project.tasks_backend.kind {
         BackendKind::Github => {
             let (token, source) = resolve_github_token(&repo_project.name)?;
@@ -105,7 +105,7 @@ pub fn build_issue_tracker(
         BackendKind::Jira => {
             let host =
                 repo_project.tasks_backend.host.as_deref().ok_or_else(|| {
-                    RiptskError::Config("Jira TasksBackend requires 'host'".into())
+                    RiptaskError::Config("Jira TasksBackend requires 'host'".into())
                 })?;
             let (auth, source) = resolve_jira_credentials(&repo_project.name, host)?;
             crate::ui::info(&format!(
@@ -119,7 +119,7 @@ pub fn build_issue_tracker(
                 repo_project.repo_project_label.clone(),
             )?))
         }
-        BackendKind::Local => Err(RiptskError::Config(format!(
+        BackendKind::Local => Err(RiptaskError::Config(format!(
             "RepoProject {}: TasksBackend is local-only",
             repo_project.name
         ))),
@@ -129,17 +129,17 @@ pub fn build_issue_tracker(
 pub fn build_version_control(
     vc_backend: &VCBackendSpec,
     display_name: &str,
-) -> Result<Box<dyn VersionControl>, RiptskError> {
+) -> Result<Box<dyn VersionControl>, RiptaskError> {
     match vc_backend.kind {
         BackendKind::Github | BackendKind::Gitlab => {
             let provider = build_hosted_provider(vc_backend, display_name)?;
             Ok(provider)
         }
-        BackendKind::Local => Err(RiptskError::Config(format!(
+        BackendKind::Local => Err(RiptaskError::Config(format!(
             "RepoProject {}: VCBackend is local-only",
             display_name
         ))),
-        BackendKind::Jira => Err(RiptskError::Config(format!(
+        BackendKind::Jira => Err(RiptaskError::Config(format!(
             "RepoProject {}: VCBackend cannot be jira",
             display_name
         ))),
@@ -500,7 +500,7 @@ fn parse_glab_token(stderr_output: &str) -> Option<String> {
     })
 }
 
-fn resolve_github_token(display_name: &str) -> Result<(String, CredentialSource), RiptskError> {
+fn resolve_github_token(display_name: &str) -> Result<(String, CredentialSource), RiptaskError> {
     if let Some(token) = non_empty_env("GITHUB_TOKEN") {
         return Ok((token, CredentialSource::EnvVar("GITHUB_TOKEN")));
     }
@@ -509,7 +509,7 @@ fn resolve_github_token(display_name: &str) -> Result<(String, CredentialSource)
     }
     match run_gh_auth_token("github.com") {
         Ok(token) => Ok((token, CredentialSource::CliTool("gh auth token"))),
-        Err(reason) => Err(RiptskError::Auth(format!(
+        Err(reason) => Err(RiptaskError::Auth(format!(
             "GitHub authentication failed for VC/Tasks backend '{display_name}'\n\n\
 Tried: GITHUB_TOKEN, GH_TOKEN, gh auth token\n\n\
 {reason}\n\n\
@@ -524,7 +524,7 @@ To fix, do one of:\n\
 fn resolve_gitlab_token(
     display_name: &str,
     host: &str,
-) -> Result<(String, CredentialSource), RiptskError> {
+) -> Result<(String, CredentialSource), RiptaskError> {
     if let Some(token) = non_empty_env("GITLAB_TOKEN") {
         return Ok((token, CredentialSource::EnvVar("GITLAB_TOKEN")));
     }
@@ -533,7 +533,7 @@ fn resolve_gitlab_token(
             token,
             CredentialSource::CliTool("glab auth status --show-token"),
         )),
-        Err(reason) => Err(RiptskError::Auth(format!(
+        Err(reason) => Err(RiptaskError::Auth(format!(
             "GitLab authentication failed for VC/Tasks backend '{display_name}' (host: {host})\n\n\
 Tried: GITLAB_TOKEN, glab auth status --show-token\n\n\
 {reason}\n\n\
@@ -547,7 +547,7 @@ To fix, do one of:\n\
 fn resolve_jira_credentials(
     display_name: &str,
     host: &str,
-) -> Result<(crate::adapters::jira::JiraAuth, CredentialSource), RiptskError> {
+) -> Result<(crate::adapters::jira::JiraAuth, CredentialSource), RiptaskError> {
     use crate::adapters::jira::JiraAuth;
     if let Some(token) = non_empty_env("JIRA_API_TOKEN") {
         if let Some(email) = non_empty_env("JIRA_EMAIL") {
@@ -573,7 +573,7 @@ fn resolve_jira_credentials(
             };
             Ok((auth, CredentialSource::CliTool("jira-cli-go keychain")))
         }
-        Err(_) => Err(RiptskError::Auth(format!(
+        Err(_) => Err(RiptaskError::Auth(format!(
             "Jira authentication failed for TasksBackend '{display_name}' (host: {host})\n\n\
 Tried: JIRA_API_TOKEN, jira-cli-go keychain\n\n\
 To fix, do one of:\n\

@@ -1,25 +1,25 @@
 use crate::assets::templates::embedded_templates;
 use crate::config::{default_config, save_config};
-use crate::error::RiptskError;
+use crate::error::RiptaskError;
 use crate::paths::AppPaths;
 use anyhow::Context;
 use std::fs;
 
-pub fn run(paths: &AppPaths) -> Result<(), RiptskError> {
+pub fn run(paths: &AppPaths) -> Result<(), RiptaskError> {
     if paths.config_path().exists() {
-        return Err(RiptskError::General(format!(
+        return Err(RiptaskError::General(format!(
             "repository already initialized at {}",
             paths.riptsk_repo
         )));
     }
 
-    paths.ensure_repo_dirs().map_err(RiptskError::Other)?;
+    paths.ensure_repo_dirs().map_err(RiptaskError::Other)?;
     save_config(paths.config_path().as_std_path(), &default_config())?;
 
     for (name, content) in embedded_templates() {
         fs::write(paths.templates_dir().join(name), content)
             .with_context(|| format!("failed to write template {name}"))
-            .map_err(RiptskError::Other)?;
+            .map_err(RiptaskError::Other)?;
     }
 
     fs::write(
@@ -27,7 +27,7 @@ pub fn run(paths: &AppPaths) -> Result<(), RiptskError> {
         "# Cache and derived state live outside $RIPTSK_REPO by design.\n",
     )
     .context("failed to write .gitignore")
-    .map_err(RiptskError::Other)?;
+    .map_err(RiptaskError::Other)?;
 
     // Initialize git repo
     let output = std::process::Command::new("git")
@@ -35,7 +35,7 @@ pub fn run(paths: &AppPaths) -> Result<(), RiptskError> {
         .arg(paths.riptsk_repo.as_str())
         .output()
         .context("failed to run git init")
-        .map_err(RiptskError::Other)?;
+        .map_err(RiptaskError::Other)?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         let message = if stderr.is_empty() {
@@ -43,7 +43,7 @@ pub fn run(paths: &AppPaths) -> Result<(), RiptskError> {
         } else {
             format!("git init failed: {stderr}")
         };
-        return Err(RiptskError::General(message));
+        return Err(RiptaskError::General(message));
     }
 
     crate::ui::success(&format!(
