@@ -30,7 +30,7 @@ fn view_builds_kanban_tree() {
         .arg("view")
         .assert()
         .success();
-    assert!(cache.join("riptsk/views/kanban/personal/todo").exists());
+    assert!(cache.join("riptask/views/kanban/personal/todo").exists());
 }
 
 #[test]
