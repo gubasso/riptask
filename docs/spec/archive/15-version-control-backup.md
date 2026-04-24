@@ -17,13 +17,13 @@
 ### What to version
 
 ```
-~/.local/share/riptsk/  ($RIPTSK_REPO)
+~/.local/share/riptask/  ($RIPTASK_REPO)
 ├── issues/        ✅ version — SoT for all issue content
 ├── templates/     ✅ version — SoT for templates
-└── riptsk.yaml       ✅ version — config, registered remotes (no secrets)
+└── riptask.yaml       ✅ version — config, registered remotes (no secrets)
 
-~/.cache/riptsk/      (outside repo — not versioned, not gitignored, just absent)
-├── views/         generated view tree (file copies from $RIPTSK_REPO/issues/)
+~/.cache/riptask/      (outside repo — not versioned, not gitignored, just absent)
+├── views/         generated view tree (file copies from $RIPTASK_REPO/issues/)
 ├── remote_state.json
 ├── id_map.json
 └── index.json
@@ -31,7 +31,7 @@
 
 ### Commit discipline
 
-**Auto-commit on lifecycle events for local issues.** When a lifecycle command (`new`, `close`, `move`, `reopen`, `rm`) affects only local issues (belonging to a project without a GitHub/GitLab remote, or not tied to any project), `tsk` auto-commits `$RIPTSK_REPO` immediately after the operation. The commit message follows the conventions below.
+**Auto-commit on lifecycle events for local issues.** When a lifecycle command (`new`, `close`, `move`, `reopen`, `rm`) affects only local issues (belonging to a project without a GitHub/GitLab remote, or not tied to any project), `tsk` auto-commits `$RIPTASK_REPO` immediately after the operation. The commit message follows the conventions below.
 
 **Defer for everything else.** Synced issues (gh/glab), trivial mutations (`edit`, `comment`, `tag`), and bulk operations are not auto-committed. These are batched and committed explicitly via `tsk commit` or `tsk session end`.
 
@@ -40,13 +40,13 @@ Auto-commit does NOT auto-push — the same constraint as `tsk commit`. Pushing 
 Commit message conventions:
 
 ```
-riptsk: new ICE-043 — investigate temporal drift
-riptsk: close ICE-042 — wormhole stabilizer fix
-riptsk: move ICE-041 → in-progress
-riptsk: reopen ICE-040
-riptsk: rm ICE-039
-riptsk: sync 2026-03-14 (5 pulled, 2 pushed)
-riptsk: session end host-a 2026-03-14
+riptask: new ICE-043 — investigate temporal drift
+riptask: close ICE-042 — wormhole stabilizer fix
+riptask: move ICE-041 → in-progress
+riptask: reopen ICE-040
+riptask: rm ICE-039
+riptask: sync 2026-03-14 (5 pulled, 2 pushed)
+riptask: session end host-a 2026-03-14
 ```
 
 ### Remote options
@@ -68,7 +68,7 @@ riptsk: session end host-a 2026-03-14
 ```bash
 git-crypt init
 echo "issues/** filter=git-crypt diff=git-crypt" >> .gitattributes
-echo "riptsk.yaml filter=git-crypt diff=git-crypt" >> .gitattributes
+echo "riptask.yaml filter=git-crypt diff=git-crypt" >> .gitattributes
 git-crypt add-gpg-user YOUR_GPG_KEY_ID
 # from this point: normal git workflow, GitHub stores ciphertext
 ```

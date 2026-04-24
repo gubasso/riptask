@@ -1,6 +1,6 @@
 # Bash CLI Project — Specs Overview
 
-Archived reference: superseded by [17. riptsk Codebase Structure](17-codebase-structure.md).
+Archived reference: superseded by [17. riptask Codebase Structure](17-codebase-structure.md).
 
 ## Directory Structure
 

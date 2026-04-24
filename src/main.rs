@@ -29,7 +29,7 @@ fn run() -> Result<(), RiptaskError> {
     let cli = Cli::from_arg_matches(&matches).map_err(anyhow::Error::from)?;
     let paths = AppPaths::from_env().context("failed to resolve application paths")?;
     fs::create_dir_all(paths.log_path().parent().unwrap())
-        .context("failed to create riptsk log directory")?;
+        .context("failed to create riptask log directory")?;
     let file_appender =
         tracing_appender::rolling::never(paths.state_root.as_std_path(), "riptask.log");
     let (non_blocking_writer, _guard) = tracing_appender::non_blocking(file_appender);

@@ -21,8 +21,8 @@
 ### Environment
 
 ```bash
-RIPTSK_REPO=~/.local/share/riptsk  # path to data repo (default: ~/.local/share/riptsk)
-RIPTSK_AI_MODEL=...           # override default AI model
+RIPTASK_REPO=~/.local/share/riptask  # path to data repo (default: ~/.local/share/riptask)
+RIPTASK_AI_MODEL=...           # override default AI model
 EDITOR=nvim                # used by tsk edit, tsk new
 ```
 
@@ -44,11 +44,11 @@ tsk new --title "Fix wormhole stabilizer" \
         --priority high \
         --template bug
 # Non-interactive. All flags optional — missing ones are prompted or defaulted.
-# --template / -T selects a template from $RIPTSK_REPO/templates/ (see [24 — Templates](24-templates.md))
+# --template / -T selects a template from $RIPTASK_REPO/templates/ (see [24 — Templates](24-templates.md))
 
 tsk new --title "Fix wormhole stabilizer" --ai
 # Same as above but pre-fills body via LLM before opening editor
-# Auto-commits $RIPTSK_REPO if the new issue is local (see spec 15)
+# Auto-commits $RIPTASK_REPO if the new issue is local (see spec 15)
 
 tsk edit [<ID>]
 # Opens $EDITOR on issues/<ID>.md
@@ -64,7 +64,7 @@ tsk move [<ID>] [<state>]
 # Patches state: in frontmatter
 # Updates local_updated_at
 # Regenerates views
-# Auto-commits $RIPTSK_REPO if all affected issues are local (see spec 15)
+# Auto-commits $RIPTASK_REPO if all affected issues are local (see spec 15)
 # If omitted: interactive fzf selection — picks issue (non-done), then state
 #   (see [21 — fzf Interactive Selection](21-fzf-interactive-selection.md))
 
@@ -72,7 +72,7 @@ tsk close [<ID>]
 # Sets state: done
 # Updates local_updated_at
 # Regenerates views
-# Auto-commits $RIPTSK_REPO if all affected issues are local (see spec 15)
+# Auto-commits $RIPTASK_REPO if all affected issues are local (see spec 15)
 # If omitted: interactive fzf selection — only non-done issues shown
 #   (see [21 — fzf Interactive Selection](21-fzf-interactive-selection.md))
 
@@ -80,7 +80,7 @@ tsk reopen [<ID>]
 # Sets state: todo
 # Updates local_updated_at
 # Regenerates views
-# Auto-commits $RIPTSK_REPO if all affected issues are local (see spec 15)
+# Auto-commits $RIPTASK_REPO if all affected issues are local (see spec 15)
 # If omitted: interactive fzf selection — only done issues shown
 #   (see [21 — fzf Interactive Selection](21-fzf-interactive-selection.md))
 
@@ -88,7 +88,7 @@ tsk rm [<ID>]
 # Removes issues/<ID>.md
 # If synced: prompts to also close on remote or just remove locally
 # Regenerates views
-# Auto-commits $RIPTSK_REPO if all affected issues are local (see spec 15)
+# Auto-commits $RIPTASK_REPO if all affected issues are local (see spec 15)
 # If omitted: interactive fzf selection (see [21 — fzf Interactive Selection](21-fzf-interactive-selection.md))
 
 tsk path [<ID>]
@@ -129,7 +129,7 @@ tsk board --board penguin-chrono-labs
 # explicit board override
 
 tsk board --open
-# open using ui.opener from riptsk.yaml (nvim -R, yazi, lf — see config)
+# open using ui.opener from riptask.yaml (nvim -R, yazi, lf — see config)
 
 tsk board --path
 # print path only, for composition:
@@ -140,7 +140,7 @@ tsk view
 # wipe and regenerate all views/
 ```
 
-When inside a project repo, `tsk board` resolves that project's `default_board` from `riptsk.yaml` and shows `views/kanban/<board>/`. The kanban tree is board-keyed, not project-keyed.
+When inside a project repo, `tsk board` resolves that project's `default_board` from `riptask.yaml` and shows `views/kanban/<board>/`. The kanban tree is board-keyed, not project-keyed.
 
 #### Reordering
 
@@ -193,7 +193,7 @@ tsk sync pull --force
 
 tsk sync pull --triage
 # after pull: run AI triage on new issues (suggest state/priority/labels)
-# requires ai.enabled: true in riptsk.yaml
+# requires ai.enabled: true in riptask.yaml
 
 tsk sync pull --triage --auto-triage
 # same as --triage, but applies suggestions without per-issue confirmation
@@ -203,29 +203,29 @@ tsk sync pull --triage --auto-triage
 
 ```bash
 tsk session start
-# git -C $RIPTSK_REPO pull
+# git -C $RIPTASK_REPO pull
 # tsk sync pull
 # reports: N issues updated, M local-only issues received from other hosts
 
 tsk session end
 # tsk sync push
-# git -C $RIPTSK_REPO add -A
-# git -C $RIPTSK_REPO commit -m "riptsk: session end $(hostname) $(date +%Y-%m-%d)"
-# git -C $RIPTSK_REPO push
+# git -C $RIPTASK_REPO add -A
+# git -C $RIPTASK_REPO commit -m "riptask: session end $(hostname) $(date +%Y-%m-%d)"
+# git -C $RIPTASK_REPO push
 # reports: N issues pushed, M commits synced
 ```
 
-`session end` stages all changes in `$RIPTSK_REPO` via `git add -A`. This is safe because `$RIPTSK_REPO` contains only issue data, templates, config, and the comment-only `.gitignore` — cache lives outside the repo. This is broader than lifecycle auto-commit ([15 — Version Control & Backup](15-version-control-backup.md)), which stages only the specific files affected by the operation.
+`session end` stages all changes in `$RIPTASK_REPO` via `git add -A`. This is safe because `$RIPTASK_REPO` contains only issue data, templates, config, and the comment-only `.gitignore` — cache lives outside the repo. This is broader than lifecycle auto-commit ([15 — Version Control & Backup](15-version-control-backup.md)), which stages only the specific files affected by the operation.
 
 #### Recurring tasks
 
 ```bash
 tsk recur list
-# list all recurring task definitions from riptsk.yaml
+# list all recurring task definitions from riptask.yaml
 
 tsk recur new
 # interactive: choose template, set frequency, start/end dates
-# writes definition to riptsk.yaml
+# writes definition to riptask.yaml
 
 tsk recur run
 # instantiate all recurring tasks that are due
@@ -298,7 +298,7 @@ tsk resolve <ID> --take-local
 tsk register
 # detect $PWD git remote
 # prompt for project config (prefix, board, org)
-# write entry to $RIPTSK_REPO/riptsk.yaml
+# write entry to $RIPTASK_REPO/riptask.yaml
 
 tsk register --list
 # list all registered projects
@@ -324,7 +324,7 @@ tsk ask "<question>"
 
 ```bash
 tsk hooks install
-# copy pre-commit hook to $RIPTSK_REPO/.git/hooks/; refuse if non-tsk hook exists (--force to override)
+# copy pre-commit hook to $RIPTASK_REPO/.git/hooks/; refuse if non-tsk hook exists (--force to override)
 
 tsk hooks update
 # replace if source version > installed version
@@ -333,23 +333,23 @@ tsk hooks status
 # show installed vs available version
 
 tsk hooks uninstall
-# remove only if riptsk-managed (has version header)
+# remove only if riptask-managed (has version header)
 ```
 
-See [25 — RIPTSK_REPO Data Repository Hooks](25-tsk-repo-hooks.md) for full details on validation rules and hook design.
+See [25 — RIPTASK_REPO Data Repository Hooks](25-tsk-repo-hooks.md) for full details on validation rules and hook design.
 
 #### Utility
 
 ```bash
 tsk init
-# initialize a new tasks repo in $RIPTSK_REPO (default: ~/.local/share/riptsk)
-# creates: issues/ templates/ riptsk.yaml .gitignore
+# initialize a new tasks repo in $RIPTASK_REPO (default: ~/.local/share/riptask)
+# creates: issues/ templates/ riptask.yaml .gitignore
 #   (.gitignore is comment-only; cache lives outside the repo)
-# also creates ~/.cache/riptsk/ for cache files
+# also creates ~/.cache/riptask/ for cache files
 # runs git init + initial commit
 
 tsk config
-# show current riptsk.yaml
+# show current riptask.yaml
 
 tsk config set <key> <value>
 # update a config value
@@ -363,7 +363,7 @@ tsk help [command]         # alias (same code path)
 
 ```bash
 tsk commit [-e|--edit]
-# stage issues/ templates/ riptsk.yaml
+# stage issues/ templates/ riptask.yaml
 # generate commit message summarizing changes since last commit
 # without --edit: commit immediately with generated message
 # with --edit: open $EDITOR with generated message pre-filled, user can modify before commit
@@ -374,15 +374,15 @@ tsk commit [-e|--edit]
 The generated message follows the conventions from `docs/spec/15-version-control-backup.md`:
 
 ```
-riptsk: close WHL-042 — wormhole stabilizer fix merged
-riptsk: new WHL-043 — investigate temporal image drift
-riptsk: move WHL-041 in-progress → review, close WHL-042
+riptask: close WHL-042 — wormhole stabilizer fix merged
+riptask: new WHL-043 — investigate temporal image drift
+riptask: move WHL-041 in-progress → review, close WHL-042
 ```
 
 For multiple changes, combine into a single summary line or multi-line message:
 
 ```
-riptsk: 3 issues updated
+riptask: 3 issues updated
 
 - close WHL-042 — wormhole stabilizer fix merged
 - new WHL-043 — investigate temporal image drift

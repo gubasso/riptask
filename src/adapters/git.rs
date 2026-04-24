@@ -608,7 +608,7 @@ fn run_git_dynamic(repo: &Path, args: &[&str]) -> Result<(), RiptaskError> {
 /// Build a `git` `Command` with inherited override environment variables
 /// removed.
 ///
-/// When riptsk or its test suite runs inside a `git commit` context (for
+/// When riptask or its test suite runs inside a `git commit` context (for
 /// example under a pre-commit hook invoking `cargo nextest`), Git sets
 /// variables such as `GIT_DIR`, `GIT_INDEX_FILE`, `GIT_WORK_TREE`, and
 /// `GIT_OBJECT_DIRECTORY` to point at the outer repository. Those vars
@@ -686,7 +686,7 @@ mod tests {
         );
     }
 
-    // Regression: when riptsk tests run under `git commit` (e.g. a
+    // Regression: when riptask tests run under `git commit` (e.g. a
     // pre-commit hook invoking cargo nextest), git exports override
     // variables like GIT_DIR / GIT_INDEX_FILE pointing at the outer
     // repository. If `git_command` does not scrub these, every

@@ -16,10 +16,10 @@ gh issue develop <id> --base develop
 BRANCH=$(gh issue develop <id> --list --json headRefName --jq '.[0].headRefName')
 
 # 3. Create work-clone
-git clone --reference ~/Projects/gubasso/riptsk \
-    git@github.com:gubasso/riptsk.git \
-    ~/Projects/gubasso/riptsk."$BRANCH"
-cd ~/Projects/gubasso/riptsk."$BRANCH"
+git clone --reference ~/Projects/gubasso/riptask \
+    git@github.com:gubasso/riptask.git \
+    ~/Projects/gubasso/riptask."$BRANCH"
+cd ~/Projects/gubasso/riptask."$BRANCH"
 git fetch origin "$BRANCH"
 git checkout "$BRANCH"
 ```
@@ -37,14 +37,14 @@ gh issue create --title "Add auth module"    # → returns ID
 
 ```bash
 # 1. Save changes in main repo
-cd ~/Projects/gubasso/riptsk
+cd ~/Projects/gubasso/riptask
 git stash
 
 # 2. Create issue and branch (same as above)
 
 # 3. Transfer changes to work-clone
-git -C ~/Projects/gubasso/riptsk stash show -p | git apply
-git -C ~/Projects/gubasso/riptsk stash drop
+git -C ~/Projects/gubasso/riptask stash show -p | git apply
+git -C ~/Projects/gubasso/riptask stash drop
 ```
 
 ---
@@ -86,12 +86,12 @@ After the PR is merged:
 
 ```bash
 # Pull merged changes into the main repo
-cd ~/Projects/gubasso/riptsk
+cd ~/Projects/gubasso/riptask
 git checkout develop
 git pull
 
 # Remove the work-clone
-rm -rf ~/Projects/gubasso/riptsk.<branch>
+rm -rf ~/Projects/gubasso/riptask.<branch>
 
 # Delete the local feature branch (remote auto-deleted by forge on merge)
 git branch -d <branch>
@@ -108,8 +108,8 @@ See [Release Workflow](release-workflow.md).
 A work-clone is an isolated clone created with `git clone --reference`, placed as a sibling directory:
 
 ```text
-~/Projects/gubasso/riptsk                    ← main repo
-~/Projects/gubasso/riptsk.42-add-auth        ← work-clone for issue #42
+~/Projects/gubasso/riptask                    ← main repo
+~/Projects/gubasso/riptask.42-add-auth        ← work-clone for issue #42
 ```
 
 It shares the main repo's object store so disk usage is minimal. Do not delete the main repo while work-clones exist.

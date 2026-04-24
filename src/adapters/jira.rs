@@ -23,7 +23,7 @@
 //! Jira statuses are fully customizable per workflow, but every status belongs
 //! to one of 4 fixed `statusCategory.key` values: `new`, `indeterminate`,
 //! `done`, `undefined`. We map these to `"open"`/`"closed"` and use `status::`
-//! labels for fine-grained riptsk states (backlog/todo/in-progress/review).
+//! labels for fine-grained riptask states (backlog/todo/in-progress/review).
 //! State changes go through the transitions API — you cannot set `fields.status`
 //! directly on a Jira issue.
 
@@ -216,7 +216,7 @@ pub struct JiraCreateResponse {
 //
 // Jira has 4 fixed status categories (new, indeterminate, done, undefined).
 // We map these to the binary open/closed state that BackendIssueRecord uses,
-// then derive fine-grained riptsk states (backlog/todo/in-progress/review)
+// then derive fine-grained riptask states (backlog/todo/in-progress/review)
 // from the status name using heuristics (e.g. "In Review" → status::review).
 // ---------------------------------------------------------------------------
 
@@ -255,7 +255,7 @@ pub fn jira_status_to_label(status_category_key: &str, status_name: &str) -> Str
     }
 }
 
-/// Map Jira resolution name to riptsk state_reason (pull direction).
+/// Map Jira resolution name to riptask state_reason (pull direction).
 pub fn jira_resolution_to_state_reason(resolution: Option<&str>) -> Option<String> {
     resolution.map(|name| match name {
         "Won't Do" | "Wont Do" => "not_planned".into(),
@@ -264,7 +264,7 @@ pub fn jira_resolution_to_state_reason(resolution: Option<&str>) -> Option<Strin
     })
 }
 
-/// Map riptsk state_reason to Jira resolution name (push direction).
+/// Map riptask state_reason to Jira resolution name (push direction).
 pub fn state_reason_to_jira_resolution(reason: Option<&str>) -> &'static str {
     match reason {
         Some("not_planned") => "Won't Do",

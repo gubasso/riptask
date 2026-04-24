@@ -1,4 +1,4 @@
-# Cargo Release Workflow Setup — riptsk
+# Cargo Release Workflow Setup — riptask
 
 ## Context
 
@@ -53,7 +53,7 @@ git push origin develop
 ### 7. Create crates.io API token [YOU]
 
 - [x] Go to [crates.io/settings/tokens](https://crates.io/settings/tokens)
-- [x] Create token named `github-actions-riptsk` with scope `publish-update`
+- [x] Create token named `github-actions-riptask` with scope `publish-update`
 
 ### 8. First manual publish [YOU]
 
@@ -100,7 +100,7 @@ First publish **cannot** be automated.
 After merge, the `Publish & Sync` workflow triggers automatically. Check:
 
 - [ ] `just check` passes in the workflow
-- [ ] Crate published to crates.io (check crates.io/crates/riptsk)
+- [ ] Crate published to crates.io (check crates.io/crates/riptask)
 - [ ] Git tag `v0.1.1` created on the repo
 - [ ] GitHub Release `v0.1.1` created with auto-generated notes
 - [ ] `master` merged back into `develop` automatically
