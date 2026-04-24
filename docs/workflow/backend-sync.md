@@ -1,6 +1,6 @@
 # Sync with GitHub, GitLab, Jira
 
-RepoProjects are configured in `riptsk.yaml` under `projects:`.
+RepoProjects are configured in `riptask.yaml` under `projects:`.
 
 Sync data flow:
 
@@ -63,7 +63,7 @@ Detection rules:
 - local git repo with no supported remote -> `local`
 - non-git directory -> `local`
 
-Jira TasksBackends are not auto-detected from git remotes. Add Jira-backed RepoProjects manually in `riptsk.yaml`.
+Jira TasksBackends are not auto-detected from git remotes. Add Jira-backed RepoProjects manually in `riptask.yaml`.
 
 `tsk` also performs best-effort project auto-registration on startup when the current directory is not already registered.
 
@@ -122,9 +122,9 @@ Field notes:
 - `tasks_backend.repo` uses the same remote format for GitHub and GitLab.
 - `tasks_backend.jira_project` uses `org/PROJECT_KEY`.
 - Jira `tasks_backend.host` is required and must start with `https://`.
-- `repo_project_label` is optional and Jira-only. When set, riptsk adds that label on push, filters by it on pull (`labels = "<label>"`), and strips it from local issue labels after pull. Labels always carry the fixed `proj::` prefix (e.g. `proj::my-app`) so the Jira label unambiguously identifies a RepoProject reference.
-- `repo_project_label` auto-derivation order is: git origin tail, then cwd basename. The suffix is sanitized to lowercase, separators become `-`, invalid characters are dropped, duplicates collapse; the final label is the prefix + non-empty suffix, must contain no whitespace or `"`, and be at most 255 bytes. On `tsk register --repo-project-label <value>` the prefix may be omitted — riptsk normalizes the input to the prefixed form.
-- `path` is used for path-based RepoProject detection. riptsk checks `vc_backend.path` first, then `tasks_backend.path`.
+- `repo_project_label` is optional and Jira-only. When set, riptask adds that label on push, filters by it on pull (`labels = "<label>"`), and strips it from local issue labels after pull. Labels always carry the fixed `proj::` prefix (e.g. `proj::my-app`) so the Jira label unambiguously identifies a RepoProject reference.
+- `repo_project_label` auto-derivation order is: git origin tail, then cwd basename. The suffix is sanitized to lowercase, separators become `-`, invalid characters are dropped, duplicates collapse; the final label is the prefix + non-empty suffix, must contain no whitespace or `"`, and be at most 255 bytes. On `tsk register --repo-project-label <value>` the prefix may be omitted — riptask normalizes the input to the prefixed form.
+- `path` is used for path-based RepoProject detection. riptask checks `vc_backend.path` first, then `tasks_backend.path`.
 
 ## Sync commands
 

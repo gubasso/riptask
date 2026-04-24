@@ -1,11 +1,11 @@
-# riptsk Codebase Structure
+# riptask Codebase Structure
 
 Status: archived
 
 > Source of truth has moved to code and tests. This document is retained as historical record.
 
 ```
-riptsk/
+riptask/
 ├── Cargo.toml
 ├── src/
 │   ├── adapters/

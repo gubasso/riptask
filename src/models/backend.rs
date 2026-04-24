@@ -72,7 +72,7 @@ pub struct RepoProject {
     pub default_board: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_org: Option<String>,
-    /// Short ID prefix (e.g. `RIPTSK` in `RIPTSK--123`). Derived at registration.
+    /// Short ID prefix (e.g. `RIPTASK` in `RIPTASK--123`). Derived at registration.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
     /// Label used to partition a shared Jira project across multiple RepoProjects.

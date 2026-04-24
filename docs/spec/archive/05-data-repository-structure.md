@@ -17,25 +17,25 @@
 ### Full XDG layout
 
 ```
-~/.local/share/riptsk/                    # $XDG_DATA_HOME/riptsk — the git repo ($RIPTSK_REPO)
+~/.local/share/riptask/                    # $XDG_DATA_HOME/riptask — the git repo ($RIPTASK_REPO)
 ├── issues/
 ├── templates/
-├── riptsk.yaml
+├── riptask.yaml
 └── .gitignore
 
-~/.config/riptsk/config.env                  # $XDG_CONFIG_HOME/riptsk — machine-local config
+~/.config/riptask/config.env                  # $XDG_CONFIG_HOME/riptask — machine-local config
 
-~/.cache/riptsk/                          # $XDG_CACHE_HOME/riptsk — derived/transient data
-├── views/                             # generated view tree (file copies from $RIPTSK_REPO/issues/)
+~/.cache/riptask/                          # $XDG_CACHE_HOME/riptask — derived/transient data
+├── views/                             # generated view tree (file copies from $RIPTASK_REPO/issues/)
 ├── remote_state.json
 ├── id_map.json
 └── index.json
 ```
 
-### Data repository (`$RIPTSK_REPO`)
+### Data repository (`$RIPTASK_REPO`)
 
 ```
-~/.local/share/riptsk/
+~/.local/share/riptask/
 ├── issues/                            # canonical issue store (git-versioned)
 │   ├── WHL-042.md                     # synced, ID from GitLab
 │   ├── FSH-017.md                     # synced, ID from GitLab
@@ -48,14 +48,14 @@
 │   ├── task.md
 │   └── weekly-review.md
 │
-├── riptsk.yaml                           # configuration (git-versioned)
+├── riptask.yaml                           # configuration (git-versioned)
 └── .gitignore
 ```
 
-### Cache directory (`~/.cache/riptsk/`)
+### Cache directory (`~/.cache/riptask/`)
 
 ```
-~/.cache/riptsk/
+~/.cache/riptask/
 ├── views/                             # generated view tree
 │   ├── kanban/
 │   │   ├── penguin-chrono-labs/
@@ -97,12 +97,12 @@
 └── index.json                         # reconstructible query index
 ```
 
-The cache directory lives outside the repo entirely per XDG Base Directory Specification. It is never committed or gitignored — it simply does not exist within `$RIPTSK_REPO`. All cache contents are reconstructible from `issues/*.md` and remote state, with the exception of `id_map.json` entries for already-synced issues (see [20 — Open Questions](../20-open-questions.md)). Views are **file copies** of `$RIPTSK_REPO/issues/<ID>.md` — disposable and always regeneratable via `tsk view`. Kanban lane directories are materialized from board config, so the full lane structure is present even when lanes are empty. Cache is per-host by design — each host maintains its own views, `remote_state.json`, `id_map.json`, and `index.json`. These files are never shared across hosts. Each host independently builds its cache from `issues/*.md` and remote API responses. This is correct behavior: `remote_state.json` tracks what *this host* last saw from the remote, which may differ from what another host last saw.
+The cache directory lives outside the repo entirely per XDG Base Directory Specification. It is never committed or gitignored — it simply does not exist within `$RIPTASK_REPO`. All cache contents are reconstructible from `issues/*.md` and remote state, with the exception of `id_map.json` entries for already-synced issues (see [20 — Open Questions](../20-open-questions.md)). Views are **file copies** of `$RIPTASK_REPO/issues/<ID>.md` — disposable and always regeneratable via `tsk view`. Kanban lane directories are materialized from board config, so the full lane structure is present even when lanes are empty. Cache is per-host by design — each host maintains its own views, `remote_state.json`, `id_map.json`, and `index.json`. These files are never shared across hosts. Each host independently builds its cache from `issues/*.md` and remote API responses. This is correct behavior: `remote_state.json` tracks what *this host* last saw from the remote, which may differ from what another host last saw.
 
 ### `.gitignore`
 
 ```gitignore
-# Views have moved to $XDG_CACHE_HOME/riptsk/views/ — nothing to gitignore.
+# Views have moved to $XDG_CACHE_HOME/riptask/views/ — nothing to gitignore.
 ```
 
-`tsk init` creates this file anyway as a comment-only marker. It makes the intentional emptiness explicit: cache and derived state live outside `$RIPTSK_REPO`, so there are no ignore rules to maintain inside the repo itself.
+`tsk init` creates this file anyway as a comment-only marker. It makes the intentional emptiness explicit: cache and derived state live outside `$RIPTASK_REPO`, so there are no ignore rules to maintain inside the repo itself.
