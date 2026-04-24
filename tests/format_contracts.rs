@@ -47,15 +47,15 @@ fn issue_fixtures_round_trip() {
 #[test]
 fn config_fixtures_round_trip() {
     let config =
-        load_config(std::path::Path::new("tests/fixtures/riptsk.yaml")).expect("load config");
+        load_config(std::path::Path::new("tests/fixtures/riptask.yaml")).expect("load config");
     assert_snapshot!(
-        "riptsk_yaml",
+        "riptask_yaml",
         serde_yaml_ng::to_string(&config).expect("serialize config")
     );
-    let multi = load_config(std::path::Path::new("tests/fixtures/riptsk_multi.yaml"))
+    let multi = load_config(std::path::Path::new("tests/fixtures/riptask_multi.yaml"))
         .expect("load multi config");
     assert_snapshot!(
-        "riptsk_multi_yaml",
+        "riptask_multi_yaml",
         serde_yaml_ng::to_string(&multi).expect("serialize multi config")
     );
 }

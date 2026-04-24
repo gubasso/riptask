@@ -601,8 +601,8 @@ mod tests {
         std::fs::create_dir_all(repo.join("issues")).expect("issues dir");
         std::fs::create_dir_all(repo.join("templates")).expect("templates dir");
         std::fs::write(
-            repo.join("riptsk.yaml"),
-            include_str!("../../tests/fixtures/riptsk.yaml"),
+            repo.join("riptask.yaml"),
+            include_str!("../../tests/fixtures/riptask.yaml"),
         )
         .expect("config");
         let paths = AppPaths {

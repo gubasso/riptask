@@ -23,7 +23,7 @@ impl AppPaths {
     }
 
     pub fn config_path(&self) -> Utf8PathBuf {
-        self.riptask_repo.join("riptsk.yaml")
+        self.riptask_repo.join("riptask.yaml")
     }
 
     pub fn issues_dir(&self) -> Utf8PathBuf {
@@ -153,7 +153,7 @@ mod tests {
             cache_root: "/tmp/cache".into(),
             state_root: "/tmp/state".into(),
         };
-        assert_eq!(paths.config_path(), "/tmp/riptsk/riptsk.yaml");
+        assert_eq!(paths.config_path(), "/tmp/riptsk/riptask.yaml");
         assert_eq!(paths.backend_state_path(), "/tmp/cache/backend_state.json");
         assert_eq!(paths.deleted_keys_path(), "/tmp/cache/deleted_keys.json");
         assert_eq!(paths.log_path(), "/tmp/state/riptsk.log");

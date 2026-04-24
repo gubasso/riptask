@@ -7,7 +7,7 @@ use std::process::Command as StdCommand;
 use tempfile::tempdir;
 
 fn configure_ai_command(repo: &std::path::Path, command: &str) {
-    let config_path = repo.join("riptsk.yaml");
+    let config_path = repo.join("riptask.yaml");
     let config = fs::read_to_string(&config_path).expect("read config");
     let replacement = format!(
         "ai:\n  enabled: false\n  command: |\n{command}\n    : < {{{{input_file}}}}\n  features:"
@@ -132,7 +132,7 @@ fn new_auto_registers_unregistered_repo() {
         .success()
         .stdout(predicate::str::contains("WORKTREE--1"));
 
-    let config = fs::read_to_string(repo.join("riptsk.yaml")).expect("read config");
+    let config = fs::read_to_string(repo.join("riptask.yaml")).expect("read config");
     assert!(config.contains("name: worktree"));
 
     let issue_path = fs::read_dir(repo.join("issues"))
@@ -385,7 +385,7 @@ fn new_auto_registers_non_git_directory() {
     assert.stdout(predicate::str::starts_with("MYPROJ--"));
 
     // Config should contain the auto-registered backend
-    let config = fs::read_to_string(repo.join("riptsk.yaml")).expect("read config");
+    let config = fs::read_to_string(repo.join("riptask.yaml")).expect("read config");
     assert!(
         config.contains("name: my-proj"),
         "backend name missing from config"
@@ -461,7 +461,7 @@ fn new_does_not_register_home_as_project() {
         .success();
 
     // The registered project should be "subdir", not "fakehome"
-    let config = fs::read_to_string(repo.join("riptsk.yaml")).expect("read config");
+    let config = fs::read_to_string(repo.join("riptask.yaml")).expect("read config");
     assert!(
         config.contains("name: subdir"),
         "should register subdir, not $HOME. Config:\n{config}"
