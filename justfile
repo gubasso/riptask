@@ -8,7 +8,7 @@ test:
   cargo nextest run
 
 test-clean:
-  cargo clean -p riptsk
+  cargo clean -p riptask
   cargo nextest run
 
 lint:
@@ -19,9 +19,9 @@ install:
   cargo install --path . --force
 
 uninstall:
-  cargo uninstall riptsk
+  cargo uninstall riptask
 
 clean:
-  rm -rf "${HOME}/.local/share/riptsk"
+  rm -rf "${HOME}/.local/share/riptask"
 
 check: lint test

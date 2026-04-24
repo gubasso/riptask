@@ -1,9 +1,9 @@
 use anyhow::Context;
 use clap::FromArgMatches;
-use riptsk::cli::{Cli, Commands, CompletionShell, root_command};
-use riptsk::commands;
-use riptsk::error::RiptskError;
-use riptsk::paths::AppPaths;
+use riptask::cli::{Cli, Commands, CompletionShell, root_command};
+use riptask::commands;
+use riptask::error::RiptskError;
+use riptask::paths::AppPaths;
 use std::fs;
 use std::process::ExitCode;
 use tracing_subscriber::EnvFilter;
@@ -44,10 +44,10 @@ fn run() -> Result<(), RiptskError> {
         .try_init()
         .context("failed to initialize tracing subscriber")?;
 
-    riptsk::services::project_detection::ensure_registered(
+    riptask::services::project_detection::ensure_registered(
         &paths,
-        &riptsk::adapters::git::CliGit::new(),
-        &riptsk::adapters::prompts::DialoguerPrompts,
+        &riptask::adapters::git::CliGit::new(),
+        &riptask::adapters::prompts::DialoguerPrompts,
     )?;
 
     match cli.command.unwrap_or(Commands::Help { command: None }) {

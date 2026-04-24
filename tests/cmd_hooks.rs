@@ -1,6 +1,6 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
-use riptsk::assets::hook::{HOOK_VERSION, PRE_COMMIT_HOOK};
+use riptask::assets::hook::{HOOK_VERSION, PRE_COMMIT_HOOK};
 use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
