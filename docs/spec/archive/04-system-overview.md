@@ -26,7 +26,7 @@
 │  │                                                          │  │
 │  │  issues/          ← SoT for all issue content           │  │
 │  │  templates/       ← issue and recurring task templates  │  │
-│  │  riptask.yaml         ← config, registered remotes          │  │
+│  │  config.yaml         ← config, registered remotes          │  │
 │  └──────────────────────────────────────────────────────────┘  │
 │                                                                 │
 │  ~/.cache/riptask/        ← views, sync state, id map (outside repo) │

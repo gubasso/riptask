@@ -7,7 +7,7 @@ use crate::cli::{
 };
 use crate::commands::ai::{AI_BACKEND_MISSING, optional_backend};
 use crate::commands::branch::{backend_issue_number, current_repo, cwd_utf8};
-use crate::config::{Config, load_config};
+use crate::config::{Config, load_effective_config};
 use crate::domain::issue::{IssueDocument, IssueState};
 use crate::error::RiptaskError;
 use crate::models::{BackendKind, RepoProject};
@@ -49,7 +49,15 @@ pub async fn run(paths: &AppPaths, args: PrArgs) -> Result<(), RiptaskError> {
 
 pub(crate) async fn create(paths: &AppPaths, args: PrCreateArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path())?;
+    let config = load_effective_config(
+        paths,
+        &camino::Utf8PathBuf::from(
+            std::env::current_dir()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
+        ),
+    )?;
     let repo = current_repo()?;
     let current_branch = CliGit::new().current_branch(repo.as_path())?;
     let (path, mut issue) = resolve_issue(paths, &config, &args.scope, args.id.as_deref())?;
@@ -189,7 +197,15 @@ pub(crate) async fn create(paths: &AppPaths, args: PrCreateArgs) -> Result<(), R
 
 async fn show(paths: &AppPaths, args: PrShowArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path())?;
+    let config = load_effective_config(
+        paths,
+        &camino::Utf8PathBuf::from(
+            std::env::current_dir()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
+        ),
+    )?;
     let (_path, issue) = resolve_issue(paths, &config, &args.scope, args.id.as_deref())?;
     let repo_project = resolve_hosted_repo_project(&config, &issue)?;
     let provider = build_hosted_provider(&repo_project.vc_backend, &repo_project.name)?;
@@ -219,7 +235,15 @@ async fn show(paths: &AppPaths, args: PrShowArgs) -> Result<(), RiptaskError> {
 
 async fn merge(paths: &AppPaths, args: PrMergeArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path())?;
+    let config = load_effective_config(
+        paths,
+        &camino::Utf8PathBuf::from(
+            std::env::current_dir()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
+        ),
+    )?;
     let (_path, issue) = resolve_issue(paths, &config, &args.scope, args.id.as_deref())?;
     let repo_project = resolve_hosted_repo_project(&config, &issue)?;
     let git = CliGit::with_auth(resolve_git_auth(
@@ -271,7 +295,15 @@ async fn merge(paths: &AppPaths, args: PrMergeArgs) -> Result<(), RiptaskError> 
 
 async fn edit(paths: &AppPaths, args: PrEditArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path())?;
+    let config = load_effective_config(
+        paths,
+        &camino::Utf8PathBuf::from(
+            std::env::current_dir()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
+        ),
+    )?;
     let (path, mut issue) = resolve_issue(paths, &config, &args.scope, args.id.as_deref())?;
     let repo_project = resolve_hosted_repo_project(&config, &issue)?;
     let provider = build_hosted_provider(&repo_project.vc_backend, &repo_project.name)?;

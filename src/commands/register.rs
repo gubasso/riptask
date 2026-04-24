@@ -1,6 +1,6 @@
 use crate::adapters::prompts::DialoguerPrompts;
 use crate::cli::RegisterArgs;
-use crate::config::{load_config, save_config};
+use crate::config::{load_effective_config, load_layer, save_layer};
 use crate::error::RiptaskError;
 use crate::paths::AppPaths;
 use comfy_table::{Attribute, Cell, Color, ContentArrangement, Table, presets::NOTHING};
@@ -8,7 +8,13 @@ use std::io::IsTerminal;
 
 pub fn run(paths: &AppPaths, args: RegisterArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path())?;
+    let cwd = camino::Utf8PathBuf::from(
+        std::env::current_dir()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string(),
+    );
+    let config = load_effective_config(paths, &cwd)?;
     if args.list {
         if std::io::stdout().is_terminal() {
             let mut table = Table::new();
@@ -88,12 +94,6 @@ pub fn run(paths: &AppPaths, args: RegisterArgs) -> Result<(), RiptaskError> {
         }
         return Ok(());
     }
-    let cwd = camino::Utf8PathBuf::from(
-        std::env::current_dir()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string(),
-    );
     let mut config = config;
     let ai_backend = if config.ai.enabled {
         crate::commands::ai::optional_backend(&config)
@@ -109,7 +109,12 @@ pub fn run(paths: &AppPaths, args: RegisterArgs) -> Result<(), RiptaskError> {
         &cwd,
         args.repo_project_label,
     )?;
-    save_config(paths.config_path().as_std_path(), &config)?;
+    let sys_path = paths.system_config_path();
+    let mut partial = load_layer(sys_path.as_std_path())?.unwrap_or_default();
+    partial.projects.push(repo_project.clone());
+    save_layer(sys_path.as_std_path(), &partial)?;
+    load_effective_config(paths, &cwd)?;
+    // TODO(config-scope): honor --scope once vec-mutating commands accept it.
     crate::ui::success(&format!(
         "registered {} (vc: {}, tasks: {})",
         repo_project.name,

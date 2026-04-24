@@ -1,7 +1,7 @@
 use crate::adapters::git::{CliGit, GitBackend};
 use crate::cli::{NewArgs, PrCreateArgs, ScopeArgs, StartArgs};
 use crate::commands::{branch, issues, pr};
-use crate::config::{Config, load_config};
+use crate::config::{Config, load_effective_config};
 use crate::error::RiptaskError;
 use crate::models::BackendKind;
 use crate::paths::AppPaths;
@@ -14,7 +14,15 @@ use camino::Utf8Path;
 
 pub async fn run(paths: &AppPaths, mut args: StartArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path())?;
+    let config = load_effective_config(
+        paths,
+        &camino::Utf8PathBuf::from(
+            std::env::current_dir()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
+        ),
+    )?;
     let cwd = id_resolution::cwd_utf8();
 
     if should_auto_create_from_changes(&config, &cwd, &args).await {

@@ -58,7 +58,7 @@ If you have never run `tsk`, initialize the local store:
 tsk init
 ```
 
-This creates `$RIPTASK_REPO` (defaults to `$XDG_DATA_HOME/riptask`) with `issues/`, `templates/`, `riptask.yaml`, and a git repo.
+This creates `$RIPTASK_REPO` (defaults to `$XDG_DATA_HOME/riptask`) with `issues/`, `templates/`, `config.yaml`, and a git repo.
 
 ## 4. Register the GitLab RepoProject
 
@@ -69,7 +69,7 @@ cd /path/to/your/project
 tsk register
 ```
 
-`tsk register` detects the `gitlab` remote and adds a RepoProject entry to `riptask.yaml`. Confirm with:
+`tsk register` detects the `gitlab` remote and adds a RepoProject entry to `config.yaml`. Confirm with:
 
 ```bash
 tsk register --list
@@ -80,7 +80,7 @@ tsk register --list
 Jira is not auto-detected from git remotes. The supported config shape is:
 
 ```bash
-tsk config edit   # or: $EDITOR "$RIPTASK_REPO/riptask.yaml"
+tsk config edit   # or: $EDITOR "$RIPTASK_REPO/config.yaml"
 ```
 
 ```yaml
@@ -126,7 +126,7 @@ tsk register --repo-project-label proj::platform-api
 # same result — passing the prefix explicitly is accepted
 ```
 
-`--project-label` is accepted as an alias. Labels stored in `riptask.yaml` always carry the `proj::` prefix.
+`--project-label` is accepted as an alias. Labels stored in `config.yaml` always carry the `proj::` prefix.
 
 ## 7. Shared Jira project (label-partitioned)
 

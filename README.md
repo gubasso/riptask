@@ -45,7 +45,7 @@ High-level architecture:
 ```mermaid
 flowchart LR
     User[User terminal] --> CLI[tsk CLI]
-    CLI --> Repo[RIPTASK_REPO<br/>issues, templates, riptask.yaml, .git]
+    CLI --> Repo[RIPTASK_REPO<br/>issues, templates, config.yaml, .git]
     CLI --> Cache[XDG_CACHE_HOME riptask<br/>views, id_map, backend_state, session]
     CLI --> ProjRepo[Project repo<br/>registered RepoProject cwd]
     CLI --> Sync[Sync engine]
@@ -105,7 +105,7 @@ flowchart TD
     XDG --> Cache[XDG_CACHE_HOME riptask]
     Repo --> R1[issues]
     Repo --> R2[templates]
-    Repo --> R3[riptask.yaml]
+    Repo --> R3[config.yaml]
     Repo --> R4[.git]
     Cache --> C1[views]
     Cache --> C2[id_map.json]
@@ -138,7 +138,7 @@ tsk completions fish > ~/.config/fish/completions/tsk.fish
 
 ### Task store vs project repos
 
-`tsk` keeps issues, templates, and `riptask.yaml` in one local task store repository. By default that repository lives at `$XDG_DATA_HOME/riptask`, or `~/.local/share/riptask` when `XDG_DATA_HOME` is unset.
+`tsk` keeps issues, templates, and `config.yaml` in one local task store repository. By default that repository lives at `$XDG_DATA_HOME/riptask`, or `~/.local/share/riptask` when `XDG_DATA_HOME` is unset.
 
 Project repositories are separate. Commands like `tsk branch`, `tsk pr`, `tsk done`, `tsk clone`, and `tsk unclone` operate in a project repo, while issue files and task-store commits live under `$RIPTASK_REPO`.
 
@@ -148,11 +148,11 @@ Project repositories are separate. Commands like `tsk branch`, `tsk pr`, `tsk do
 
 | Location | Default | Contents |
 |---|---|---|
-| `$RIPTASK_REPO` | `$XDG_DATA_HOME/riptask` | `issues/`, `templates/`, `riptask.yaml`, `.git/` |
+| `$RIPTASK_REPO` | `$XDG_DATA_HOME/riptask` | `issues/`, `templates/`, `config.yaml`, `.git/` |
 | `$XDG_CONFIG_HOME/riptask/config.env` | `~/.config/riptask/config.env` | Optional `RIPTASK_REPO=...` override |
 | `$XDG_CACHE_HOME/riptask` | `~/.cache/riptask` | `views/`, `backend_state.json`, `id_map.json`, `deleted_keys.json`, `session.json` |
 
-`tsk init` creates the task store, seeds built-in templates, writes `riptask.yaml`, and initializes a git repo there.
+`tsk init` creates the task store, seeds built-in templates, writes `config.yaml`, and initializes a git repo there.
 
 ## Issue lifecycle
 
@@ -212,7 +212,7 @@ tsk reorder-up <ID>
 tsk reorder-down <ID>
 ```
 
-Custom boards and lane sets are defined in `riptask.yaml` under `boards`.
+Custom boards and lane sets are defined in `config.yaml` under `boards`.
 
 ### Work-clones
 
@@ -231,7 +231,7 @@ tsk unclone --force
 All workflow documentation lives in [`docs/workflow/`](docs/workflow/README.md). Start there for end-to-end flows.
 
 - [Branch → PR → Done](docs/workflow/branch-pr-done.md) — `tsk branch`, `tsk pr`, `tsk done`, `tsk start`
-- [Backend Sync](docs/workflow/backend-sync.md) — credentials, `riptask.yaml` backend config, `tsk sync`, conflict resolution
+- [Backend Sync](docs/workflow/backend-sync.md) — credentials, `config.yaml` backend config, `tsk sync`, conflict resolution
 - [Jira + GitLab Setup](docs/workflow/jira-gitlab-setup.md) — Jira for issues, GitLab for branches/MRs
 
 Quick reference:
@@ -284,7 +284,7 @@ Notes:
 
 ## Recurring tasks
 
-Recurring definitions live in `riptask.yaml` under `recurring`.
+Recurring definitions live in `config.yaml` under `recurring`.
 
 ```bash
 tsk recur list
@@ -342,7 +342,7 @@ It does not run sync, pull, or push automation by itself.
 
 ## AI integration
 
-`tsk` is AI-provider agnostic. You configure one shell command template in `riptask.yaml`, and `tsk` renders it with context before executing it with `sh -c`.
+`tsk` is AI-provider agnostic. You configure one shell command template in `config.yaml`, and `tsk` renders it with context before executing it with `sh -c`.
 
 ### Setup
 
@@ -455,7 +455,17 @@ tsk commit --message "docs(readme): refresh architecture docs"
 
 ## Configuration
 
-The main config file is `$RIPTASK_REPO/riptask.yaml`.
+Config is loaded from three YAML layers, lowest precedence to highest:
+
+| Scope | Path |
+|---|---|
+| System | `$RIPTASK_REPO/config.yaml` |
+| User | `$XDG_CONFIG_HOME/riptask/config.yaml` |
+| Local | `<project-root>/.riptask/config.yaml` |
+
+Higher layers override scalar values. `projects`, `boards`, and `recurring` are concatenated and deduplicated by their identity keys (`name`, `name`, and `id` respectively), with higher layers winning collisions.
+
+Breaking change: the system config file is now `config.yaml`; users upgrading from older versions must manually rename `$RIPTASK_REPO/config.yaml` if their local checkout still uses the old filename.
 
 Example:
 
@@ -507,6 +517,16 @@ recurring: []
 ```
 
 ### Settable via `tsk config set`
+
+`tsk config set` accepts git-style scope flags:
+
+```bash
+tsk config set --system auto_commit true
+tsk config set --global ui.opener "nvim -R"
+tsk config set --local defaults.board personal
+```
+
+When no scope flag is provided, writes go to Local when run inside a project and User otherwise. `tsk config edit` accepts the same scope flags. Without a scope flag, it opens the single existing layer file directly, uses `fzf` when multiple layer files exist, or creates a Local config when no layer files exist and the command is run inside a project.
 
 Exactly these keys are supported:
 
@@ -592,7 +612,7 @@ tsk store hooks update
 tsk store hooks uninstall
 ```
 
-`tsk store commit` stages `issues/`, `templates/`, and `riptask.yaml`, then creates a task-store commit. Hook management installs the bundled pre-commit hook into `$RIPTASK_REPO/.git/hooks/pre-commit`.
+`tsk store commit` stages `issues/`, `templates/`, and `config.yaml`, then creates a task-store commit. Hook management installs the bundled pre-commit hook into `$RIPTASK_REPO/.git/hooks/pre-commit`.
 
 ## Dependencies
 

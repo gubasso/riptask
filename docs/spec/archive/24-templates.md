@@ -49,13 +49,13 @@ default_priority: high
 |---|---|---|---|
 | `template_name` | string | No | Filename stem (e.g. `bug` from `bug.md`) |
 | `default_labels` | list | No | `[]` |
-| `default_state` | enum | No | Falls back to `defaults.state` in `riptask.yaml`, then `todo` |
-| `default_priority` | enum | No | Falls back to `defaults.priority` in `riptask.yaml`, then `medium` |
+| `default_state` | enum | No | Falls back to `defaults.state` in `config.yaml`, then `todo` |
+| `default_priority` | enum | No | Falls back to `defaults.priority` in `config.yaml`, then `medium` |
 
-All `default_*` fields are optional. When omitted, `tsk new` falls back to `riptask.yaml` `defaults:` values, then hardcoded defaults.
+All `default_*` fields are optional. When omitted, `tsk new` falls back to `config.yaml` `defaults:` values, then hardcoded defaults.
 
 Priority mapping at issue creation time is explicit:
-- `none` → omit template priority and fall back to `defaults.priority` from `riptask.yaml`
+- `none` → omit template priority and fall back to `defaults.priority` from `config.yaml`
 - `critical` → issue priority `urgent`
 - `low`, `medium`, `high` → map 1:1
 
@@ -139,7 +139,7 @@ tsk new -T feature
 
 1. `--template` / `-T` flag — explicit selection
 2. Interactive mode (stdin is TTY, no `--template`): fzf picker over `$RIPTASK_REPO/templates/`
-3. Non-interactive fallback: `defaults.template` from `riptask.yaml` (default: `task`)
+3. Non-interactive fallback: `defaults.template` from `config.yaml` (default: `task`)
 
 When a template is selected, `tsk new`:
 1. Copies the template body into the new issue

@@ -1,5 +1,5 @@
 use insta::assert_snapshot;
-use riptask::config::load_config;
+use riptask::config::load_layer;
 use riptask::domain::backend_state::BackendState;
 use riptask::domain::id_map::IdMap;
 use riptask::storage::frontmatter;
@@ -46,14 +46,20 @@ fn issue_fixtures_round_trip() {
 
 #[test]
 fn config_fixtures_round_trip() {
-    let config =
-        load_config(std::path::Path::new("tests/fixtures/riptask.yaml")).expect("load config");
+    let config = load_layer(std::path::Path::new("tests/fixtures/config.yaml"))
+        .expect("load config")
+        .expect("config layer")
+        .finalize()
+        .expect("finalize config");
     assert_snapshot!(
         "riptask_yaml",
         serde_yaml_ng::to_string(&config).expect("serialize config")
     );
-    let multi = load_config(std::path::Path::new("tests/fixtures/riptask_multi.yaml"))
-        .expect("load multi config");
+    let multi = load_layer(std::path::Path::new("tests/fixtures/config_multi.yaml"))
+        .expect("load multi config")
+        .expect("multi config layer")
+        .finalize()
+        .expect("finalize multi config");
     assert_snapshot!(
         "riptask_multi_yaml",
         serde_yaml_ng::to_string(&multi).expect("serialize multi config")

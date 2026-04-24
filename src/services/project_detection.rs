@@ -1,7 +1,7 @@
 use crate::adapters::ai::AiBackend;
 use crate::adapters::git::GitBackend;
 use crate::adapters::prompts::PromptBackend;
-use crate::config::{Config, load_config, save_config};
+use crate::config::{Config, load_effective_config, load_layer, save_layer};
 use crate::error::{ProjectKeyCollision, ProjectKeyProjectMeta, RiptaskError};
 use crate::models::{BackendKind, RepoProject, TasksBackendSpec, VCBackendSpec};
 use crate::paths::AppPaths;
@@ -17,17 +17,17 @@ pub fn ensure_registered(
     git: &dyn GitBackend,
     prompts: &dyn PromptBackend,
 ) -> Result<(), RiptaskError> {
-    let config_path = paths.config_path();
+    let config_path = paths.system_config_path();
     if !config_path.exists() {
         return Ok(());
     }
-    let mut config = load_config(config_path.as_std_path())?;
     let cwd = camino::Utf8PathBuf::from(
         std::env::current_dir()
             .unwrap_or_default()
             .to_string_lossy()
             .to_string(),
     );
+    let mut config = load_effective_config(paths, &cwd)?;
     let detected = match detect_from_cwd(&cwd, &config) {
         Ok(result) => result,
         Err(_) => return Ok(()),
@@ -49,8 +49,12 @@ pub fn ensure_registered(
         Ok(result) => result,
         Err(_) => return Ok(()),
     };
-    if registered.is_some() {
-        save_config(config_path.as_std_path(), &config)?;
+    if let Some(repo_project) = registered {
+        let mut partial = load_layer(config_path.as_std_path())?.unwrap_or_default();
+        partial.projects.push(repo_project);
+        save_layer(config_path.as_std_path(), &partial)?;
+        load_effective_config(paths, &cwd)?;
+        // TODO(config-scope): honor --scope once vec-mutating commands accept it.
         maybe_auto_commit(
             &config,
             git,
@@ -799,7 +803,7 @@ fn path_is_same(a: &str, b: &str) -> bool {
     a_canon == b_canon
 }
 
-fn git_toplevel(cwd: &Utf8Path) -> Result<Option<String>, RiptaskError> {
+pub(crate) fn git_toplevel(cwd: &Utf8Path) -> Result<Option<String>, RiptaskError> {
     let output = Command::new("git")
         .arg("-C")
         .arg(cwd)

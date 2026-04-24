@@ -1,11 +1,12 @@
 use crate::error::RiptaskError;
 use anyhow::{Context, Result};
-use camino::Utf8PathBuf;
+use camino::{Utf8Path, Utf8PathBuf};
 use std::fs;
 
 #[derive(Debug, Clone)]
 pub struct AppPaths {
     pub riptask_repo: Utf8PathBuf,
+    pub user_config_root: Utf8PathBuf,
     pub cache_root: Utf8PathBuf,
     pub state_root: Utf8PathBuf,
 }
@@ -13,17 +14,27 @@ pub struct AppPaths {
 impl AppPaths {
     pub fn from_env() -> Result<Self> {
         let riptask_repo = resolve_riptask_repo()?;
+        let user_config_root = resolve_user_config_root()?;
         let cache_root = resolve_cache_root()?;
         let state_root = resolve_state_root()?;
         Ok(Self {
             riptask_repo,
+            user_config_root,
             cache_root,
             state_root,
         })
     }
 
-    pub fn config_path(&self) -> Utf8PathBuf {
-        self.riptask_repo.join("riptask.yaml")
+    pub fn system_config_path(&self) -> Utf8PathBuf {
+        self.riptask_repo.join("config.yaml")
+    }
+
+    pub fn user_config_path(&self) -> Utf8PathBuf {
+        self.user_config_root.join("config.yaml")
+    }
+
+    pub fn local_config_path(&self, cwd: &Utf8Path) -> Option<Utf8PathBuf> {
+        project_root(cwd).map(|root| root.join(".riptask").join("config.yaml"))
     }
 
     pub fn issues_dir(&self) -> Utf8PathBuf {
@@ -66,13 +77,40 @@ impl AppPaths {
     }
 
     pub fn require_initialized(&self) -> Result<(), RiptaskError> {
-        if !self.config_path().exists() {
+        if !self.system_config_path().exists() {
             return Err(RiptaskError::General(
                 "not initialized — run 'tsk init' first".into(),
             ));
         }
         Ok(())
     }
+}
+
+fn project_root(cwd: &Utf8Path) -> Option<Utf8PathBuf> {
+    if let Ok(Some(top)) = crate::services::project_detection::git_toplevel(cwd) {
+        return Some(Utf8PathBuf::from(top));
+    }
+    cwd.ancestors()
+        .find(|ancestor| ancestor.join(".riptask").is_dir())
+        .map(Utf8Path::to_path_buf)
+}
+
+pub fn resolve_user_config_root() -> Result<Utf8PathBuf> {
+    let xdg_dirs = xdg::BaseDirectories::new();
+    let config_home = xdg_dirs
+        .get_config_home()
+        .map(|path| {
+            Utf8PathBuf::from_path_buf(path)
+                .map_err(|_| anyhow::anyhow!("XDG config home is not valid UTF-8"))
+        })
+        .transpose()?
+        .unwrap_or_else(|| {
+            Utf8PathBuf::from(format!(
+                "{}/.config",
+                std::env::var("HOME").unwrap_or_else(|_| ".".into())
+            ))
+        });
+    Ok(config_home.join("riptask"))
 }
 
 pub fn resolve_riptask_repo() -> Result<Utf8PathBuf> {
@@ -150,10 +188,12 @@ mod tests {
     fn builds_standard_subpaths() {
         let paths = AppPaths {
             riptask_repo: "/tmp/riptask".into(),
+            user_config_root: "/tmp/config/riptask".into(),
             cache_root: "/tmp/cache".into(),
             state_root: "/tmp/state".into(),
         };
-        assert_eq!(paths.config_path(), "/tmp/riptask/riptask.yaml");
+        assert_eq!(paths.system_config_path(), "/tmp/riptask/config.yaml");
+        assert_eq!(paths.user_config_path(), "/tmp/config/riptask/config.yaml");
         assert_eq!(paths.backend_state_path(), "/tmp/cache/backend_state.json");
         assert_eq!(paths.deleted_keys_path(), "/tmp/cache/deleted_keys.json");
         assert_eq!(paths.log_path(), "/tmp/state/riptask.log");

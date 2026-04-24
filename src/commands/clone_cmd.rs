@@ -1,7 +1,7 @@
 use crate::adapters::git::{CliGit, GitBackend};
 use crate::cli::CloneArgs;
 use crate::commands::branch::{backend_issue_number, cwd_utf8};
-use crate::config::load_config;
+use crate::config::load_effective_config;
 use crate::domain::work_clone::WorkCloneMarker;
 use crate::error::RiptaskError;
 use crate::models::BackendKind;
@@ -14,7 +14,15 @@ use crate::storage::{frontmatter, issue_store, work_clone};
 
 pub async fn run(paths: &AppPaths, args: CloneArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path())?;
+    let config = load_effective_config(
+        paths,
+        &camino::Utf8PathBuf::from(
+            std::env::current_dir()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
+        ),
+    )?;
     let cwd = cwd_utf8();
     let Some(id) =
         id_resolution::resolve_or_pick_id(paths, &config, &cwd, args.id, args.pick, &args.scope)?

@@ -1,7 +1,7 @@
 use crate::adapters::git::{CliGit, GitBackend};
 use crate::adapters::prompts::{DialoguerPrompts, PromptBackend};
 use crate::cli::BranchArgs;
-use crate::config::{Config, load_config};
+use crate::config::{Config, load_effective_config};
 use crate::error::RiptaskError;
 use crate::models::{BackendKind, RepoProject};
 use crate::paths::AppPaths;
@@ -26,7 +26,15 @@ pub async fn branch(paths: &AppPaths, args: BranchArgs) -> Result<(), RiptaskErr
 async fn adopt_branch(paths: &AppPaths, args: BranchArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
     let BranchArgs { id, yes, .. } = args;
-    let config = load_config(paths.config_path().as_std_path())?;
+    let config = load_effective_config(
+        paths,
+        &camino::Utf8PathBuf::from(
+            std::env::current_dir()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
+        ),
+    )?;
     let cwd = cwd_utf8();
 
     let repo = current_repo()?;
@@ -115,7 +123,15 @@ async fn create_branch(paths: &AppPaths, args: BranchArgs) -> Result<(), Riptask
     let BranchArgs {
         scope, id, pick, ..
     } = args;
-    let config = load_config(paths.config_path().as_std_path())?;
+    let config = load_effective_config(
+        paths,
+        &camino::Utf8PathBuf::from(
+            std::env::current_dir()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
+        ),
+    )?;
     let cwd = cwd_utf8();
     let Some(id) = id_resolution::resolve_or_pick_id(paths, &config, &cwd, id, pick, &scope)?
     else {
@@ -131,7 +147,15 @@ pub(crate) async fn create_branch_for_issue(
     id: &str,
 ) -> Result<String, RiptaskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path())?;
+    let config = load_effective_config(
+        paths,
+        &camino::Utf8PathBuf::from(
+            std::env::current_dir()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
+        ),
+    )?;
     let path = issue_store::find_issue(paths, id)?;
     let mut issue = crate::commands::issues::load_issue_or_conflict_error(path.as_std_path(), id)?;
 
@@ -210,7 +234,15 @@ pub(crate) async fn create_branch_for_issue(
 
 async fn delete_branch(paths: &AppPaths, args: BranchArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path())?;
+    let config = load_effective_config(
+        paths,
+        &camino::Utf8PathBuf::from(
+            std::env::current_dir()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
+        ),
+    )?;
     let cwd = cwd_utf8();
     let repo = current_repo()?;
     let current = CliGit::new().current_branch(repo.as_path())?;

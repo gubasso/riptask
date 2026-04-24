@@ -1,6 +1,6 @@
 use crate::adapters::ai::{AiBackend, GeneratedIssueContent, TemplateAiBackend};
 use crate::cli::{AskArgs, SummarizeArgs};
-use crate::config::load_config;
+use crate::config::load_effective_config;
 use crate::error::RiptaskError;
 use crate::paths::AppPaths;
 use crate::storage::{frontmatter, issue_store};
@@ -9,7 +9,15 @@ pub(crate) const AI_BACKEND_MISSING: &str = "ai.command is not configured";
 
 pub fn summarize(paths: &AppPaths, args: SummarizeArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path())?;
+    let config = load_effective_config(
+        paths,
+        &camino::Utf8PathBuf::from(
+            std::env::current_dir()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
+        ),
+    )?;
     if !config.ai.enabled || !config.ai.features.summarize {
         println!("AI features disabled");
         return Ok(());
@@ -58,7 +66,15 @@ pub fn summarize(paths: &AppPaths, args: SummarizeArgs) -> Result<(), RiptaskErr
 
 pub fn ask(paths: &AppPaths, args: AskArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path())?;
+    let config = load_effective_config(
+        paths,
+        &camino::Utf8PathBuf::from(
+            std::env::current_dir()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
+        ),
+    )?;
     if !config.ai.enabled || !config.ai.features.ask {
         println!("AI features disabled");
         return Ok(());
@@ -96,7 +112,15 @@ pub fn ask(paths: &AppPaths, args: AskArgs) -> Result<(), RiptaskError> {
 
 pub fn generate_body(paths: &AppPaths, title: &str, project: &str) -> Result<String, RiptaskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path())?;
+    let config = load_effective_config(
+        paths,
+        &camino::Utf8PathBuf::from(
+            std::env::current_dir()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
+        ),
+    )?;
     if !config.ai.features.new_body_gen {
         return Err(RiptaskError::General("AI features disabled".into()));
     }
@@ -109,7 +133,15 @@ pub fn generate_issue_content(
     context: &str,
 ) -> Result<GeneratedIssueContent, RiptaskError> {
     paths.require_initialized()?;
-    let config = load_config(paths.config_path().as_std_path())?;
+    let config = load_effective_config(
+        paths,
+        &camino::Utf8PathBuf::from(
+            std::env::current_dir()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
+        ),
+    )?;
     if !config.ai.features.new_body_gen {
         return Err(RiptaskError::General("AI features disabled".into()));
     }

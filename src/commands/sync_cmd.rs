@@ -2,7 +2,7 @@ use crate::cli::{
     ResolveArgs, SessionArgs, SessionStartArgs, SessionSubcommand, StoreCommitArgs, SyncArgs,
     SyncPullPushArgs, SyncSubcommand,
 };
-use crate::config::{Config, load_config};
+use crate::config::{Config, load_effective_config};
 use crate::domain::session::SessionState;
 use crate::error::RiptaskError;
 use crate::models::{BackendKind, RepoProject};
@@ -38,7 +38,15 @@ async fn pull(
     args: &SyncArgs,
     subargs: &SyncPullPushArgs,
 ) -> Result<(), RiptaskError> {
-    let config = load_config(paths.config_path().as_std_path())?;
+    let config = load_effective_config(
+        paths,
+        &camino::Utf8PathBuf::from(
+            std::env::current_dir()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
+        ),
+    )?;
     let engine = SyncEngine::new(paths, &config);
     for repo_project in resolve_sync_projects(args, &config)? {
         let provider = build_issue_tracker(repo_project)?;
@@ -96,7 +104,15 @@ async fn push(
     args: &SyncArgs,
     subargs: &SyncPullPushArgs,
 ) -> Result<(), RiptaskError> {
-    let config = load_config(paths.config_path().as_std_path())?;
+    let config = load_effective_config(
+        paths,
+        &camino::Utf8PathBuf::from(
+            std::env::current_dir()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
+        ),
+    )?;
     let engine = SyncEngine::new(paths, &config);
     let cwd = camino::Utf8PathBuf::from(
         std::env::current_dir()
@@ -155,7 +171,7 @@ async fn push(
             .iter()
             .map(|path| path.as_std_path())
             .collect::<Vec<_>>();
-        let config_path = paths.config_path();
+        let config_path = paths.system_config_path();
         file_refs.push(config_path.as_std_path());
         maybe_auto_commit(
             &config,
@@ -169,7 +185,15 @@ async fn push(
 }
 
 fn status(paths: &AppPaths, args: &SyncArgs) -> Result<(), RiptaskError> {
-    let config = load_config(paths.config_path().as_std_path())?;
+    let config = load_effective_config(
+        paths,
+        &camino::Utf8PathBuf::from(
+            std::env::current_dir()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
+        ),
+    )?;
     let repo_projects = resolve_sync_projects(args, &config)?;
     let project_names = repo_projects
         .iter()
@@ -424,7 +448,15 @@ pub fn resolve(paths: &AppPaths, args: ResolveArgs) -> Result<(), RiptaskError> 
             "cannot specify both --take-remote and --take-local".into(),
         ));
     }
-    let config = load_config(paths.config_path().as_std_path())?;
+    let config = load_effective_config(
+        paths,
+        &camino::Utf8PathBuf::from(
+            std::env::current_dir()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
+        ),
+    )?;
     let cwd = camino::Utf8PathBuf::from(
         std::env::current_dir()
             .unwrap_or_default()
@@ -494,7 +526,7 @@ pub fn commit(paths: &AppPaths, args: StoreCommitArgs) -> Result<(), RiptaskErro
     let tracked = [
         paths.riptask_repo.join("issues"),
         paths.riptask_repo.join("templates"),
-        paths.config_path(),
+        paths.system_config_path(),
     ];
     let refs = tracked
         .iter()
@@ -529,7 +561,15 @@ fn session_start(paths: &AppPaths, args: SessionStartArgs) -> Result<(), Riptask
         return Err(RiptaskError::Conflict("session already active".into()));
     }
     let SessionStartArgs { scope, id } = args;
-    let config = load_config(paths.config_path().as_std_path())?;
+    let config = load_effective_config(
+        paths,
+        &camino::Utf8PathBuf::from(
+            std::env::current_dir()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
+        ),
+    )?;
     let cwd = camino::Utf8PathBuf::from(
         std::env::current_dir()
             .unwrap_or_default()
