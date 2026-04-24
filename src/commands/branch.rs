@@ -17,7 +17,97 @@ pub async fn branch(paths: &AppPaths, args: BranchArgs) -> Result<(), RiptaskErr
     if args.delete || args.force_delete {
         return delete_branch(paths, args).await;
     }
+    if args.adopt {
+        return adopt_branch(paths, args).await;
+    }
     create_branch(paths, args).await
+}
+
+async fn adopt_branch(paths: &AppPaths, args: BranchArgs) -> Result<(), RiptaskError> {
+    paths.require_initialized()?;
+    let BranchArgs { id, yes, .. } = args;
+    let config = load_config(paths.config_path().as_std_path())?;
+    let cwd = cwd_utf8();
+
+    let repo = current_repo()?;
+    let git = CliGit::new();
+    let current = git.current_branch(repo.as_path())?;
+    if is_protected_branch(&current) {
+        return Err(RiptaskError::General(format!(
+            "refusing to adopt protected branch: {current}"
+        )));
+    }
+
+    let resolved_id = match id {
+        Some(input) => id_resolution::resolve_id(paths, &config, &cwd, &input)?,
+        None => {
+            let number = parse_leading_issue_number(&current).ok_or_else(|| {
+                RiptaskError::General(format!(
+                    "cannot infer issue id from branch '{current}': expected '<number>-<slug>'. \
+                     Pass an id explicitly: `tsk branch --adopt <id>`"
+                ))
+            })?;
+            id_resolution::resolve_id(paths, &config, &cwd, &number.to_string())?
+        }
+    };
+
+    let path = issue_store::find_issue(paths, &resolved_id)?;
+    let mut issue =
+        crate::commands::issues::load_issue_or_conflict_error(path.as_std_path(), &resolved_id)?;
+
+    if let Ok(existing_path) = find_issue_for_branch(paths, &current) {
+        let existing_id = existing_path.file_stem().unwrap_or_default().to_string();
+        if existing_id != resolved_id {
+            return Err(RiptaskError::General(format!(
+                "branch '{current}' is already linked to issue {existing_id}"
+            )));
+        }
+    }
+
+    if let Some(existing) = issue.frontmatter.branch.as_deref() {
+        if existing == current {
+            crate::ui::info(&format!(
+                "issue {resolved_id} already linked to branch '{current}'"
+            ));
+            return Ok(());
+        }
+        if !yes {
+            let prompt = format!(
+                "issue {resolved_id} is already linked to branch '{existing}'. \
+                 Overwrite with '{current}'?"
+            );
+            if !DialoguerPrompts.confirm(&prompt, false)? {
+                crate::ui::warn("aborted");
+                return Ok(());
+            }
+        }
+    }
+
+    issue.frontmatter.id_slug = Some(current.clone());
+    issue.frontmatter.branch = Some(current.clone());
+    frontmatter::save_issue(path.as_std_path(), &issue).map_err(RiptaskError::Other)?;
+    maybe_auto_commit(
+        &config,
+        &git,
+        paths.riptask_repo.as_std_path(),
+        &format!(
+            "riptask: adopt branch {} for {} - {}",
+            current, issue.frontmatter.id, issue.frontmatter.title
+        ),
+        &[path.as_std_path()],
+    )?;
+    crate::ui::success(&format!("linked issue {resolved_id} to branch '{current}'"));
+    Ok(())
+}
+
+fn parse_leading_issue_number(branch: &str) -> Option<u64> {
+    let end = branch
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(branch.len());
+    if end == 0 {
+        return None;
+    }
+    branch[..end].parse::<u64>().ok()
 }
 
 async fn create_branch(paths: &AppPaths, args: BranchArgs) -> Result<(), RiptaskError> {
@@ -323,4 +413,31 @@ pub(crate) fn is_protected_branch(branch: &str) -> bool {
         branch,
         "main" | "master" | "develop" | "devel" | "dev" | "trunk"
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_leading_issue_number;
+
+    #[test]
+    fn parses_number_prefix_with_slug() {
+        assert_eq!(parse_leading_issue_number("139-foo-bar"), Some(139));
+    }
+
+    #[test]
+    fn parses_bare_number() {
+        assert_eq!(parse_leading_issue_number("42"), Some(42));
+    }
+
+    #[test]
+    fn rejects_non_numeric_prefix() {
+        assert_eq!(parse_leading_issue_number("main"), None);
+        assert_eq!(parse_leading_issue_number("feature/foo"), None);
+        assert_eq!(parse_leading_issue_number("RIPTASK--139"), None);
+    }
+
+    #[test]
+    fn rejects_empty() {
+        assert_eq!(parse_leading_issue_number(""), None);
+    }
 }
