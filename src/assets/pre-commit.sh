@@ -25,11 +25,11 @@ validate_frontmatter_delimiters() {
 validate_issue_file() {
     local file="$1"
     local filename state priority remote_deleted title board project id updated
-    if [[ "$file" == *.REMOTE.md ]] && [[ "${RIPTSK_HOOK_ALLOW_REMOTE:-0}" != "1" ]]; then
+    if [[ "$file" == *.REMOTE.md ]] && [[ "${RIPTASK_HOOK_ALLOW_REMOTE:-0}" != "1" ]]; then
         report_fail "$file" ".REMOTE.md should not be committed (use: tsk sync resolve <ID>)"
         return
     fi
-    if [[ "$file" == *.LOCAL.md ]] && [[ "${RIPTSK_HOOK_ALLOW_REMOTE:-0}" != "1" ]]; then
+    if [[ "$file" == *.LOCAL.md ]] && [[ "${RIPTASK_HOOK_ALLOW_REMOTE:-0}" != "1" ]]; then
         report_fail "$file" ".LOCAL.md should not be committed (use: tsk sync resolve <ID>)"
         return
     fi

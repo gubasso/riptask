@@ -7,7 +7,7 @@ use std::fs;
 use std::io::IsTerminal;
 
 pub fn run(paths: &AppPaths, args: HooksArgs) -> Result<(), RiptaskError> {
-    let hook_path = paths.riptsk_repo.join(".git/hooks/pre-commit");
+    let hook_path = paths.riptask_repo.join(".git/hooks/pre-commit");
     match args.subcommand.unwrap_or(HooksSubcommand::Status) {
         HooksSubcommand::Install { .. } => {
             if let Some(parent) = hook_path.parent() {

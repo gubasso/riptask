@@ -584,7 +584,7 @@ fn sync_and_commit_pr(
     maybe_auto_commit(
         config,
         git,
-        paths.riptsk_repo.as_std_path(),
+        paths.riptask_repo.as_std_path(),
         &format!(
             "riptsk: pr {} - {}",
             issue.frontmatter.id, issue.frontmatter.title

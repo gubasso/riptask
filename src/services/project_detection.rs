@@ -54,7 +54,7 @@ pub fn ensure_registered(
         maybe_auto_commit(
             &config,
             git,
-            paths.riptsk_repo.as_std_path(),
+            paths.riptask_repo.as_std_path(),
             "riptsk: auto-register project",
             &[config_path.as_std_path()],
         )?;

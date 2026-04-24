@@ -359,7 +359,7 @@ pub(crate) async fn create_issue_from_args(
     maybe_auto_commit(
         &config,
         &CliGit::new(),
-        paths.riptsk_repo.as_std_path(),
+        paths.riptask_repo.as_std_path(),
         &format!(
             "riptsk: new {} - {}",
             issue.frontmatter.id, issue.frontmatter.title
@@ -371,7 +371,7 @@ pub(crate) async fn create_issue_from_args(
         maybe_auto_commit(
             &config,
             &CliGit::new(),
-            paths.riptsk_repo.as_std_path(),
+            paths.riptask_repo.as_std_path(),
             &format!(
                 "riptsk: edit {} - {}",
                 issue.frontmatter.id, issue.frontmatter.title
@@ -555,7 +555,7 @@ pub fn edit(paths: &AppPaths, args: IdArgs) -> Result<(), RiptaskError> {
         maybe_auto_commit(
             &config,
             &CliGit::new(),
-            paths.riptsk_repo.as_std_path(),
+            paths.riptask_repo.as_std_path(),
             &format!("riptsk: edit {} - {}", id, issue.frontmatter.title),
             &[path.as_std_path()],
         )?;
@@ -594,7 +594,7 @@ pub fn set_status(paths: &AppPaths, args: StatusArgs) -> Result<(), RiptaskError
     maybe_auto_commit(
         &config,
         &CliGit::new(),
-        paths.riptsk_repo.as_std_path(),
+        paths.riptask_repo.as_std_path(),
         &format!("riptsk: status {} - {}", id, issue.frontmatter.title),
         &[path.as_std_path()],
     )?;
@@ -654,7 +654,7 @@ pub fn remove(paths: &AppPaths, args: IdArgs) -> Result<(), RiptaskError> {
     maybe_auto_commit(
         &config,
         &CliGit::new(),
-        paths.riptsk_repo.as_std_path(),
+        paths.riptask_repo.as_std_path(),
         &format!("riptsk: rm {} - {}", id, issue.frontmatter.title),
         &[path.as_std_path()],
     )?;
