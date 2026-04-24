@@ -1,7 +1,7 @@
 use crate::adapters::picker::{FzfPicker, IssueDisplayMode, Picker};
 use crate::cli::{BoardArgs, IdArgs, ReorderArgs};
 use crate::config::{load_config, parse_state};
-use crate::error::RiptskError;
+use crate::error::RiptaskError;
 use crate::paths::AppPaths;
 use crate::services::id_resolution;
 use crate::services::issue_service::{IssueService, ShiftDirection};
@@ -11,17 +11,17 @@ use console::style;
 use std::fs;
 use std::io::IsTerminal;
 
-pub fn view(paths: &AppPaths) -> Result<(), RiptskError> {
+pub fn view(paths: &AppPaths) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
     let config = load_config(paths.config_path().as_std_path())?;
     crate::ui::spin_on("Regenerating views", || {
         ViewBuilder::new(paths, &config)
             .regenerate_all(None)
-            .map_err(RiptskError::Other)
+            .map_err(RiptaskError::Other)
     })
 }
 
-pub fn board(paths: &AppPaths, args: BoardArgs) -> Result<(), RiptskError> {
+pub fn board(paths: &AppPaths, args: BoardArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
     let config = load_config(paths.config_path().as_std_path())?;
     let cwd = camino::Utf8PathBuf::from(
@@ -36,7 +36,7 @@ pub fn board(paths: &AppPaths, args: BoardArgs) -> Result<(), RiptskError> {
     crate::ui::spin_on("Regenerating views", || {
         builder
             .regenerate_all(Some(&scope))
-            .map_err(RiptskError::Other)
+            .map_err(RiptaskError::Other)
     })?;
     let path = builder.board_path(args.board.as_deref(), args.all);
 
@@ -47,13 +47,13 @@ pub fn board(paths: &AppPaths, args: BoardArgs) -> Result<(), RiptskError> {
         let parts: Vec<&str> = opener.split_whitespace().collect();
         let (program, cmd_args) = parts
             .split_first()
-            .ok_or_else(|| RiptskError::General("empty opener command".into()))?;
+            .ok_or_else(|| RiptaskError::General("empty opener command".into()))?;
         std::process::Command::new(program)
             .args(cmd_args)
             .arg(path.as_str())
             .status()
             .context("failed to open board")
-            .map_err(RiptskError::Other)?;
+            .map_err(RiptaskError::Other)?;
     } else {
         let max_depth = config.ui.tree_depth.unwrap_or(3) as usize;
         render_tree(path.as_str(), 0, max_depth)?;
@@ -61,7 +61,7 @@ pub fn board(paths: &AppPaths, args: BoardArgs) -> Result<(), RiptskError> {
     Ok(())
 }
 
-fn render_tree(path: &str, depth: usize, max_depth: usize) -> Result<(), RiptskError> {
+fn render_tree(path: &str, depth: usize, max_depth: usize) -> Result<(), RiptaskError> {
     let p = std::path::Path::new(path);
     let name = p.file_name().unwrap_or_default().to_string_lossy();
     let tty = std::io::stdout().is_terminal();
@@ -125,7 +125,7 @@ fn render_tree_inner(
     prefix: &str,
     is_last: bool,
     tty: bool,
-) -> Result<(), RiptskError> {
+) -> Result<(), RiptaskError> {
     let p = std::path::Path::new(path);
     let name = p.file_name().unwrap_or_default().to_string_lossy();
     let connector = if is_last { "└── " } else { "├── " };
@@ -169,7 +169,7 @@ fn color_issue_file(name: &str) -> String {
     format!("{}", style(name).dim())
 }
 
-pub fn reorder(paths: &AppPaths, args: ReorderArgs) -> Result<(), RiptskError> {
+pub fn reorder(paths: &AppPaths, args: ReorderArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
     let config = load_config(paths.config_path().as_std_path())?;
     let cwd = camino::Utf8PathBuf::from(
@@ -183,7 +183,7 @@ pub fn reorder(paths: &AppPaths, args: ReorderArgs) -> Result<(), RiptskError> {
         .board
         .or_else(|| config.boards.first().map(|board| board.name.clone()))
         .unwrap_or_else(|| "personal".into());
-    let state = parse_state(&args.status).map_err(RiptskError::Other)?;
+    let state = parse_state(&args.status).map_err(RiptaskError::Other)?;
 
     let ids = if args.ids.is_empty() {
         let scope = crate::scope::resolve_scope(
@@ -225,17 +225,17 @@ pub fn reorder(paths: &AppPaths, args: ReorderArgs) -> Result<(), RiptskError> {
     service.reorder_lane(&board, &state, &ids)
 }
 
-pub fn reorder_up(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
+pub fn reorder_up(paths: &AppPaths, args: IdArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
     shift(paths, args, ShiftDirection::Up)
 }
 
-pub fn reorder_down(paths: &AppPaths, args: IdArgs) -> Result<(), RiptskError> {
+pub fn reorder_down(paths: &AppPaths, args: IdArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
     shift(paths, args, ShiftDirection::Down)
 }
 
-fn shift(paths: &AppPaths, args: IdArgs, direction: ShiftDirection) -> Result<(), RiptskError> {
+fn shift(paths: &AppPaths, args: IdArgs, direction: ShiftDirection) -> Result<(), RiptaskError> {
     let config = load_config(paths.config_path().as_std_path())?;
     let cwd = camino::Utf8PathBuf::from(
         std::env::current_dir()

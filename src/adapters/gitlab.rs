@@ -2,7 +2,7 @@ use crate::adapters::backend::{
     BackendIssueRecord, BackendIssueUpsert, BackendPrRecord, CiPresence, DeleteOutcome,
     IssueTracker, MergeMethod, PrChecksStatus, VersionControl,
 };
-use crate::error::RiptskError;
+use crate::error::RiptaskError;
 use async_trait::async_trait;
 use chrono::NaiveDate;
 use gitlab::api::AsyncQuery;
@@ -21,19 +21,19 @@ impl std::fmt::Debug for GitlabProvider {
 }
 
 impl GitlabProvider {
-    pub fn new(host: &str, token: &str) -> Result<Self, RiptskError> {
+    pub fn new(host: &str, token: &str) -> Result<Self, RiptaskError> {
         Ok(Self {
             host: host.to_owned(),
             token: token.to_owned(),
         })
     }
 
-    async fn client(&self) -> Result<gitlab::AsyncGitlab, RiptskError> {
+    async fn client(&self) -> Result<gitlab::AsyncGitlab, RiptaskError> {
         let builder = gitlab::Gitlab::builder(&self.host, &self.token);
         builder
             .build_async()
             .await
-            .map_err(|error| RiptskError::Unreachable(error.to_string()))
+            .map_err(|error| RiptaskError::Unreachable(error.to_string()))
     }
 
     async fn create_issue_request(
@@ -43,7 +43,7 @@ impl GitlabProvider {
         issue: &BackendIssueUpsert,
         assignee_ids: &[u64],
         include_weight: bool,
-    ) -> Result<GitlabIssue, RiptskError> {
+    ) -> Result<GitlabIssue, RiptaskError> {
         let mut builder = gitlab::api::projects::issues::CreateIssue::builder();
         builder.project(repo).title(issue.title.as_str());
         builder.description(issue.body.as_str());
@@ -67,11 +67,11 @@ impl GitlabProvider {
         }
         let endpoint = builder
             .build()
-            .map_err(|error| RiptskError::Config(error.to_string()))?;
+            .map_err(|error| RiptaskError::Config(error.to_string()))?;
         endpoint
             .query_async(client)
             .await
-            .map_err(|error| RiptskError::Unreachable(error.to_string()))
+            .map_err(|error| RiptaskError::Unreachable(error.to_string()))
     }
 
     async fn edit_issue_request(
@@ -82,7 +82,7 @@ impl GitlabProvider {
         issue: &BackendIssueUpsert,
         assignee_ids: &[u64],
         include_weight: bool,
-    ) -> Result<GitlabIssue, RiptskError> {
+    ) -> Result<GitlabIssue, RiptaskError> {
         let mut builder = gitlab::api::projects::issues::EditIssue::builder();
         builder.project(repo).issue(issue_id);
         builder.title(issue.title.as_str());
@@ -113,30 +113,30 @@ impl GitlabProvider {
         }
         let endpoint = builder
             .build()
-            .map_err(|error| RiptskError::Config(error.to_string()))?;
+            .map_err(|error| RiptaskError::Config(error.to_string()))?;
         endpoint
             .query_async(client)
             .await
-            .map_err(|error| RiptskError::Unreachable(error.to_string()))
+            .map_err(|error| RiptaskError::Unreachable(error.to_string()))
     }
 
-    async fn resolve_user_ids(&self, usernames: &[String]) -> Result<Vec<u64>, RiptskError> {
+    async fn resolve_user_ids(&self, usernames: &[String]) -> Result<Vec<u64>, RiptaskError> {
         let client = self.client().await?;
         let mut ids = Vec::with_capacity(usernames.len());
         for username in usernames {
             let endpoint = gitlab::api::users::Users::builder()
                 .username(username.as_str())
                 .build()
-                .map_err(|error| RiptskError::Config(error.to_string()))?;
+                .map_err(|error| RiptaskError::Config(error.to_string()))?;
             let users: Vec<GitlabResolvedUser> = endpoint
                 .query_async(&client)
                 .await
-                .map_err(|error| RiptskError::Unreachable(error.to_string()))?;
+                .map_err(|error| RiptaskError::Unreachable(error.to_string()))?;
             let user = users
                 .into_iter()
                 .find(|user| user.username == *username)
                 .ok_or_else(|| {
-                    RiptskError::Unreachable(format!("GitLab user not found: {username}"))
+                    RiptaskError::Unreachable(format!("GitLab user not found: {username}"))
                 })?;
             ids.push(user.id);
         }
@@ -148,34 +148,34 @@ impl GitlabProvider {
         repo: &str,
         issue_id: u64,
         discussion_locked: bool,
-    ) -> Result<(), RiptskError> {
+    ) -> Result<(), RiptaskError> {
         let client = self.client().await?;
         let endpoint = gitlab::api::projects::issues::EditIssue::builder()
             .project(repo)
             .issue(issue_id)
             .discussion_locked(discussion_locked)
             .build()
-            .map_err(|error| RiptskError::Config(error.to_string()))?;
+            .map_err(|error| RiptaskError::Config(error.to_string()))?;
         let _: GitlabIssue = endpoint
             .query_async(&client)
             .await
-            .map_err(|error| RiptskError::Unreachable(error.to_string()))?;
+            .map_err(|error| RiptaskError::Unreachable(error.to_string()))?;
         Ok(())
     }
 
-    async fn rebase_and_wait(&self, repo: &str, number: u64) -> Result<(), RiptskError> {
+    async fn rebase_and_wait(&self, repo: &str, number: u64) -> Result<(), RiptaskError> {
         let client = self.client().await?;
 
         let rebase_endpoint = gitlab::api::projects::merge_requests::RebaseMergeRequest::builder()
             .project(repo)
             .merge_request(number)
             .build()
-            .map_err(|e| RiptskError::Config(e.to_string()))?;
+            .map_err(|e| RiptaskError::Config(e.to_string()))?;
         gitlab::api::ignore(rebase_endpoint)
             .query_async(&client)
             .await
             .map_err(|e| {
-                RiptskError::General(format!("failed to trigger rebase for MR !{number}: {e}"))
+                RiptaskError::General(format!("failed to trigger rebase for MR !{number}: {e}"))
             })?;
 
         let started = std::time::Instant::now();
@@ -187,16 +187,16 @@ impl GitlabProvider {
                 .merge_request(number)
                 .include_rebase_in_progress(true)
                 .build()
-                .map_err(|e| RiptskError::Config(e.to_string()))?;
+                .map_err(|e| RiptaskError::Config(e.to_string()))?;
             let mr: GitlabMergeRequest = poll_endpoint
                 .query_async(&client)
                 .await
-                .map_err(|e| RiptskError::Unreachable(e.to_string()))?;
+                .map_err(|e| RiptaskError::Unreachable(e.to_string()))?;
 
             if let Some(ref error) = mr.merge_error
                 && !error.is_empty()
             {
-                return Err(RiptskError::General(format!(
+                return Err(RiptaskError::General(format!(
                     "rebase failed for MR !{number}: {error}"
                 )));
             }
@@ -206,7 +206,7 @@ impl GitlabProvider {
             }
 
             if started.elapsed() >= std::time::Duration::from_secs(600) {
-                return Err(RiptskError::General(format!(
+                return Err(RiptaskError::General(format!(
                     "timed out waiting for rebase of MR !{number}"
                 )));
             }
@@ -216,16 +216,16 @@ impl GitlabProvider {
 
 #[async_trait]
 impl IssueTracker for GitlabProvider {
-    async fn list_issues(&self, repo: &str) -> Result<Vec<BackendIssueRecord>, RiptskError> {
+    async fn list_issues(&self, repo: &str) -> Result<Vec<BackendIssueRecord>, RiptaskError> {
         let client = self.client().await?;
         let endpoint = gitlab::api::issues::ProjectIssues::builder()
             .project(repo)
             .build()
-            .map_err(|error| RiptskError::Config(error.to_string()))?;
+            .map_err(|error| RiptaskError::Config(error.to_string()))?;
         let issues: Vec<GitlabIssue> = gitlab::api::paged(endpoint, gitlab::api::Pagination::All)
             .query_async(&client)
             .await
-            .map_err(|error| RiptskError::Unreachable(error.to_string()))?;
+            .map_err(|error| RiptaskError::Unreachable(error.to_string()))?;
         Ok(issues.into_iter().map(map_issue).collect())
     }
 
@@ -233,17 +233,17 @@ impl IssueTracker for GitlabProvider {
         &self,
         repo: &str,
         issue_id: u64,
-    ) -> Result<BackendIssueRecord, RiptskError> {
+    ) -> Result<BackendIssueRecord, RiptaskError> {
         let client = self.client().await?;
         let endpoint = gitlab::api::projects::issues::Issue::builder()
             .project(repo)
             .issue(issue_id)
             .build()
-            .map_err(|error| RiptskError::Config(error.to_string()))?;
+            .map_err(|error| RiptaskError::Config(error.to_string()))?;
         let issue: GitlabIssue = endpoint
             .query_async(&client)
             .await
-            .map_err(|error| RiptskError::Unreachable(error.to_string()))?;
+            .map_err(|error| RiptaskError::Unreachable(error.to_string()))?;
         Ok(map_issue(issue))
     }
 
@@ -251,7 +251,7 @@ impl IssueTracker for GitlabProvider {
         &self,
         repo: &str,
         issue: &BackendIssueUpsert,
-    ) -> Result<BackendIssueRecord, RiptskError> {
+    ) -> Result<BackendIssueRecord, RiptaskError> {
         let client = self.client().await?;
         let assignee_ids = self.resolve_user_ids(&issue.assignees).await?;
         let created = match self
@@ -276,7 +276,7 @@ impl IssueTracker for GitlabProvider {
         repo: &str,
         issue_id: u64,
         issue: &BackendIssueUpsert,
-    ) -> Result<BackendIssueRecord, RiptskError> {
+    ) -> Result<BackendIssueRecord, RiptaskError> {
         let client = self.client().await?;
         let assignee_ids = self.resolve_user_ids(&issue.assignees).await?;
         let updated = match self
@@ -301,7 +301,7 @@ impl IssueTracker for GitlabProvider {
         repo: &str,
         issue_id: u64,
         _state_reason: Option<&str>,
-    ) -> Result<(), RiptskError> {
+    ) -> Result<(), RiptaskError> {
         let client = self.client().await?;
         edit_issue_state(
             &client,
@@ -312,7 +312,7 @@ impl IssueTracker for GitlabProvider {
         .await
     }
 
-    async fn reopen_issue(&self, repo: &str, issue_id: u64) -> Result<(), RiptskError> {
+    async fn reopen_issue(&self, repo: &str, issue_id: u64) -> Result<(), RiptaskError> {
         let client = self.client().await?;
         edit_issue_state(
             &client,
@@ -323,13 +323,13 @@ impl IssueTracker for GitlabProvider {
         .await
     }
 
-    async fn delete_issue(&self, repo: &str, issue_id: u64) -> Result<DeleteOutcome, RiptskError> {
+    async fn delete_issue(&self, repo: &str, issue_id: u64) -> Result<DeleteOutcome, RiptaskError> {
         let client = self.client().await?;
         let endpoint = gitlab::api::projects::issues::DeleteIssue::builder()
             .project(repo)
             .issue(issue_id)
             .build()
-            .map_err(|error| RiptskError::Config(error.to_string()))?;
+            .map_err(|error| RiptaskError::Config(error.to_string()))?;
         match gitlab::api::ignore(endpoint).query_async(&client).await {
             Ok(()) => Ok(DeleteOutcome::HardDeleted),
             Err(error) => {
@@ -337,7 +337,7 @@ impl IssueTracker for GitlabProvider {
                 if msg.contains("404") || msg.contains("410") {
                     Ok(DeleteOutcome::HardDeleted)
                 } else {
-                    Err(RiptskError::Unreachable(msg))
+                    Err(RiptaskError::Unreachable(msg))
                 }
             }
         }
@@ -348,11 +348,11 @@ impl IssueTracker for GitlabProvider {
         repo: &str,
         issue_id: u64,
         _reason: Option<&str>,
-    ) -> Result<(), RiptskError> {
+    ) -> Result<(), RiptaskError> {
         self.set_discussion_locked(repo, issue_id, true).await
     }
 
-    async fn unlock_issue(&self, repo: &str, issue_id: u64) -> Result<(), RiptskError> {
+    async fn unlock_issue(&self, repo: &str, issue_id: u64) -> Result<(), RiptaskError> {
         self.set_discussion_locked(repo, issue_id, false).await
     }
 
@@ -361,18 +361,18 @@ impl IssueTracker for GitlabProvider {
         repo: &str,
         issue_id: u64,
         labels: &[String],
-    ) -> Result<(), RiptskError> {
+    ) -> Result<(), RiptaskError> {
         let client = self.client().await?;
         let mut builder = gitlab::api::projects::issues::EditIssue::builder();
         builder.project(repo).issue(issue_id);
         builder.labels(labels.iter().cloned());
         let endpoint = builder
             .build()
-            .map_err(|error| RiptskError::Config(error.to_string()))?;
+            .map_err(|error| RiptaskError::Config(error.to_string()))?;
         let _: GitlabIssue = endpoint
             .query_async(&client)
             .await
-            .map_err(|error| RiptskError::Unreachable(error.to_string()))?;
+            .map_err(|error| RiptaskError::Unreachable(error.to_string()))?;
         Ok(())
     }
 }
@@ -386,7 +386,7 @@ impl VersionControl for GitlabProvider {
         base: &str,
         title: &str,
         body: &str,
-    ) -> Result<BackendPrRecord, RiptskError> {
+    ) -> Result<BackendPrRecord, RiptaskError> {
         let client = self.client().await?;
         let endpoint = gitlab::api::projects::merge_requests::CreateMergeRequest::builder()
             .project(repo)
@@ -395,25 +395,25 @@ impl VersionControl for GitlabProvider {
             .title(title)
             .description(body)
             .build()
-            .map_err(|error| RiptskError::Config(error.to_string()))?;
+            .map_err(|error| RiptaskError::Config(error.to_string()))?;
         let merge_request: GitlabMergeRequest = endpoint
             .query_async(&client)
             .await
-            .map_err(|error| RiptskError::Unreachable(error.to_string()))?;
+            .map_err(|error| RiptaskError::Unreachable(error.to_string()))?;
         Ok(map_merge_request(merge_request))
     }
 
-    async fn get_pr(&self, repo: &str, number: u64) -> Result<BackendPrRecord, RiptskError> {
+    async fn get_pr(&self, repo: &str, number: u64) -> Result<BackendPrRecord, RiptaskError> {
         let client = self.client().await?;
         let endpoint = gitlab::api::projects::merge_requests::MergeRequest::builder()
             .project(repo)
             .merge_request(number)
             .build()
-            .map_err(|error| RiptskError::Config(error.to_string()))?;
+            .map_err(|error| RiptaskError::Config(error.to_string()))?;
         let merge_request: GitlabMergeRequest = endpoint
             .query_async(&client)
             .await
-            .map_err(|error| RiptskError::Unreachable(error.to_string()))?;
+            .map_err(|error| RiptaskError::Unreachable(error.to_string()))?;
         Ok(map_merge_request(merge_request))
     }
 
@@ -423,7 +423,7 @@ impl VersionControl for GitlabProvider {
         number: u64,
         title: &str,
         body: &str,
-    ) -> Result<BackendPrRecord, RiptskError> {
+    ) -> Result<BackendPrRecord, RiptaskError> {
         let client = self.client().await?;
         let endpoint = gitlab::api::projects::merge_requests::EditMergeRequest::builder()
             .project(repo)
@@ -431,11 +431,11 @@ impl VersionControl for GitlabProvider {
             .title(title)
             .description(body)
             .build()
-            .map_err(|error| RiptskError::Config(error.to_string()))?;
+            .map_err(|error| RiptaskError::Config(error.to_string()))?;
         let merge_request: GitlabMergeRequest = endpoint
             .query_async(&client)
             .await
-            .map_err(|error| RiptskError::Unreachable(error.to_string()))?;
+            .map_err(|error| RiptaskError::Unreachable(error.to_string()))?;
         Ok(map_merge_request(merge_request))
     }
 
@@ -444,7 +444,7 @@ impl VersionControl for GitlabProvider {
         repo: &str,
         head: &str,
         base: &str,
-    ) -> Result<Option<BackendPrRecord>, RiptskError> {
+    ) -> Result<Option<BackendPrRecord>, RiptaskError> {
         let client = self.client().await?;
         let endpoint = gitlab::api::projects::merge_requests::MergeRequests::builder()
             .project(repo)
@@ -452,12 +452,12 @@ impl VersionControl for GitlabProvider {
             .target_branch(base)
             .state(gitlab::api::merge_requests::MergeRequestState::Opened)
             .build()
-            .map_err(|error| RiptskError::Config(error.to_string()))?;
+            .map_err(|error| RiptaskError::Config(error.to_string()))?;
         let merge_requests: Vec<GitlabMergeRequest> =
             gitlab::api::paged(endpoint, gitlab::api::Pagination::All)
                 .query_async(&client)
                 .await
-                .map_err(|error| RiptskError::Unreachable(error.to_string()))?;
+                .map_err(|error| RiptaskError::Unreachable(error.to_string()))?;
         Ok(merge_requests.into_iter().next().map(map_merge_request))
     }
 
@@ -468,7 +468,7 @@ impl VersionControl for GitlabProvider {
         method: MergeMethod,
         _commit_title: Option<&str>,
         commit_message: Option<&str>,
-    ) -> Result<(), RiptskError> {
+    ) -> Result<(), RiptaskError> {
         if method == MergeMethod::Rebase {
             self.rebase_and_wait(repo, number).await?;
             let client = self.client().await?;
@@ -477,14 +477,14 @@ impl VersionControl for GitlabProvider {
             if let Some(message) = commit_message {
                 builder.merge_commit_message(message);
             }
-            let endpoint = builder
-                .build()
-                .map_err(|e| RiptskError::General(format!("failed to build merge request: {e}")))?;
+            let endpoint = builder.build().map_err(|e| {
+                RiptaskError::General(format!("failed to build merge request: {e}"))
+            })?;
             gitlab::api::ignore(endpoint)
                 .query_async(&client)
                 .await
                 .map_err(|e| {
-                    RiptskError::General(format!("failed to merge MR !{number} after rebase: {e}"))
+                    RiptaskError::General(format!("failed to merge MR !{number} after rebase: {e}"))
                 })?;
             return Ok(());
         }
@@ -498,13 +498,13 @@ impl VersionControl for GitlabProvider {
             builder.merge_commit_message(message);
         }
         let endpoint = builder.build().map_err(|error| {
-            RiptskError::General(format!("failed to build merge request: {error}"))
+            RiptaskError::General(format!("failed to build merge request: {error}"))
         })?;
         gitlab::api::ignore(endpoint)
             .query_async(&client)
             .await
             .map_err(|error| {
-                RiptskError::General(format!("failed to merge MR !{number}: {error}"))
+                RiptaskError::General(format!("failed to merge MR !{number}: {error}"))
             })?;
         Ok(())
     }
@@ -513,17 +513,17 @@ impl VersionControl for GitlabProvider {
         &self,
         repo: &str,
         number: u64,
-    ) -> Result<PrChecksStatus, RiptskError> {
+    ) -> Result<PrChecksStatus, RiptaskError> {
         let client = self.client().await?;
         let endpoint = gitlab::api::projects::merge_requests::MergeRequest::builder()
             .project(repo)
             .merge_request(number)
             .build()
-            .map_err(|error| RiptskError::General(error.to_string()))?;
+            .map_err(|error| RiptaskError::General(error.to_string()))?;
         let merge_request: GitlabMergeRequest = endpoint
             .query_async(&client)
             .await
-            .map_err(|error| RiptskError::Unreachable(error.to_string()))?;
+            .map_err(|error| RiptaskError::Unreachable(error.to_string()))?;
         match merge_request.head_pipeline {
             Some(pipeline) => match pipeline.status.as_str() {
                 "success" => Ok(PrChecksStatus::Passed),
@@ -541,17 +541,17 @@ impl VersionControl for GitlabProvider {
         }
     }
 
-    async fn get_ci_presence(&self, repo: &str) -> Result<CiPresence, RiptskError> {
+    async fn get_ci_presence(&self, repo: &str) -> Result<CiPresence, RiptaskError> {
         let client = self.client().await?;
         let endpoint = gitlab::api::projects::pipelines::Pipelines::builder()
             .project(repo)
             .build()
-            .map_err(|error| RiptskError::General(error.to_string()))?;
+            .map_err(|error| RiptaskError::General(error.to_string()))?;
         let pipelines: Vec<serde_json::Value> =
             gitlab::api::paged(endpoint, gitlab::api::Pagination::Limit(1))
                 .query_async(&client)
                 .await
-                .map_err(|error| RiptskError::Unreachable(error.to_string()))?;
+                .map_err(|error| RiptaskError::Unreachable(error.to_string()))?;
         Ok(CiPresence {
             has_remote_ci: !pipelines.is_empty(),
             remote_workflow_names: if pipelines.is_empty() {
@@ -568,45 +568,45 @@ impl VersionControl for GitlabProvider {
         branch_name: &str,
         base_ref: &str,
         _issue_id: Option<u64>,
-    ) -> Result<(), RiptskError> {
+    ) -> Result<(), RiptaskError> {
         let client = self.client().await?;
         let endpoint = gitlab::api::projects::repository::branches::CreateBranch::builder()
             .project(repo)
             .branch(branch_name)
             .ref_(base_ref)
             .build()
-            .map_err(|e| RiptskError::Config(e.to_string()))?;
+            .map_err(|e| RiptaskError::Config(e.to_string()))?;
         let _: serde_json::Value = endpoint
             .query_async(&client)
             .await
-            .map_err(|e| RiptskError::Unreachable(e.to_string()))?;
+            .map_err(|e| RiptaskError::Unreachable(e.to_string()))?;
         Ok(())
     }
 
-    async fn default_branch(&self, repo: &str) -> Result<String, RiptskError> {
+    async fn default_branch(&self, repo: &str) -> Result<String, RiptaskError> {
         let client = self.client().await?;
         let endpoint = gitlab::api::projects::Project::builder()
             .project(repo)
             .build()
-            .map_err(|error| RiptskError::Config(error.to_string()))?;
+            .map_err(|error| RiptaskError::Config(error.to_string()))?;
         let project: GitlabProject = endpoint
             .query_async(&client)
             .await
-            .map_err(|error| RiptskError::Unreachable(error.to_string()))?;
+            .map_err(|error| RiptaskError::Unreachable(error.to_string()))?;
         Ok(project.default_branch)
     }
 
-    async fn delete_branch(&self, repo: &str, branch_name: &str) -> Result<(), RiptskError> {
+    async fn delete_branch(&self, repo: &str, branch_name: &str) -> Result<(), RiptaskError> {
         let client = self.client().await?;
         let endpoint = gitlab::api::projects::repository::branches::DeleteBranch::builder()
             .project(repo)
             .branch(branch_name)
             .build()
-            .map_err(|e| RiptskError::Config(e.to_string()))?;
+            .map_err(|e| RiptaskError::Config(e.to_string()))?;
         gitlab::api::ignore(endpoint)
             .query_async(&client)
             .await
-            .map_err(|e| RiptskError::Unreachable(e.to_string()))?;
+            .map_err(|e| RiptaskError::Unreachable(e.to_string()))?;
         Ok(())
     }
 }
@@ -616,17 +616,17 @@ async fn edit_issue_state(
     repo: &str,
     issue_id: u64,
     state_event: gitlab::api::projects::issues::IssueStateEvent,
-) -> Result<(), RiptskError> {
+) -> Result<(), RiptaskError> {
     let endpoint = gitlab::api::projects::issues::EditIssue::builder()
         .project(repo)
         .issue(issue_id)
         .state_event(state_event)
         .build()
-        .map_err(|error| RiptskError::Config(error.to_string()))?;
+        .map_err(|error| RiptaskError::Config(error.to_string()))?;
     let _: GitlabIssue = endpoint
         .query_async(client)
         .await
-        .map_err(|error| RiptskError::Unreachable(error.to_string()))?;
+        .map_err(|error| RiptaskError::Unreachable(error.to_string()))?;
     Ok(())
 }
 
@@ -764,30 +764,30 @@ fn normalize_timestamp(ts: &str) -> String {
         .unwrap_or_else(|_| ts.to_owned())
 }
 
-fn parse_naive_date_opt(value: Option<&str>) -> Result<Option<NaiveDate>, RiptskError> {
+fn parse_naive_date_opt(value: Option<&str>) -> Result<Option<NaiveDate>, RiptaskError> {
     value
         .map(|value| {
             NaiveDate::parse_from_str(value, "%Y-%m-%d")
-                .map_err(|error| RiptskError::Config(error.to_string()))
+                .map_err(|error| RiptaskError::Config(error.to_string()))
         })
         .transpose()
 }
 
 fn parse_gitlab_issue_state_event(
     state: &str,
-) -> Result<gitlab::api::projects::issues::IssueStateEvent, RiptskError> {
+) -> Result<gitlab::api::projects::issues::IssueStateEvent, RiptaskError> {
     match state {
         "open" | "opened" => Ok(gitlab::api::projects::issues::IssueStateEvent::Reopen),
         "closed" => Ok(gitlab::api::projects::issues::IssueStateEvent::Close),
-        other => Err(RiptskError::Config(format!(
+        other => Err(RiptaskError::Config(format!(
             "unsupported gitlab issue state: {other}"
         ))),
     }
 }
 
-fn is_weight_error(error: &RiptskError) -> bool {
+fn is_weight_error(error: &RiptaskError) -> bool {
     match error {
-        RiptskError::Unreachable(msg) | RiptskError::Config(msg) => {
+        RiptaskError::Unreachable(msg) | RiptaskError::Config(msg) => {
             msg.to_lowercase().contains("weight")
         }
         _ => false,

@@ -1,5 +1,5 @@
 use crate::domain::issue::{IssueState, Priority};
-use crate::error::RiptskError;
+use crate::error::RiptaskError;
 use crate::models::{
     AiConfig, AiFeatures, BackendKind, BoardConfig, DefaultsConfig, RecurringDef, RepoProject,
     SyncConfig, UiConfig,
@@ -74,16 +74,16 @@ pub fn default_config() -> Config {
     }
 }
 
-pub fn load_config(path: &Path) -> Result<Config, RiptskError> {
+pub fn load_config(path: &Path) -> Result<Config, RiptaskError> {
     let content = fs::read_to_string(path)?;
     let mut config: Config = serde_yaml_ng::from_str(&content).map_err(|error| {
-        RiptskError::Config(format!("failed to parse {}: {error}", path.display()))
+        RiptaskError::Config(format!("failed to parse {}: {error}", path.display()))
     })?;
     validate_config(&mut config)?;
     Ok(config)
 }
 
-pub fn save_config(path: &Path, config: &Config) -> Result<(), RiptskError> {
+pub fn save_config(path: &Path, config: &Config) -> Result<(), RiptaskError> {
     // `save_config` takes `&Config` to preserve callers that want to write out
     // the exact struct they built. Callers that load via `load_config` already
     // have a normalized `Config` in memory, and `config_set` normalizes before
@@ -91,25 +91,25 @@ pub fn save_config(path: &Path, config: &Config) -> Result<(), RiptskError> {
     let mut validation_view = config.clone();
     validate_config(&mut validation_view)?;
     let content = serde_yaml_ng::to_string(config)
-        .map_err(|error| RiptskError::Config(format!("failed to serialize config: {error}")))?;
+        .map_err(|error| RiptaskError::Config(format!("failed to serialize config: {error}")))?;
     let dir = path
         .parent()
-        .ok_or_else(|| RiptskError::Config("config path has no parent".into()))?;
+        .ok_or_else(|| RiptaskError::Config("config path has no parent".into()))?;
     let mut file = tempfile::NamedTempFile::new_in(dir)?;
     use std::io::Write;
     file.write_all(content.as_bytes())?;
     file.persist(path)
-        .map_err(|error| RiptskError::Io(error.error))?;
+        .map_err(|error| RiptaskError::Io(error.error))?;
     Ok(())
 }
 
-pub fn validate_config(config: &mut Config) -> Result<(), RiptskError> {
+pub fn validate_config(config: &mut Config) -> Result<(), RiptaskError> {
     // Check explicit `key:` syntax before normalization so users get a clear
     // error that names the offending backend instead of a downstream collision.
     for project in &config.projects {
         if let Some(key) = project.key.as_deref() {
             issue_ids::validate_explicit_key_syntax(key).map_err(|message| {
-                RiptskError::Config(format!(
+                RiptaskError::Config(format!(
                     "RepoProject '{}' has invalid key: {message}",
                     project.name
                 ))
@@ -134,10 +134,10 @@ pub fn validate_config(config: &mut Config) -> Result<(), RiptskError> {
     Ok(())
 }
 
-fn validate_projects(config: &Config) -> Result<(), RiptskError> {
+fn validate_projects(config: &Config) -> Result<(), RiptaskError> {
     for repo_project in &config.projects {
         if repo_project.vc_backend.kind == BackendKind::Jira {
-            return Err(RiptskError::Config(format!(
+            return Err(RiptaskError::Config(format!(
                 "RepoProject '{}' has invalid VCBackend: jira is not allowed",
                 repo_project.name
             )));
@@ -146,7 +146,7 @@ fn validate_projects(config: &Config) -> Result<(), RiptskError> {
         if let Some(label) = repo_project.repo_project_label.as_deref() {
             repo_project_label::validate(label)?;
             if repo_project.tasks_backend.kind != BackendKind::Jira {
-                return Err(RiptskError::Config(format!(
+                return Err(RiptaskError::Config(format!(
                     "RepoProject '{}' sets repo_project_label '{}' but its TasksBackend is {:?}; the label is Jira-only and would be silently ignored",
                     repo_project.name, label, repo_project.tasks_backend.kind
                 )));
@@ -160,13 +160,13 @@ fn validate_projects(config: &Config) -> Result<(), RiptskError> {
                 .as_deref()
                 .unwrap_or_default();
             if host.is_empty() {
-                return Err(RiptskError::Config(format!(
+                return Err(RiptaskError::Config(format!(
                     "Jira TasksBackend for RepoProject '{}' requires a 'host' field (e.g., https://myteam.atlassian.net)",
                     repo_project.name
                 )));
             }
             if !host.starts_with("https://") {
-                return Err(RiptskError::Config(format!(
+                return Err(RiptaskError::Config(format!(
                     "Jira TasksBackend for RepoProject '{}' host must start with https:// (got: {})",
                     repo_project.name, host
                 )));
@@ -177,7 +177,7 @@ fn validate_projects(config: &Config) -> Result<(), RiptskError> {
                 .as_deref()
                 .unwrap_or_default();
             if jira_project.is_empty() || !jira_project.contains('/') {
-                return Err(RiptskError::Config(format!(
+                return Err(RiptaskError::Config(format!(
                     "Jira TasksBackend for RepoProject '{}' requires 'jira_project' in org/PROJECT_KEY format (got: {:?})",
                     repo_project.name, repo_project.tasks_backend.jira_project
                 )));
@@ -187,20 +187,20 @@ fn validate_projects(config: &Config) -> Result<(), RiptskError> {
     Ok(())
 }
 
-fn validate_ai_command(config: &Config) -> Result<(), RiptskError> {
+fn validate_ai_command(config: &Config) -> Result<(), RiptaskError> {
     if let Some(command) = &config.ai.command {
         // Try to compile the template to catch syntax errors early
         let mut env = minijinja::Environment::new();
         env.set_undefined_behavior(minijinja::UndefinedBehavior::Strict);
         env.add_template("cmd", command).map_err(|error| {
-            RiptskError::Config(format!(
+            RiptaskError::Config(format!(
                 "invalid ai.command template syntax: {command}: {error}"
             ))
         })?;
 
         // Verify template contains at least one of the required input placeholders
         if !command.contains("{{input}}") && !command.contains("{{input_file}}") {
-            return Err(RiptskError::Config(
+            return Err(RiptaskError::Config(
                 "ai.command must contain {{{{input}}}} or {{{{input_file}}}} placeholder\n\nExamples:\n  ai.command: \"my-ai-cli --system '{{{{system}}}}' --context '{{{{input}}}}'\"\n  ai.command: \"cat {{{{input_file}}}} | my-ai-cli --system '{{{{system}}}}'\""
                     .into(),
             ));
@@ -212,31 +212,31 @@ fn validate_ai_command(config: &Config) -> Result<(), RiptskError> {
 fn require_unique<'a>(
     iter: impl Iterator<Item = &'a str>,
     message: &str,
-) -> Result<(), RiptskError> {
+) -> Result<(), RiptaskError> {
     let mut seen = HashSet::new();
     for item in iter {
         if !seen.insert(item.to_owned()) {
-            return Err(RiptskError::Config(message.to_owned()));
+            return Err(RiptaskError::Config(message.to_owned()));
         }
     }
     Ok(())
 }
 
-pub fn config_set(config: &mut Config, key: &str, value: &str) -> Result<(), RiptskError> {
+pub fn config_set(config: &mut Config, key: &str, value: &str) -> Result<(), RiptaskError> {
     match key {
         "auto_commit" => {
             config.auto_commit = value
                 .parse()
-                .map_err(|_| RiptskError::Config("auto_commit must be true or false".into()))?
+                .map_err(|_| RiptaskError::Config("auto_commit must be true or false".into()))?
         }
         "defaults.board" => config.defaults.board = value.to_owned(),
         "defaults.status" => {
             config.defaults.status =
-                parse_state(value).map_err(|error| RiptskError::Config(error.to_string()))?
+                parse_state(value).map_err(|error| RiptaskError::Config(error.to_string()))?
         }
         "defaults.priority" => {
             config.defaults.priority =
-                parse_priority(value).map_err(|error| RiptskError::Config(error.to_string()))?
+                parse_priority(value).map_err(|error| RiptaskError::Config(error.to_string()))?
         }
         "defaults.assignee" => config.defaults.assignee = some_if_not_empty(value),
         "defaults.template" => config.defaults.template = some_if_not_empty(value),
@@ -247,7 +247,7 @@ pub fn config_set(config: &mut Config, key: &str, value: &str) -> Result<(), Rip
                     None
                 } else {
                     Some(value.parse().map_err(|_| {
-                        RiptskError::Config("ui.tree_depth must be a number".into())
+                        RiptaskError::Config("ui.tree_depth must be a number".into())
                     })?)
                 }
         }
@@ -255,16 +255,16 @@ pub fn config_set(config: &mut Config, key: &str, value: &str) -> Result<(), Rip
         "ai.enabled" => {
             config.ai.enabled = value
                 .parse()
-                .map_err(|_| RiptskError::Config("ai.enabled must be true or false".into()))?
+                .map_err(|_| RiptaskError::Config("ai.enabled must be true or false".into()))?
         }
         "ai.command" => config.ai.command = some_if_not_empty(value),
         "sync.conflict_detection" => {
             config.sync.conflict_detection = value.parse().map_err(|_| {
-                RiptskError::Config("sync.conflict_detection must be true or false".into())
+                RiptaskError::Config("sync.conflict_detection must be true or false".into())
             })?
         }
         _ => {
-            return Err(RiptskError::Config(format!(
+            return Err(RiptaskError::Config(format!(
                 "unsupported config key: {key}"
             )));
         }
@@ -304,7 +304,7 @@ pub fn parse_priority(value: &str) -> anyhow::Result<Priority> {
 #[cfg(test)]
 mod tests {
     use super::{config_set, load_config, parse_priority, parse_state};
-    use crate::error::RiptskError;
+    use crate::error::RiptaskError;
     use std::fs;
     use std::path::Path;
     use tempfile::NamedTempFile;
@@ -468,7 +468,7 @@ recurring: []
         fs::write(file.path(), yaml).expect("write yaml");
 
         let error = load_config(file.path()).expect_err("collision");
-        assert!(matches!(error, RiptskError::KeyCollision(_)));
+        assert!(matches!(error, RiptaskError::KeyCollision(_)));
     }
 
     #[test]
@@ -513,13 +513,13 @@ recurring: []
 
         let error = load_config(file.path()).expect_err("label on non-Jira should fail");
         match error {
-            RiptskError::Config(msg) => {
+            RiptaskError::Config(msg) => {
                 assert!(
                     msg.contains("repo_project_label") && msg.contains("Jira-only"),
                     "unexpected error message: {msg}"
                 );
             }
-            other => panic!("expected RiptskError::Config, got {other:?}"),
+            other => panic!("expected RiptaskError::Config, got {other:?}"),
         }
     }
 }

@@ -2,7 +2,7 @@ use crate::adapters::ai::AiBackend;
 use crate::adapters::git::GitBackend;
 use crate::adapters::prompts::PromptBackend;
 use crate::config::{Config, load_config, save_config};
-use crate::error::{ProjectKeyCollision, ProjectKeyProjectMeta, RiptskError};
+use crate::error::{ProjectKeyCollision, ProjectKeyProjectMeta, RiptaskError};
 use crate::models::{BackendKind, RepoProject, TasksBackendSpec, VCBackendSpec};
 use crate::paths::AppPaths;
 use crate::services::auto_commit::maybe_auto_commit;
@@ -16,7 +16,7 @@ pub fn ensure_registered(
     paths: &AppPaths,
     git: &dyn GitBackend,
     prompts: &dyn PromptBackend,
-) -> Result<(), RiptskError> {
+) -> Result<(), RiptaskError> {
     let config_path = paths.config_path();
     if !config_path.exists() {
         return Ok(());
@@ -65,7 +65,7 @@ pub fn ensure_registered(
 pub fn detect_from_cwd<'a>(
     cwd: &Utf8Path,
     config: &'a Config,
-) -> Result<Option<&'a RepoProject>, RiptskError> {
+) -> Result<Option<&'a RepoProject>, RiptaskError> {
     let output = Command::new("git")
         .arg("-C")
         .arg(cwd)
@@ -74,7 +74,7 @@ pub fn detect_from_cwd<'a>(
         .arg("origin")
         .output()
         .context("failed to detect git remote")
-        .map_err(RiptskError::Other)?;
+        .map_err(RiptaskError::Other)?;
 
     if output.status.success() && !git_root_is_home(cwd)? {
         let url = String::from_utf8_lossy(&output.stdout);
@@ -167,7 +167,7 @@ pub fn register_project_auto(
     config: &mut Config,
     prompts: Option<&dyn PromptBackend>,
     ai: Option<&dyn AiBackend>,
-) -> Result<Option<RepoProject>, RiptskError> {
+) -> Result<Option<RepoProject>, RiptaskError> {
     if is_home_dir(cwd) {
         return Ok(None);
     }
@@ -179,8 +179,9 @@ pub fn register_project_auto(
     if !git_root_is_home(cwd)? {
         if let Some(url) = git_origin_url(cwd)? {
             let normalized = normalize_url(url.trim());
-            let (host, repo) = split_host_repo(&normalized)
-                .ok_or_else(|| RiptskError::General("failed to normalize git remote URL".into()))?;
+            let (host, repo) = split_host_repo(&normalized).ok_or_else(|| {
+                RiptaskError::General("failed to normalize git remote URL".into())
+            })?;
             let repo_tail = repo.rsplit('/').next().unwrap_or(repo);
             let Some(name) = deduplicate_name(repo_tail, cwd, config) else {
                 return Ok(None);
@@ -322,7 +323,7 @@ fn split_host_repo(normalized: &str) -> Option<(&str, &str)> {
     normalized.split_once(':')
 }
 
-fn git_origin_url(cwd: &Utf8Path) -> Result<Option<String>, RiptskError> {
+fn git_origin_url(cwd: &Utf8Path) -> Result<Option<String>, RiptaskError> {
     let output = Command::new("git")
         .arg("-C")
         .arg(cwd)
@@ -331,7 +332,7 @@ fn git_origin_url(cwd: &Utf8Path) -> Result<Option<String>, RiptskError> {
         .arg("origin")
         .output()
         .context("failed to detect git remote")
-        .map_err(RiptskError::Other)?;
+        .map_err(RiptaskError::Other)?;
     if !output.status.success() {
         return Ok(None);
     }
@@ -346,7 +347,7 @@ pub fn register_project_interactive(
     ai: Option<&dyn AiBackend>,
     cwd: &Utf8Path,
     repo_project_label_override: Option<String>,
-) -> Result<RepoProject, RiptskError> {
+) -> Result<RepoProject, RiptaskError> {
     if let Some(existing) = detect_from_cwd(cwd, config)? {
         return Ok(existing.clone());
     }
@@ -355,8 +356,9 @@ pub fn register_project_interactive(
     let (default_name, default_vc_kind, default_host, default_repo, default_path, origin_tail) =
         if let Some(url) = repo_url {
             let normalized = normalize_url(&url);
-            let (host, repo) = split_host_repo(&normalized)
-                .ok_or_else(|| RiptskError::General("failed to normalize git remote URL".into()))?;
+            let (host, repo) = split_host_repo(&normalized).ok_or_else(|| {
+                RiptaskError::General("failed to normalize git remote URL".into())
+            })?;
             (
                 repo.rsplit('/').next().unwrap_or(repo).to_owned(),
                 infer_type(host),
@@ -506,7 +508,7 @@ pub fn register_project_interactive(
         let final_label: Option<String> = if let Some(raw) = repo_project_label_override {
             Some(
                 repo_project_label::normalize_user_input(&raw).ok_or_else(|| {
-                    RiptskError::Config(format!(
+                    RiptaskError::Config(format!(
                         "--repo-project-label '{raw}' sanitizes to an empty suffix after '{}'",
                         repo_project_label::LABEL_PREFIX
                     ))
@@ -528,7 +530,7 @@ pub fn register_project_interactive(
             ));
         }
     } else if repo_project_label_override.is_some() {
-        return Err(RiptskError::Config(
+        return Err(RiptaskError::Config(
             "--repo-project-label is only valid when the TasksBackend is Jira".into(),
         ));
     }
@@ -544,7 +546,7 @@ fn select_backend_kind(
     prompt: &str,
     options: &[&str],
     default: BackendKind,
-) -> Result<BackendKind, RiptskError> {
+) -> Result<BackendKind, RiptaskError> {
     let items = options
         .iter()
         .map(|item| item.to_string())
@@ -588,7 +590,7 @@ pub(crate) fn resolve_key_conflict_interactive(
     attempted: &str,
     ai_default: Option<&str>,
     existing_keys: &[String],
-) -> Result<String, RiptskError> {
+) -> Result<String, RiptaskError> {
     crate::ui::error(&format!(
         "project key collision: attempted \"{attempted}\" is already used by '{}'",
         conflicting.name
@@ -625,7 +627,7 @@ fn finalize_repo_project_registration(
     new_repo_project: &mut RepoProject,
     prompts: Option<&dyn PromptBackend>,
     ai: Option<&dyn AiBackend>,
-) -> Result<(), RiptskError> {
+) -> Result<(), RiptaskError> {
     let new_group = issue_ids::logical_group_identity(new_repo_project);
 
     if let Some(sibling) = config
@@ -680,7 +682,7 @@ fn finalize_repo_project_registration(
         return Ok(());
     }
 
-    Err(RiptskError::KeyCollision(Box::new(ProjectKeyCollision {
+    Err(RiptaskError::KeyCollision(Box::new(ProjectKeyCollision {
         attempted_key: derived,
         new_project: project_meta(new_repo_project),
         conflicting_project: project_meta(conflicting),
@@ -797,7 +799,7 @@ fn path_is_same(a: &str, b: &str) -> bool {
     a_canon == b_canon
 }
 
-fn git_toplevel(cwd: &Utf8Path) -> Result<Option<String>, RiptskError> {
+fn git_toplevel(cwd: &Utf8Path) -> Result<Option<String>, RiptaskError> {
     let output = Command::new("git")
         .arg("-C")
         .arg(cwd)
@@ -805,7 +807,7 @@ fn git_toplevel(cwd: &Utf8Path) -> Result<Option<String>, RiptskError> {
         .arg("--show-toplevel")
         .output()
         .context("failed to detect git top-level")
-        .map_err(RiptskError::Other)?;
+        .map_err(RiptaskError::Other)?;
     if !output.status.success() {
         return Ok(None);
     }
@@ -814,7 +816,7 @@ fn git_toplevel(cwd: &Utf8Path) -> Result<Option<String>, RiptskError> {
     ))
 }
 
-fn git_root_is_home(cwd: &Utf8Path) -> Result<bool, RiptskError> {
+fn git_root_is_home(cwd: &Utf8Path) -> Result<bool, RiptaskError> {
     if let Some(toplevel) = git_toplevel(cwd)? {
         Ok(is_home_dir(Utf8Path::new(&toplevel)))
     } else {
@@ -822,7 +824,7 @@ fn git_root_is_home(cwd: &Utf8Path) -> Result<bool, RiptskError> {
     }
 }
 
-fn is_inside_work_tree(cwd: &Utf8Path) -> Result<bool, RiptskError> {
+fn is_inside_work_tree(cwd: &Utf8Path) -> Result<bool, RiptaskError> {
     let output = Command::new("git")
         .arg("-C")
         .arg(cwd)
@@ -830,26 +832,26 @@ fn is_inside_work_tree(cwd: &Utf8Path) -> Result<bool, RiptskError> {
         .arg("--is-inside-work-tree")
         .output()
         .context("failed to inspect git work tree")
-        .map_err(RiptskError::Other)?;
+        .map_err(RiptaskError::Other)?;
     Ok(output.status.success())
 }
 
 fn validate_new_repo_project(
     config: &Config,
     repo_project: &RepoProject,
-) -> Result<(), RiptskError> {
+) -> Result<(), RiptaskError> {
     if config
         .projects
         .iter()
         .any(|candidate| candidate.name == repo_project.name)
     {
-        return Err(RiptskError::Config(format!(
+        return Err(RiptaskError::Config(format!(
             "RepoProject name already exists: {}",
             repo_project.name
         )));
     }
     if repo_project.vc_backend.kind == BackendKind::Jira {
-        return Err(RiptskError::Config(format!(
+        return Err(RiptaskError::Config(format!(
             "RepoProject '{}' cannot use Jira as a VCBackend",
             repo_project.name
         )));
@@ -861,7 +863,7 @@ fn validate_new_repo_project(
             .as_deref()
             .unwrap_or_default();
         if !host.starts_with("https://") {
-            return Err(RiptskError::Config(format!(
+            return Err(RiptaskError::Config(format!(
                 "Jira TasksBackend for RepoProject '{}' requires https:// host",
                 repo_project.name
             )));
@@ -872,7 +874,7 @@ fn validate_new_repo_project(
             .as_deref()
             .unwrap_or_default();
         if jira_project.is_empty() || !jira_project.contains('/') {
-            return Err(RiptskError::Config(format!(
+            return Err(RiptaskError::Config(format!(
                 "Jira TasksBackend for RepoProject '{}' requires jira_project in org/PROJECT_KEY format",
                 repo_project.name
             )));

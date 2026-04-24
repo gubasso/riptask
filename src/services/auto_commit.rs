@@ -1,6 +1,6 @@
 use crate::adapters::git::GitBackend;
 use crate::config::Config;
-use crate::error::RiptskError;
+use crate::error::RiptaskError;
 use std::path::Path;
 
 pub fn maybe_auto_commit(
@@ -9,7 +9,7 @@ pub fn maybe_auto_commit(
     repo: &Path,
     message: &str,
     files: &[&Path],
-) -> Result<(), RiptskError> {
+) -> Result<(), RiptaskError> {
     if !config.auto_commit {
         return Ok(());
     }

@@ -2,7 +2,7 @@ use crate::adapters::git::{CliGit, GitBackend};
 use crate::adapters::prompts::{DialoguerPrompts, PromptBackend};
 use crate::cli::BranchArgs;
 use crate::config::{Config, load_config};
-use crate::error::RiptskError;
+use crate::error::RiptaskError;
 use crate::models::{BackendKind, RepoProject};
 use crate::paths::AppPaths;
 use crate::services::auto_commit::maybe_auto_commit;
@@ -13,14 +13,14 @@ use crate::storage::{frontmatter, issue_store};
 
 pub(crate) use crate::services::id_resolution::{current_repo, cwd_utf8, find_issue_for_branch};
 
-pub async fn branch(paths: &AppPaths, args: BranchArgs) -> Result<(), RiptskError> {
+pub async fn branch(paths: &AppPaths, args: BranchArgs) -> Result<(), RiptaskError> {
     if args.delete || args.force_delete {
         return delete_branch(paths, args).await;
     }
     create_branch(paths, args).await
 }
 
-async fn create_branch(paths: &AppPaths, args: BranchArgs) -> Result<(), RiptskError> {
+async fn create_branch(paths: &AppPaths, args: BranchArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
     let BranchArgs {
         scope, id, pick, ..
@@ -39,7 +39,7 @@ async fn create_branch(paths: &AppPaths, args: BranchArgs) -> Result<(), RiptskE
 pub(crate) async fn create_branch_for_issue(
     paths: &AppPaths,
     id: &str,
-) -> Result<String, RiptskError> {
+) -> Result<String, RiptaskError> {
     paths.require_initialized()?;
     let config = load_config(paths.config_path().as_std_path())?;
     let path = issue_store::find_issue(paths, id)?;
@@ -49,9 +49,9 @@ pub(crate) async fn create_branch_for_issue(
         .projects
         .iter()
         .find(|rp| rp.name == issue.frontmatter.project)
-        .ok_or_else(|| RiptskError::Unregistered(issue.frontmatter.project.clone()))?;
+        .ok_or_else(|| RiptaskError::Unregistered(issue.frontmatter.project.clone()))?;
     if repo_project.vc_backend.kind == BackendKind::Local {
-        return Err(RiptskError::Config(
+        return Err(RiptaskError::Config(
             "cannot create remote branch for local-only project".into(),
         ));
     }
@@ -104,7 +104,7 @@ pub(crate) async fn create_branch_for_issue(
 
     issue.frontmatter.id_slug = Some(slug.clone());
     issue.frontmatter.branch = Some(slug.clone());
-    frontmatter::save_issue(path.as_std_path(), &issue).map_err(RiptskError::Other)?;
+    frontmatter::save_issue(path.as_std_path(), &issue).map_err(RiptaskError::Other)?;
     maybe_auto_commit(
         &config,
         &git,
@@ -118,7 +118,7 @@ pub(crate) async fn create_branch_for_issue(
     Ok(slug)
 }
 
-async fn delete_branch(paths: &AppPaths, args: BranchArgs) -> Result<(), RiptskError> {
+async fn delete_branch(paths: &AppPaths, args: BranchArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
     let config = load_config(paths.config_path().as_std_path())?;
     let cwd = cwd_utf8();
@@ -137,7 +137,7 @@ async fn delete_branch(paths: &AppPaths, args: BranchArgs) -> Result<(), RiptskE
     };
 
     if args.id.is_some() && is_protected_branch(&target_branch) {
-        return Err(RiptskError::General(format!(
+        return Err(RiptaskError::General(format!(
             "cannot delete protected branch: {target_branch}"
         )));
     }
@@ -146,7 +146,7 @@ async fn delete_branch(paths: &AppPaths, args: BranchArgs) -> Result<(), RiptskE
 
     let issue_path = match find_issue_for_branch(paths, &target_branch) {
         Ok(path) => Some(path),
-        Err(RiptskError::NotFound(_)) => None,
+        Err(RiptaskError::NotFound(_)) => None,
         Err(e) => return Err(e),
     };
     let (repo_project, default_branch) =
@@ -166,14 +166,14 @@ async fn delete_branch(paths: &AppPaths, args: BranchArgs) -> Result<(), RiptskE
     if !force {
         let local_exists = git.branch_exists(repo.as_path(), &target_branch)?;
         if !local_exists {
-            return Err(RiptskError::General(format!(
+            return Err(RiptaskError::General(format!(
                 "branch '{}' not found locally; cannot verify merge status for safe delete. Use -D to force",
                 target_branch
             )));
         }
         let base_ref = format!("origin/{default_branch}");
         if !git.is_branch_merged(repo.as_path(), &target_branch, &base_ref)? {
-            return Err(RiptskError::General(format!(
+            return Err(RiptaskError::General(format!(
                 "branch '{}' is not fully merged into '{}'; use -D to force",
                 target_branch, default_branch
             )));
@@ -207,7 +207,7 @@ async fn delete_branch(paths: &AppPaths, args: BranchArgs) -> Result<(), RiptskE
     tracing::info!(branch = %target_branch, backend = %repo_project.name, "remote branch deletion finished");
 
     if deleting_current && let Err(e) = git.checkout(repo.as_path(), &default_branch) {
-        return Err(RiptskError::General(format!(
+        return Err(RiptaskError::General(format!(
             "remote branch deleted but failed to switch to '{default_branch}': {e}. \
              Recover with: git checkout -b {default_branch} origin/{default_branch}"
         )));
@@ -224,7 +224,7 @@ async fn delete_branch(paths: &AppPaths, args: BranchArgs) -> Result<(), RiptskE
             crate::commands::issues::load_issue_or_conflict_error(path.as_std_path(), &id)?;
         issue.frontmatter.branch = None;
         issue.frontmatter.id_slug = None;
-        frontmatter::save_issue(path.as_std_path(), &issue).map_err(RiptskError::Other)?;
+        frontmatter::save_issue(path.as_std_path(), &issue).map_err(RiptaskError::Other)?;
         maybe_auto_commit(
             &config,
             &git,
@@ -245,7 +245,7 @@ fn resolve_delete_target(
     config: &Config,
     cwd: &camino::Utf8Path,
     input: &str,
-) -> Result<String, RiptskError> {
+) -> Result<String, RiptaskError> {
     if input.chars().all(|c| c.is_ascii_digit()) || input.contains("--") {
         let id = id_resolution::resolve_id(paths, config, cwd, input)?;
         let path = issue_store::find_issue(paths, &id)?;
@@ -253,7 +253,7 @@ fn resolve_delete_target(
         if let Some(branch) = issue.frontmatter.branch {
             return Ok(branch);
         }
-        return Err(RiptskError::General(format!(
+        return Err(RiptaskError::General(format!(
             "issue {id} has no associated branch"
         )));
     }
@@ -264,7 +264,7 @@ async fn resolve_backend_and_default(
     config: &Config,
     cwd: &camino::Utf8Path,
     issue_path: Option<&camino::Utf8PathBuf>,
-) -> Result<(RepoProject, String), RiptskError> {
+) -> Result<(RepoProject, String), RiptaskError> {
     let repo_project = if let Some(path) = issue_path {
         let id = path.file_stem().unwrap_or_default().to_string();
         let issue = crate::commands::issues::load_issue_or_conflict_error(path.as_std_path(), &id)?;
@@ -272,13 +272,13 @@ async fn resolve_backend_and_default(
             .projects
             .iter()
             .find(|rp| rp.name == issue.frontmatter.project)
-            .ok_or_else(|| RiptskError::Unregistered(issue.frontmatter.project.clone()))?
+            .ok_or_else(|| RiptaskError::Unregistered(issue.frontmatter.project.clone()))?
             .clone()
     } else {
         project_detection::detect_from_cwd(cwd, config)?
             .cloned()
             .ok_or_else(|| {
-                RiptskError::Config("cannot determine project for branch deletion".into())
+                RiptaskError::Config("cannot determine project for branch deletion".into())
             })?
     };
 
@@ -291,7 +291,7 @@ async fn resolve_backend_and_default(
 pub(crate) fn backend_issue_number(
     repo_project: &RepoProject,
     issue: &crate::domain::issue::IssueDocument,
-) -> Result<u64, RiptskError> {
+) -> Result<u64, RiptaskError> {
     match repo_project.tasks_backend.kind {
         BackendKind::Github => issue
             .frontmatter
@@ -311,7 +311,7 @@ pub(crate) fn backend_issue_number(
         BackendKind::Local => None,
     }
     .ok_or_else(|| {
-        RiptskError::Config(format!(
+        RiptaskError::Config(format!(
             "issue {} is missing backend metadata",
             issue.frontmatter.id
         ))

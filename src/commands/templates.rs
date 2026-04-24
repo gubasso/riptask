@@ -1,20 +1,20 @@
 use crate::adapters::prompts::{DialoguerPrompts, PromptBackend};
 use crate::cli::{TemplateArgs, TemplateSubcommand};
 use crate::config::load_config;
-use crate::error::RiptskError;
+use crate::error::RiptaskError;
 use crate::paths::AppPaths;
 use crate::services::templates::{TemplateService, seed_template};
 
-fn validate_template_name(name: &str) -> Result<(), RiptskError> {
+fn validate_template_name(name: &str) -> Result<(), RiptaskError> {
     if name.contains('/') || name.contains('\\') || name.contains("..") || name.is_empty() {
-        return Err(RiptskError::General(format!(
+        return Err(RiptaskError::General(format!(
             "invalid template name: {name}"
         )));
     }
     Ok(())
 }
 
-pub fn run(paths: &AppPaths, args: TemplateArgs) -> Result<(), RiptskError> {
+pub fn run(paths: &AppPaths, args: TemplateArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
     let config = load_config(paths.config_path().as_std_path())?;
     let service = TemplateService::new(paths, &config);
@@ -26,18 +26,20 @@ pub fn run(paths: &AppPaths, args: TemplateArgs) -> Result<(), RiptskError> {
             Ok(())
         }
         TemplateSubcommand::Show { name } => {
-            let name = name.ok_or_else(|| RiptskError::General("template name required".into()))?;
+            let name =
+                name.ok_or_else(|| RiptaskError::General("template name required".into()))?;
             validate_template_name(&name)?;
-            let document = service.load(&name).map_err(RiptskError::Other)?;
+            let document = service.load(&name).map_err(RiptaskError::Other)?;
             println!("{}", document.body);
             Ok(())
         }
         TemplateSubcommand::New { name } => {
-            let name = name.ok_or_else(|| RiptskError::General("template name required".into()))?;
+            let name =
+                name.ok_or_else(|| RiptaskError::General("template name required".into()))?;
             validate_template_name(&name)?;
             let path = paths.templates_dir().join(format!("{name}.md"));
             if path.exists() {
-                return Err(RiptskError::Config(format!(
+                return Err(RiptaskError::Config(format!(
                     "template already exists: {name}"
                 )));
             }
@@ -47,22 +49,24 @@ pub fn run(paths: &AppPaths, args: TemplateArgs) -> Result<(), RiptskError> {
             Ok(())
         }
         TemplateSubcommand::Edit { name } => {
-            let name = name.ok_or_else(|| RiptskError::General("template name required".into()))?;
+            let name =
+                name.ok_or_else(|| RiptaskError::General("template name required".into()))?;
             validate_template_name(&name)?;
             let path = paths.templates_dir().join(format!("{name}.md"));
             if !path.exists() {
-                return Err(RiptskError::NotFound(format!("template {name}")));
+                return Err(RiptaskError::NotFound(format!("template {name}")));
             }
             open_in_editor(path.as_std_path())?;
             service.validate_file(path.as_std_path())?;
             Ok(())
         }
         TemplateSubcommand::Rm { name } => {
-            let name = name.ok_or_else(|| RiptskError::General("template name required".into()))?;
+            let name =
+                name.ok_or_else(|| RiptaskError::General("template name required".into()))?;
             validate_template_name(&name)?;
             let path = paths.templates_dir().join(format!("{name}.md"));
             if !path.exists() {
-                return Err(RiptskError::NotFound(format!("template {name}")));
+                return Err(RiptaskError::NotFound(format!("template {name}")));
             }
             let prompts = DialoguerPrompts;
             if prompts.confirm(&format!("Remove template \"{name}\"?"), false)? {
@@ -75,7 +79,7 @@ pub fn run(paths: &AppPaths, args: TemplateArgs) -> Result<(), RiptskError> {
                 validate_template_name(&name)?;
                 let path = paths.templates_dir().join(format!("{name}.md"));
                 if !path.exists() {
-                    return Err(RiptskError::NotFound(format!("template {name}")));
+                    return Err(RiptaskError::NotFound(format!("template {name}")));
                 }
                 service.validate_file(path.as_std_path())?;
                 crate::ui::success(&format!("{name}: valid"));
@@ -91,11 +95,11 @@ pub fn run(paths: &AppPaths, args: TemplateArgs) -> Result<(), RiptskError> {
     }
 }
 
-fn open_in_editor(path: &std::path::Path) -> Result<(), RiptskError> {
+fn open_in_editor(path: &std::path::Path) -> Result<(), RiptaskError> {
     let status = crate::services::editor::open_in_editor(path)?;
     if status.success() {
         Ok(())
     } else {
-        Err(RiptskError::General("editor exited unsuccessfully".into()))
+        Err(RiptaskError::General("editor exited unsuccessfully".into()))
     }
 }

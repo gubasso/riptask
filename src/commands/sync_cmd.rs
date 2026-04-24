@@ -4,7 +4,7 @@ use crate::cli::{
 };
 use crate::config::{Config, load_config};
 use crate::domain::session::SessionState;
-use crate::error::RiptskError;
+use crate::error::RiptaskError;
 use crate::models::{BackendKind, RepoProject};
 use crate::paths::AppPaths;
 use crate::services::auto_commit::maybe_auto_commit;
@@ -18,7 +18,7 @@ use console::style;
 use std::collections::HashSet;
 use std::io::IsTerminal;
 
-pub async fn run(paths: &AppPaths, args: SyncArgs) -> Result<(), RiptskError> {
+pub async fn run(paths: &AppPaths, args: SyncArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
     match args.subcommand.clone() {
         Some(SyncSubcommand::Pull(subargs)) => pull(paths, &args, &subargs).await,
@@ -37,7 +37,7 @@ async fn pull(
     paths: &AppPaths,
     args: &SyncArgs,
     subargs: &SyncPullPushArgs,
-) -> Result<(), RiptskError> {
+) -> Result<(), RiptaskError> {
     let config = load_config(paths.config_path().as_std_path())?;
     let engine = SyncEngine::new(paths, &config);
     for repo_project in resolve_sync_projects(args, &config)? {
@@ -95,7 +95,7 @@ async fn push(
     paths: &AppPaths,
     args: &SyncArgs,
     subargs: &SyncPullPushArgs,
-) -> Result<(), RiptskError> {
+) -> Result<(), RiptaskError> {
     let config = load_config(paths.config_path().as_std_path())?;
     let engine = SyncEngine::new(paths, &config);
     let cwd = camino::Utf8PathBuf::from(
@@ -168,7 +168,7 @@ async fn push(
     Ok(())
 }
 
-fn status(paths: &AppPaths, args: &SyncArgs) -> Result<(), RiptskError> {
+fn status(paths: &AppPaths, args: &SyncArgs) -> Result<(), RiptaskError> {
     let config = load_config(paths.config_path().as_std_path())?;
     let repo_projects = resolve_sync_projects(args, &config)?;
     let project_names = repo_projects
@@ -219,7 +219,7 @@ fn status(paths: &AppPaths, args: &SyncArgs) -> Result<(), RiptskError> {
 fn resolve_sync_projects<'a>(
     args: &SyncArgs,
     config: &'a Config,
-) -> Result<Vec<&'a RepoProject>, RiptskError> {
+) -> Result<Vec<&'a RepoProject>, RiptaskError> {
     if let Some(name) = args.backend.as_deref() {
         return Ok(hosted_projects(config)
             .into_iter()
@@ -239,7 +239,7 @@ fn resolve_sync_projects<'a>(
                     .projects
                     .iter()
                     .find(|repo_project| repo_project.name == *project)
-                    .ok_or_else(|| RiptskError::Unregistered(project.clone()))
+                    .ok_or_else(|| RiptaskError::Unregistered(project.clone()))
             })
             .map(|result| {
                 result.and_then(|repo_project| {
@@ -249,7 +249,7 @@ fn resolve_sync_projects<'a>(
                     ) {
                         Ok(repo_project)
                     } else {
-                        Err(RiptskError::Config(format!(
+                        Err(RiptaskError::Config(format!(
                             "sync target must be github, gitlab, or jira: {}",
                             repo_project.name
                         )))
@@ -278,7 +278,7 @@ fn resolve_sync_projects<'a>(
         return Ok(vec![candidate]);
     }
 
-    Err(RiptskError::Config(
+    Err(RiptaskError::Config(
         "could not detect project from current directory; use -p <project>, --backend <name>, or -a to target all projects".into(),
     ))
 }
@@ -287,7 +287,7 @@ fn issue_matches_project_scope(
     paths: &AppPaths,
     id: &str,
     project_names: &HashSet<&str>,
-) -> Result<bool, RiptskError> {
+) -> Result<bool, RiptaskError> {
     let path = crate::storage::issue_store::find_issue(paths, id)?;
     match crate::storage::frontmatter::try_load_issue(path.as_std_path()) {
         crate::storage::frontmatter::IssueLoadResult::Ok(issue) => {
@@ -309,7 +309,7 @@ fn issue_matches_project_scope(
             }
             Ok(false)
         }
-        crate::storage::frontmatter::IssueLoadResult::Err(error) => Err(RiptskError::Other(error)),
+        crate::storage::frontmatter::IssueLoadResult::Err(error) => Err(RiptaskError::Other(error)),
     }
 }
 
@@ -348,7 +348,7 @@ fn collect_push_paths(
     paths: &AppPaths,
     repo_project: &RepoProject,
     ids: &[String],
-) -> Result<Vec<camino::Utf8PathBuf>, RiptskError> {
+) -> Result<Vec<camino::Utf8PathBuf>, RiptaskError> {
     if !ids.is_empty() {
         let mut paths_to_push = Vec::new();
         for path in ids
@@ -362,7 +362,7 @@ fn collect_push_paths(
                     eprintln!("skipping {id}: unresolved sync conflict (tsk sync resolve {id})");
                     continue;
                 }
-                frontmatter::IssueLoadResult::Err(error) => return Err(RiptskError::Other(error)),
+                frontmatter::IssueLoadResult::Err(error) => return Err(RiptaskError::Other(error)),
             };
             if issue.frontmatter.project == repo_project.name {
                 paths_to_push.push(path);
@@ -376,7 +376,7 @@ fn collect_push_paths(
         let issue = match frontmatter::try_load_issue(path.as_std_path()) {
             frontmatter::IssueLoadResult::Ok(issue) => issue,
             frontmatter::IssueLoadResult::Conflict { .. } => continue,
-            frontmatter::IssueLoadResult::Err(error) => return Err(RiptskError::Other(error)),
+            frontmatter::IssueLoadResult::Err(error) => return Err(RiptaskError::Other(error)),
         };
         if issue.frontmatter.project != repo_project.name {
             continue;
@@ -418,9 +418,9 @@ fn sync_repo(repo_project: &RepoProject) -> Option<String> {
     }
 }
 
-pub fn resolve(paths: &AppPaths, args: ResolveArgs) -> Result<(), RiptskError> {
+pub fn resolve(paths: &AppPaths, args: ResolveArgs) -> Result<(), RiptaskError> {
     if args.take_remote && args.take_local {
-        return Err(RiptskError::General(
+        return Err(RiptaskError::General(
             "cannot specify both --take-remote and --take-local".into(),
         ));
     }
@@ -437,13 +437,13 @@ pub fn resolve(paths: &AppPaths, args: ResolveArgs) -> Result<(), RiptskError> {
     let remote_backup = crate::storage::issue_store::remote_backup_path(paths, &id);
     if args.take_remote {
         if !remote_backup.exists() {
-            return Err(RiptskError::Conflict(format!("no remote backup for {id}")));
+            return Err(RiptaskError::Conflict(format!("no remote backup for {id}")));
         }
         std::fs::copy(&remote_backup, &path)?;
         crate::storage::issue_store::delete_conflict_backups(paths, &id)?;
     } else if args.take_local {
         if !local_backup.exists() {
-            return Err(RiptskError::Conflict(format!("no local backup for {id}")));
+            return Err(RiptaskError::Conflict(format!("no local backup for {id}")));
         }
         std::fs::copy(&local_backup, &path)?;
         crate::storage::issue_store::delete_conflict_backups(paths, &id)?;
@@ -451,13 +451,13 @@ pub fn resolve(paths: &AppPaths, args: ResolveArgs) -> Result<(), RiptskError> {
     } else {
         let content = std::fs::read_to_string(&path)?;
         if crate::storage::frontmatter::has_conflict_markers(&content) {
-            return Err(RiptskError::Conflict(format!(
+            return Err(RiptaskError::Conflict(format!(
                 "issue {id} still has unresolved conflict markers"
             )));
         }
         // Validate the file parses before deleting backups
         crate::storage::frontmatter::load_issue(path.as_std_path()).map_err(|_| {
-            RiptskError::Conflict(format!(
+            RiptaskError::Conflict(format!(
                 "issue {id} has invalid frontmatter after conflict resolution; backups preserved"
             ))
         })?;
@@ -466,20 +466,20 @@ pub fn resolve(paths: &AppPaths, args: ResolveArgs) -> Result<(), RiptskError> {
     }
     crate::services::view_builder::ViewBuilder::new(paths, &config)
         .regenerate_all(None)
-        .map_err(RiptskError::Other)?;
+        .map_err(RiptaskError::Other)?;
     Ok(())
 }
 
-fn bump_local_updated_at(path: &camino::Utf8PathBuf) -> Result<(), RiptskError> {
+fn bump_local_updated_at(path: &camino::Utf8PathBuf) -> Result<(), RiptaskError> {
     let mut issue =
-        crate::storage::frontmatter::load_issue(path.as_std_path()).map_err(RiptskError::Other)?;
+        crate::storage::frontmatter::load_issue(path.as_std_path()).map_err(RiptaskError::Other)?;
     issue.frontmatter.local_updated_at = crate::services::issue_service::now_utc();
     crate::storage::frontmatter::save_issue(path.as_std_path(), &issue)
-        .map_err(RiptskError::Other)?;
+        .map_err(RiptaskError::Other)?;
     Ok(())
 }
 
-pub fn session(paths: &AppPaths, args: SessionArgs) -> Result<(), RiptskError> {
+pub fn session(paths: &AppPaths, args: SessionArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
     match args.subcommand {
         SessionSubcommand::Start(args) => session_start(paths, args),
@@ -487,7 +487,7 @@ pub fn session(paths: &AppPaths, args: SessionArgs) -> Result<(), RiptskError> {
     }
 }
 
-pub fn commit(paths: &AppPaths, args: StoreCommitArgs) -> Result<(), RiptskError> {
+pub fn commit(paths: &AppPaths, args: StoreCommitArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
     let git = CliGit::new();
     let repo = paths.riptsk_repo.as_std_path().to_path_buf();
@@ -515,18 +515,18 @@ pub fn commit(paths: &AppPaths, args: StoreCommitArgs) -> Result<(), RiptskError
             .arg(&message)
             .status()
             .context("failed to run git commit")
-            .map_err(RiptskError::Other)?;
+            .map_err(RiptaskError::Other)?;
         if !status.success() {
-            return Err(RiptskError::General("git commit failed".into()));
+            return Err(RiptaskError::General("git commit failed".into()));
         }
         return Ok(());
     }
     git.commit(repo.as_path(), &message)
 }
 
-fn session_start(paths: &AppPaths, args: SessionStartArgs) -> Result<(), RiptskError> {
+fn session_start(paths: &AppPaths, args: SessionStartArgs) -> Result<(), RiptaskError> {
     if session_store::load_session(paths.session_state_path().as_std_path())?.is_some() {
-        return Err(RiptskError::Conflict("session already active".into()));
+        return Err(RiptaskError::Conflict("session already active".into()));
     }
     let SessionStartArgs { scope, id } = args;
     let config = load_config(paths.config_path().as_std_path())?;
@@ -559,7 +559,7 @@ fn session_start(paths: &AppPaths, args: SessionStartArgs) -> Result<(), RiptskE
         }
         issue.frontmatter.branch = Some(branch.clone());
         crate::storage::frontmatter::save_issue(path.as_std_path(), &issue)
-            .map_err(RiptskError::Other)?;
+            .map_err(RiptaskError::Other)?;
         branch
     };
     session_store::save_session(
@@ -575,10 +575,10 @@ fn session_start(paths: &AppPaths, args: SessionStartArgs) -> Result<(), RiptskE
     Ok(())
 }
 
-fn session_end(paths: &AppPaths) -> Result<(), RiptskError> {
+fn session_end(paths: &AppPaths) -> Result<(), RiptaskError> {
     let Some(session) = session_store::load_session(paths.session_state_path().as_std_path())?
     else {
-        return Err(RiptskError::NotFound("no active session".into()));
+        return Err(RiptaskError::NotFound("no active session".into()));
     };
     let git = CliGit::new();
     let repo = current_repo()?;
@@ -590,6 +590,6 @@ fn session_end(paths: &AppPaths) -> Result<(), RiptskError> {
     Ok(())
 }
 
-fn current_repo() -> Result<std::path::PathBuf, RiptskError> {
-    std::env::current_dir().map_err(RiptskError::from)
+fn current_repo() -> Result<std::path::PathBuf, RiptaskError> {
+    std::env::current_dir().map_err(RiptaskError::from)
 }

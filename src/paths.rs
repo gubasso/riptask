@@ -1,4 +1,4 @@
-use crate::error::RiptskError;
+use crate::error::RiptaskError;
 use anyhow::{Context, Result};
 use camino::Utf8PathBuf;
 use std::fs;
@@ -65,9 +65,9 @@ impl AppPaths {
         Ok(())
     }
 
-    pub fn require_initialized(&self) -> Result<(), RiptskError> {
+    pub fn require_initialized(&self) -> Result<(), RiptaskError> {
         if !self.config_path().exists() {
-            return Err(RiptskError::General(
+            return Err(RiptaskError::General(
                 "not initialized — run 'tsk init' first".into(),
             ));
         }

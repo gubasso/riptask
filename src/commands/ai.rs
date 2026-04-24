@@ -1,13 +1,13 @@
 use crate::adapters::ai::{AiBackend, GeneratedIssueContent, TemplateAiBackend};
 use crate::cli::{AskArgs, SummarizeArgs};
 use crate::config::load_config;
-use crate::error::RiptskError;
+use crate::error::RiptaskError;
 use crate::paths::AppPaths;
 use crate::storage::{frontmatter, issue_store};
 
 pub(crate) const AI_BACKEND_MISSING: &str = "ai.command is not configured";
 
-pub fn summarize(paths: &AppPaths, args: SummarizeArgs) -> Result<(), RiptskError> {
+pub fn summarize(paths: &AppPaths, args: SummarizeArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
     let config = load_config(paths.config_path().as_std_path())?;
     if !config.ai.enabled || !config.ai.features.summarize {
@@ -26,7 +26,7 @@ pub fn summarize(paths: &AppPaths, args: SummarizeArgs) -> Result<(), RiptskErro
         let issue = match frontmatter::try_load_issue(path.as_std_path()) {
             frontmatter::IssueLoadResult::Ok(issue) => issue,
             frontmatter::IssueLoadResult::Conflict { .. } => continue,
-            frontmatter::IssueLoadResult::Err(error) => return Err(RiptskError::Other(error)),
+            frontmatter::IssueLoadResult::Err(error) => return Err(RiptaskError::Other(error)),
         };
         if let Some(project) = args.project.as_deref()
             && issue.frontmatter.project != project
@@ -56,7 +56,7 @@ pub fn summarize(paths: &AppPaths, args: SummarizeArgs) -> Result<(), RiptskErro
     Ok(())
 }
 
-pub fn ask(paths: &AppPaths, args: AskArgs) -> Result<(), RiptskError> {
+pub fn ask(paths: &AppPaths, args: AskArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
     let config = load_config(paths.config_path().as_std_path())?;
     if !config.ai.enabled || !config.ai.features.ask {
@@ -75,7 +75,7 @@ pub fn ask(paths: &AppPaths, args: AskArgs) -> Result<(), RiptskError> {
         let issue = match frontmatter::try_load_issue(path.as_std_path()) {
             frontmatter::IssueLoadResult::Ok(issue) => issue,
             frontmatter::IssueLoadResult::Conflict { .. } => continue,
-            frontmatter::IssueLoadResult::Err(error) => return Err(RiptskError::Other(error)),
+            frontmatter::IssueLoadResult::Err(error) => return Err(RiptaskError::Other(error)),
         };
         context.push_str(&format!(
             "{} {}\n{}\n\n",
@@ -94,11 +94,11 @@ pub fn ask(paths: &AppPaths, args: AskArgs) -> Result<(), RiptskError> {
     Ok(())
 }
 
-pub fn generate_body(paths: &AppPaths, title: &str, project: &str) -> Result<String, RiptskError> {
+pub fn generate_body(paths: &AppPaths, title: &str, project: &str) -> Result<String, RiptaskError> {
     paths.require_initialized()?;
     let config = load_config(paths.config_path().as_std_path())?;
     if !config.ai.features.new_body_gen {
-        return Err(RiptskError::General("AI features disabled".into()));
+        return Err(RiptaskError::General("AI features disabled".into()));
     }
     let backend = backend(&config)?;
     backend.generate_body(&format!("Title: {title}\n\nContext:\n{project}"))
@@ -107,18 +107,18 @@ pub fn generate_body(paths: &AppPaths, title: &str, project: &str) -> Result<Str
 pub fn generate_issue_content(
     paths: &AppPaths,
     context: &str,
-) -> Result<GeneratedIssueContent, RiptskError> {
+) -> Result<GeneratedIssueContent, RiptaskError> {
     paths.require_initialized()?;
     let config = load_config(paths.config_path().as_std_path())?;
     if !config.ai.features.new_body_gen {
-        return Err(RiptskError::General("AI features disabled".into()));
+        return Err(RiptaskError::General("AI features disabled".into()));
     }
     let backend = backend(&config)?;
     backend.generate_issue_content(context)
 }
 
-fn backend(config: &crate::config::Config) -> Result<TemplateAiBackend, RiptskError> {
-    optional_backend(config).ok_or_else(|| RiptskError::Config(AI_BACKEND_MISSING.into()))
+fn backend(config: &crate::config::Config) -> Result<TemplateAiBackend, RiptaskError> {
+    optional_backend(config).ok_or_else(|| RiptaskError::Config(AI_BACKEND_MISSING.into()))
 }
 
 pub(crate) fn optional_backend(config: &crate::config::Config) -> Option<TemplateAiBackend> {

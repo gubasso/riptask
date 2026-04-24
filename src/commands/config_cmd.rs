@@ -1,10 +1,10 @@
 use crate::cli::{ConfigArgs, ConfigSubcommand};
 use crate::config::{config_set, load_config, save_config};
-use crate::error::RiptskError;
+use crate::error::RiptaskError;
 use crate::paths::AppPaths;
 use std::fs;
 
-pub fn run(paths: &AppPaths, args: ConfigArgs) -> Result<(), RiptskError> {
+pub fn run(paths: &AppPaths, args: ConfigArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
     match args.subcommand {
         None => {

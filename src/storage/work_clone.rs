@@ -1,5 +1,5 @@
 use crate::domain::work_clone::WorkCloneMarker;
-use crate::error::RiptskError;
+use crate::error::RiptaskError;
 use anyhow::Context;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -8,22 +8,22 @@ pub fn marker_path(repo_root: &Path) -> PathBuf {
     repo_root.join(".git").join("tsk-work-clone.json")
 }
 
-pub fn load_marker(repo_root: &Path) -> Result<Option<WorkCloneMarker>, RiptskError> {
+pub fn load_marker(repo_root: &Path) -> Result<Option<WorkCloneMarker>, RiptaskError> {
     let path = marker_path(repo_root);
     match fs::read_to_string(&path) {
         Ok(content) => serde_json::from_str(&content)
             .map(Some)
             .with_context(|| format!("failed to parse {}", path.display()))
-            .map_err(RiptskError::Other),
+            .map_err(RiptaskError::Other),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error.into()),
     }
 }
 
-pub fn save_marker(repo_root: &Path, marker: &WorkCloneMarker) -> Result<(), RiptskError> {
+pub fn save_marker(repo_root: &Path, marker: &WorkCloneMarker) -> Result<(), RiptaskError> {
     let path = marker_path(repo_root);
     let content =
-        serde_json::to_string_pretty(marker).map_err(|error| RiptskError::Other(error.into()))?;
+        serde_json::to_string_pretty(marker).map_err(|error| RiptaskError::Other(error.into()))?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }

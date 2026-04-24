@@ -3,7 +3,7 @@ use crate::cli::CloneArgs;
 use crate::commands::branch::{backend_issue_number, cwd_utf8};
 use crate::config::load_config;
 use crate::domain::work_clone::WorkCloneMarker;
-use crate::error::RiptskError;
+use crate::error::RiptaskError;
 use crate::models::BackendKind;
 use crate::paths::AppPaths;
 use crate::services::auto_commit::maybe_auto_commit;
@@ -12,7 +12,7 @@ use crate::services::id_resolution;
 use crate::services::issue_service::generate_branch_slug;
 use crate::storage::{frontmatter, issue_store, work_clone};
 
-pub async fn run(paths: &AppPaths, args: CloneArgs) -> Result<(), RiptskError> {
+pub async fn run(paths: &AppPaths, args: CloneArgs) -> Result<(), RiptaskError> {
     paths.require_initialized()?;
     let config = load_config(paths.config_path().as_std_path())?;
     let cwd = cwd_utf8();
@@ -28,9 +28,9 @@ pub async fn run(paths: &AppPaths, args: CloneArgs) -> Result<(), RiptskError> {
         .projects
         .iter()
         .find(|rp| rp.name == issue.frontmatter.project)
-        .ok_or_else(|| RiptskError::Unregistered(issue.frontmatter.project.clone()))?;
+        .ok_or_else(|| RiptaskError::Unregistered(issue.frontmatter.project.clone()))?;
     if repo_project.vc_backend.kind == BackendKind::Local {
-        return Err(RiptskError::Config(
+        return Err(RiptaskError::Config(
             "cannot create remote branch for local-only project".into(),
         ));
     }
@@ -71,7 +71,7 @@ pub async fn run(paths: &AppPaths, args: CloneArgs) -> Result<(), RiptskError> {
 
     issue.frontmatter.id_slug = Some(slug.clone());
     issue.frontmatter.branch = Some(slug.clone());
-    frontmatter::save_issue(path.as_std_path(), &issue).map_err(RiptskError::Other)?;
+    frontmatter::save_issue(path.as_std_path(), &issue).map_err(RiptaskError::Other)?;
     maybe_auto_commit(
         &config,
         &git,
@@ -87,16 +87,16 @@ pub async fn run(paths: &AppPaths, args: CloneArgs) -> Result<(), RiptskError> {
     let remote_url = git.remote_url(repo_root.as_path(), "origin")?;
     let parent = repo_root
         .parent()
-        .ok_or_else(|| RiptskError::General("repository root has no parent directory".into()))?;
+        .ok_or_else(|| RiptaskError::General("repository root has no parent directory".into()))?;
     let repo_dir_name = repo_root
         .file_name()
         .and_then(|value| value.to_str())
         .ok_or_else(|| {
-            RiptskError::General("repository root has no valid directory name".into())
+            RiptaskError::General("repository root has no valid directory name".into())
         })?;
     let target_path = parent.join(format!("{repo_dir_name}.{slug}"));
     if target_path.exists() {
-        return Err(RiptskError::General(format!(
+        return Err(RiptaskError::General(format!(
             "work-clone target already exists: {}",
             target_path.display()
         )));

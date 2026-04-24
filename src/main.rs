@@ -2,7 +2,7 @@ use anyhow::Context;
 use clap::FromArgMatches;
 use riptask::cli::{Cli, Commands, CompletionShell, root_command};
 use riptask::commands;
-use riptask::error::RiptskError;
+use riptask::error::RiptaskError;
 use riptask::paths::AppPaths;
 use std::fs;
 use std::process::ExitCode;
@@ -24,7 +24,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn run() -> Result<(), RiptskError> {
+fn run() -> Result<(), RiptaskError> {
     let matches = root_command().get_matches();
     let cli = Cli::from_arg_matches(&matches).map_err(anyhow::Error::from)?;
     let paths = AppPaths::from_env().context("failed to resolve application paths")?;
@@ -79,7 +79,7 @@ fn run() -> Result<(), RiptskError> {
                     println!();
                     Ok(())
                 } else {
-                    Err(RiptskError::General(format!("unknown command: {command}")))
+                    Err(RiptaskError::General(format!("unknown command: {command}")))
                 }
             } else {
                 let mut root = root_command();

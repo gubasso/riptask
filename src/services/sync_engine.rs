@@ -3,7 +3,7 @@ use crate::adapters::git::{CliGit, GitBackend};
 use crate::config::Config;
 use crate::domain::backend_state::backend_state_key;
 use crate::domain::issue::IssueDocument;
-use crate::error::RiptskError;
+use crate::error::RiptaskError;
 use crate::models::{BackendKind, RepoProject};
 use crate::paths::AppPaths;
 use crate::services::backend_mapping;
@@ -57,11 +57,11 @@ impl<'a> SyncEngine<'a> {
         force: bool,
         filter_ids: Option<&HashSet<String>>,
         force_ids: Option<&HashSet<String>>,
-    ) -> Result<PullSummary, RiptskError> {
+    ) -> Result<PullSummary, RiptaskError> {
         let repo = sync_repo(repo_project)?;
         let mut backend_state =
-            cache::load_backend_state(self.paths).map_err(RiptskError::Other)?;
-        let deleted_keys = cache::load_deleted_keys(self.paths).map_err(RiptskError::Other)?;
+            cache::load_backend_state(self.paths).map_err(RiptaskError::Other)?;
+        let deleted_keys = cache::load_deleted_keys(self.paths).map_err(RiptaskError::Other)?;
         let records = provider.list_issues(&repo).await?;
         let mut summary = PullSummary::default();
         let mut seen_ids = HashSet::new();
@@ -88,7 +88,7 @@ impl<'a> SyncEngine<'a> {
                         continue;
                     }
                     frontmatter::IssueLoadResult::Err(error) => {
-                        return Err(RiptskError::Other(error));
+                        return Err(RiptaskError::Other(error));
                     }
                 };
                 let local_changed = cached
@@ -109,7 +109,7 @@ impl<'a> SyncEngine<'a> {
                 } else if remote_changed {
                     update_issue_from_backend(&mut issue, &record, repo_project);
                     frontmatter::save_issue(path.as_std_path(), &issue)
-                        .map_err(RiptskError::Other)?;
+                        .map_err(RiptaskError::Other)?;
                     summary.updated.push(issue.frontmatter.id.clone());
                 }
             } else {
@@ -119,7 +119,7 @@ impl<'a> SyncEngine<'a> {
                     .issues_dir()
                     .join(format!("{}.md", document.frontmatter.id));
                 frontmatter::save_issue(path.as_std_path(), &document)
-                    .map_err(RiptskError::Other)?;
+                    .map_err(RiptaskError::Other)?;
                 summary.created.push(document.frontmatter.id.clone());
             }
 
@@ -132,7 +132,7 @@ impl<'a> SyncEngine<'a> {
                     frontmatter::IssueLoadResult::Ok(issue) => issue,
                     frontmatter::IssueLoadResult::Conflict { .. } => continue,
                     frontmatter::IssueLoadResult::Err(error) => {
-                        return Err(RiptskError::Other(error));
+                        return Err(RiptaskError::Other(error));
                     }
                 };
                 // Limit the deletion sweep to issues that belong to THIS
@@ -176,7 +176,7 @@ impl<'a> SyncEngine<'a> {
             }
         }
 
-        cache::save_backend_state(self.paths, &backend_state).map_err(RiptskError::Other)?;
+        cache::save_backend_state(self.paths, &backend_state).map_err(RiptaskError::Other)?;
         Ok(summary)
     }
 
@@ -184,7 +184,7 @@ impl<'a> SyncEngine<'a> {
         &self,
         provider: &P,
         repo_project: &RepoProject,
-    ) -> Result<PushSummary, RiptskError> {
+    ) -> Result<PushSummary, RiptaskError> {
         let issue_paths = issue_store::list_issues(self.paths)?;
         self.push_inner(provider, repo_project, &issue_paths, true)
             .await
@@ -195,14 +195,14 @@ impl<'a> SyncEngine<'a> {
         provider: &P,
         repo_project: &RepoProject,
         issue_paths: &[camino::Utf8PathBuf],
-    ) -> Result<PushSummary, RiptskError> {
+    ) -> Result<PushSummary, RiptaskError> {
         self.push_inner(provider, repo_project, issue_paths, false)
             .await
     }
 
-    pub fn status(&self) -> Result<StatusSummary, RiptskError> {
-        let backend_state = cache::load_backend_state(self.paths).map_err(RiptskError::Other)?;
-        let deleted_keys = cache::load_deleted_keys(self.paths).map_err(RiptskError::Other)?;
+    pub fn status(&self) -> Result<StatusSummary, RiptaskError> {
+        let backend_state = cache::load_backend_state(self.paths).map_err(RiptaskError::Other)?;
+        let deleted_keys = cache::load_deleted_keys(self.paths).map_err(RiptaskError::Other)?;
         let mut summary = StatusSummary::default();
 
         for path in issue_store::list_issues(self.paths)? {
@@ -212,7 +212,7 @@ impl<'a> SyncEngine<'a> {
                     summary.conflicts.push(id);
                     continue;
                 }
-                frontmatter::IssueLoadResult::Err(error) => return Err(RiptskError::Other(error)),
+                frontmatter::IssueLoadResult::Err(error) => return Err(RiptaskError::Other(error)),
             };
 
             let Some(repo_project) = self.project_for_name(&issue.frontmatter.project) else {
@@ -247,11 +247,11 @@ impl<'a> SyncEngine<'a> {
         repo_project: &RepoProject,
         issue_paths: &[camino::Utf8PathBuf],
         include_deletes: bool,
-    ) -> Result<PushSummary, RiptskError> {
+    ) -> Result<PushSummary, RiptaskError> {
         let repo = sync_repo(repo_project)?;
         let mut backend_state =
-            cache::load_backend_state(self.paths).map_err(RiptskError::Other)?;
-        let mut deleted_keys = cache::load_deleted_keys(self.paths).map_err(RiptskError::Other)?;
+            cache::load_backend_state(self.paths).map_err(RiptaskError::Other)?;
+        let mut deleted_keys = cache::load_deleted_keys(self.paths).map_err(RiptaskError::Other)?;
         let mut summary = PushSummary::default();
 
         for path in issue_paths {
@@ -261,7 +261,7 @@ impl<'a> SyncEngine<'a> {
                     summary.skipped.push(id);
                     continue;
                 }
-                frontmatter::IssueLoadResult::Err(error) => return Err(RiptskError::Other(error)),
+                frontmatter::IssueLoadResult::Err(error) => return Err(RiptaskError::Other(error)),
             };
             if issue.frontmatter.project != repo_project.name || issue.frontmatter.remote_deleted {
                 continue;
@@ -310,7 +310,7 @@ impl<'a> SyncEngine<'a> {
                 let mut updated = issue;
                 update_issue_from_backend(&mut updated, &record, repo_project);
                 frontmatter::save_issue(path.as_std_path(), &updated)
-                    .map_err(RiptskError::Other)?;
+                    .map_err(RiptaskError::Other)?;
                 backend_state.insert(key, backend_state_entry(&record));
                 summary.updated.push(updated.frontmatter.id.clone());
                 continue;
@@ -338,7 +338,7 @@ impl<'a> SyncEngine<'a> {
 
             let mut created = issue;
             update_issue_from_backend(&mut created, &record, repo_project);
-            frontmatter::save_issue(path.as_std_path(), &created).map_err(RiptskError::Other)?;
+            frontmatter::save_issue(path.as_std_path(), &created).map_err(RiptaskError::Other)?;
             backend_state.insert(
                 backend_state_key(provider_name(repo_project), &repo, record.issue_id),
                 backend_state_entry(&record),
@@ -365,8 +365,8 @@ impl<'a> SyncEngine<'a> {
             }
         }
 
-        cache::save_backend_state(self.paths, &backend_state).map_err(RiptskError::Other)?;
-        cache::save_deleted_keys(self.paths, &deleted_keys).map_err(RiptskError::Other)?;
+        cache::save_backend_state(self.paths, &backend_state).map_err(RiptaskError::Other)?;
+        cache::save_deleted_keys(self.paths, &deleted_keys).map_err(RiptaskError::Other)?;
         Ok(summary)
     }
 
@@ -374,7 +374,7 @@ impl<'a> SyncEngine<'a> {
         &self,
         repo_project: &RepoProject,
         issue_id: u64,
-    ) -> Result<Option<camino::Utf8PathBuf>, RiptskError> {
+    ) -> Result<Option<camino::Utf8PathBuf>, RiptaskError> {
         let exact_id = issue_ids::format_id(&issue_ids::effective_key(repo_project), issue_id);
         if let Ok(path) = issue_store::find_issue(self.paths, &exact_id) {
             return Ok(Some(path));
@@ -384,7 +384,7 @@ impl<'a> SyncEngine<'a> {
             let issue = match frontmatter::try_load_issue(path.as_std_path()) {
                 frontmatter::IssueLoadResult::Ok(issue) => issue,
                 frontmatter::IssueLoadResult::Conflict { .. } => continue,
-                frontmatter::IssueLoadResult::Err(error) => return Err(RiptskError::Other(error)),
+                frontmatter::IssueLoadResult::Err(error) => return Err(RiptaskError::Other(error)),
             };
             let matches = match repo_project.tasks_backend.kind {
                 BackendKind::Github => issue.frontmatter.github.as_ref().is_some_and(|meta| {
@@ -430,7 +430,7 @@ impl<'a> SyncEngine<'a> {
         record: &BackendIssueRecord,
         issue: &IssueDocument,
         issue_path: &camino::Utf8PathBuf,
-    ) -> Result<(), RiptskError> {
+    ) -> Result<(), RiptaskError> {
         let local_path = issue_store::local_backup_path(self.paths, &issue.frontmatter.id);
         fs::copy(issue_path, &local_path)?;
 
@@ -438,10 +438,10 @@ impl<'a> SyncEngine<'a> {
         copy_local_only_fields(&mut remote_doc.frontmatter, &issue.frontmatter);
         let remote_path = issue_store::remote_backup_path(self.paths, &issue.frontmatter.id);
         frontmatter::save_issue(remote_path.as_std_path(), &remote_doc)
-            .map_err(RiptskError::Other)?;
+            .map_err(RiptaskError::Other)?;
 
         let empty_base =
-            tempfile::NamedTempFile::new_in(self.paths.issues_dir()).map_err(RiptskError::Io)?;
+            tempfile::NamedTempFile::new_in(self.paths.issues_dir()).map_err(RiptaskError::Io)?;
         let merged = CliGit::new().merge_file(
             local_path.as_std_path(),
             empty_base.path(),
@@ -458,7 +458,7 @@ async fn sync_lock_state<P: IssueTracker + ?Sized>(
     issue_id: u64,
     issue: &IssueDocument,
     record: &BackendIssueRecord,
-) -> Result<(), RiptskError> {
+) -> Result<(), RiptaskError> {
     let desired_locked = issue
         .frontmatter
         .locked
@@ -517,11 +517,11 @@ fn issue_backend_key(issue: &IssueDocument, repo_project: &RepoProject) -> Optio
     ))
 }
 
-fn sync_repo(repo_project: &RepoProject) -> Result<String, RiptskError> {
+fn sync_repo(repo_project: &RepoProject) -> Result<String, RiptaskError> {
     match repo_project.tasks_backend.kind {
         BackendKind::Github | BackendKind::Gitlab => {
             repo_project.tasks_backend.repo.clone().ok_or_else(|| {
-                RiptskError::Config(format!(
+                RiptaskError::Config(format!(
                     "RepoProject {} is missing TasksBackend repo",
                     repo_project.name
                 ))
@@ -532,12 +532,12 @@ fn sync_repo(repo_project: &RepoProject) -> Result<String, RiptskError> {
             .jira_project
             .clone()
             .ok_or_else(|| {
-                RiptskError::Config(format!(
+                RiptaskError::Config(format!(
                     "RepoProject {} is missing JiraProject",
                     repo_project.name
                 ))
             }),
-        BackendKind::Local => Err(RiptskError::Config(format!(
+        BackendKind::Local => Err(RiptaskError::Config(format!(
             "RepoProject {} does not have a hosted TasksBackend",
             repo_project.name
         ))),
@@ -629,7 +629,7 @@ mod tests {
 
     #[async_trait]
     impl crate::adapters::backend::IssueTracker for FakeIssueTracker {
-        async fn list_issues(&self, _repo: &str) -> Result<Vec<BackendIssueRecord>, RiptskError> {
+        async fn list_issues(&self, _repo: &str) -> Result<Vec<BackendIssueRecord>, RiptaskError> {
             Ok(self.state.lock().expect("lock").listed.clone())
         }
 
@@ -637,21 +637,21 @@ mod tests {
             &self,
             _repo: &str,
             _issue_id: u64,
-        ) -> Result<BackendIssueRecord, RiptskError> {
-            Err(RiptskError::General("unused in test".into()))
+        ) -> Result<BackendIssueRecord, RiptaskError> {
+            Err(RiptaskError::General("unused in test".into()))
         }
 
         async fn create_issue(
             &self,
             repo: &str,
             issue: &BackendIssueUpsert,
-        ) -> Result<BackendIssueRecord, RiptskError> {
+        ) -> Result<BackendIssueRecord, RiptaskError> {
             let mut state = self.state.lock().expect("lock");
             state.created.push((repo.to_owned(), issue.clone()));
             state
                 .create_responses
                 .pop_front()
-                .ok_or_else(|| RiptskError::General("missing create response".into()))
+                .ok_or_else(|| RiptaskError::General("missing create response".into()))
         }
 
         async fn update_issue(
@@ -659,7 +659,7 @@ mod tests {
             repo: &str,
             issue_id: u64,
             issue: &BackendIssueUpsert,
-        ) -> Result<BackendIssueRecord, RiptskError> {
+        ) -> Result<BackendIssueRecord, RiptaskError> {
             let mut state = self.state.lock().expect("lock");
             state
                 .updated
@@ -669,7 +669,7 @@ mod tests {
                 .get(&issue_id)
                 .cloned()
                 .ok_or_else(|| {
-                    RiptskError::General(format!("missing update response for {issue_id}"))
+                    RiptaskError::General(format!("missing update response for {issue_id}"))
                 })
         }
 
@@ -678,7 +678,7 @@ mod tests {
             repo: &str,
             issue_id: u64,
             _state_reason: Option<&str>,
-        ) -> Result<(), RiptskError> {
+        ) -> Result<(), RiptaskError> {
             self.state
                 .lock()
                 .expect("lock")
@@ -687,7 +687,7 @@ mod tests {
             Ok(())
         }
 
-        async fn reopen_issue(&self, repo: &str, issue_id: u64) -> Result<(), RiptskError> {
+        async fn reopen_issue(&self, repo: &str, issue_id: u64) -> Result<(), RiptaskError> {
             self.state
                 .lock()
                 .expect("lock")
@@ -700,7 +700,7 @@ mod tests {
             &self,
             repo: &str,
             issue_id: u64,
-        ) -> Result<DeleteOutcome, RiptskError> {
+        ) -> Result<DeleteOutcome, RiptaskError> {
             let mut state = self.state.lock().expect("lock");
             state.deleted.push((repo.to_owned(), issue_id));
             Ok(state.delete_outcome)
@@ -711,7 +711,7 @@ mod tests {
             repo: &str,
             issue_id: u64,
             reason: Option<&str>,
-        ) -> Result<(), RiptskError> {
+        ) -> Result<(), RiptaskError> {
             self.state.lock().expect("lock").locked.push((
                 repo.to_owned(),
                 issue_id,
@@ -720,7 +720,7 @@ mod tests {
             Ok(())
         }
 
-        async fn unlock_issue(&self, repo: &str, issue_id: u64) -> Result<(), RiptskError> {
+        async fn unlock_issue(&self, repo: &str, issue_id: u64) -> Result<(), RiptaskError> {
             self.state
                 .lock()
                 .expect("lock")
@@ -734,7 +734,7 @@ mod tests {
             repo: &str,
             issue_id: u64,
             labels: &[String],
-        ) -> Result<(), RiptskError> {
+        ) -> Result<(), RiptaskError> {
             self.state.lock().expect("lock").synced_labels.push((
                 repo.to_owned(),
                 issue_id,

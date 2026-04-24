@@ -1,6 +1,6 @@
 use camino::Utf8PathBuf;
 use riptask::config::default_config;
-use riptask::error::RiptskError;
+use riptask::error::RiptaskError;
 use riptask::models::{BackendKind, RepoProject, TasksBackendSpec, VCBackendSpec};
 use riptask::services::project_detection::register_project_auto;
 use tempfile::tempdir;
@@ -71,6 +71,6 @@ fn auto_register_collision_without_prompts_returns_key_collision_and_does_not_mu
 
     let error = register_project_auto(&cwd, &mut config, None, None).expect_err("collision");
 
-    assert!(matches!(error, RiptskError::KeyCollision(_)));
+    assert!(matches!(error, RiptaskError::KeyCollision(_)));
     assert_eq!(config.projects.len(), before);
 }

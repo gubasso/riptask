@@ -31,7 +31,7 @@ use crate::adapters::backend::{
     BackendIssueRecord, BackendIssueUpsert, DeleteOutcome, IssueTracker,
 };
 use crate::domain::issue::IssueState;
-use crate::error::RiptskError;
+use crate::error::RiptaskError;
 use async_trait::async_trait;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::Deserialize;
@@ -282,7 +282,7 @@ pub fn state_reason_to_jira_resolution(reason: Option<&str>) -> &'static str {
 pub fn find_transition<'a>(
     transitions: &'a [JiraTransition],
     target: &IssueState,
-) -> Result<&'a JiraTransition, RiptskError> {
+) -> Result<&'a JiraTransition, RiptaskError> {
     let target_category = match target {
         IssueState::Backlog | IssueState::Todo => "new",
         IssueState::InProgress | IssueState::Review => "indeterminate",
@@ -295,7 +295,7 @@ pub fn find_transition<'a>(
         .collect();
 
     if candidates.is_empty() {
-        return Err(RiptskError::General(format!(
+        return Err(RiptaskError::General(format!(
             "no available transition to {target_category} category"
         )));
     }
@@ -545,7 +545,7 @@ impl std::fmt::Debug for JiraProvider {
 }
 
 impl JiraProvider {
-    pub fn new(host: &str, auth: JiraAuth) -> Result<Self, RiptskError> {
+    pub fn new(host: &str, auth: JiraAuth) -> Result<Self, RiptaskError> {
         Self::with_config(host, auth, None, None)
     }
 
@@ -554,7 +554,7 @@ impl JiraProvider {
         auth: JiraAuth,
         configured_issue_type: Option<String>,
         repo_project_label: Option<String>,
-    ) -> Result<Self, RiptskError> {
+    ) -> Result<Self, RiptaskError> {
         let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
         let auth_header = match auth {
             JiraAuth::Basic {
@@ -570,7 +570,7 @@ impl JiraProvider {
         };
         let client = reqwest::Client::builder()
             .build()
-            .map_err(|e| RiptskError::General(format!("failed to build HTTP client: {e}")))?;
+            .map_err(|e| RiptaskError::General(format!("failed to build HTTP client: {e}")))?;
         Ok(Self {
             client,
             host: host.trim_end_matches('/').to_owned(),
@@ -593,21 +593,21 @@ impl JiraProvider {
         format!("{}/rest/api/2{}", self.host, path)
     }
 
-    async fn get(&self, path: &str) -> Result<reqwest::Response, RiptskError> {
+    async fn get(&self, path: &str) -> Result<reqwest::Response, RiptaskError> {
         self.client
             .get(self.api_url(path))
             .header(AUTHORIZATION, &self.auth_header)
             .header(CONTENT_TYPE, "application/json")
             .send()
             .await
-            .map_err(|e| RiptskError::Unreachable(format!("Jira API error: {e}")))
+            .map_err(|e| RiptaskError::Unreachable(format!("Jira API error: {e}")))
     }
 
     async fn post(
         &self,
         path: &str,
         body: &serde_json::Value,
-    ) -> Result<reqwest::Response, RiptskError> {
+    ) -> Result<reqwest::Response, RiptaskError> {
         self.client
             .post(self.api_url(path))
             .header(AUTHORIZATION, &self.auth_header)
@@ -615,14 +615,14 @@ impl JiraProvider {
             .json(body)
             .send()
             .await
-            .map_err(|e| RiptskError::Unreachable(format!("Jira API error: {e}")))
+            .map_err(|e| RiptaskError::Unreachable(format!("Jira API error: {e}")))
     }
 
     async fn put(
         &self,
         path: &str,
         body: &serde_json::Value,
-    ) -> Result<reqwest::Response, RiptskError> {
+    ) -> Result<reqwest::Response, RiptaskError> {
         self.client
             .put(self.api_url(path))
             .header(AUTHORIZATION, &self.auth_header)
@@ -630,26 +630,28 @@ impl JiraProvider {
             .json(body)
             .send()
             .await
-            .map_err(|e| RiptskError::Unreachable(format!("Jira API error: {e}")))
+            .map_err(|e| RiptaskError::Unreachable(format!("Jira API error: {e}")))
     }
 
-    async fn delete_request(&self, path: &str) -> Result<reqwest::Response, RiptskError> {
+    async fn delete_request(&self, path: &str) -> Result<reqwest::Response, RiptaskError> {
         self.client
             .delete(self.api_url(path))
             .header(AUTHORIZATION, &self.auth_header)
             .send()
             .await
-            .map_err(|e| RiptskError::Unreachable(format!("Jira API error: {e}")))
+            .map_err(|e| RiptaskError::Unreachable(format!("Jira API error: {e}")))
     }
 
-    async fn check_response(response: reqwest::Response) -> Result<reqwest::Response, RiptskError> {
+    async fn check_response(
+        response: reqwest::Response,
+    ) -> Result<reqwest::Response, RiptaskError> {
         let status = response.status();
         if status.is_success() {
             return Ok(response);
         }
         let url = response.url().to_string();
         let body = response.text().await.unwrap_or_default();
-        Err(RiptskError::Unreachable(format!(
+        Err(RiptaskError::Unreachable(format!(
             "Jira API returned {status} for {url}: {body}"
         )))
     }
@@ -667,7 +669,7 @@ impl JiraProvider {
     /// Jira Cloud deprecated `/search` in favor of `/search/jql` (Oct 2025).
     /// Server/DC doesn't have `/search/jql` at all. We try Cloud first; if we
     /// get a 404, we know it's Server/DC and fall back to the legacy endpoint.
-    async fn search_issues(&self, jql: &str) -> Result<Vec<JiraIssue>, RiptskError> {
+    async fn search_issues(&self, jql: &str) -> Result<Vec<JiraIssue>, RiptaskError> {
         match self.search_issues_jql(jql).await {
             Ok(issues) => Ok(issues),
             Err(ref e) if e.to_string().contains("404") => {
@@ -679,7 +681,7 @@ impl JiraProvider {
     }
 
     /// Jira Cloud: `/rest/api/2/search/jql` with nextPageToken cursor pagination.
-    async fn search_issues_jql(&self, jql: &str) -> Result<Vec<JiraIssue>, RiptskError> {
+    async fn search_issues_jql(&self, jql: &str) -> Result<Vec<JiraIssue>, RiptaskError> {
         let mut all_issues = Vec::new();
         let mut next_page_token: Option<String> = None;
         let max_results = 100u64;
@@ -696,7 +698,7 @@ impl JiraProvider {
             }
             let response = Self::check_response(self.get(&path).await?).await?;
             let result: JiraSearchJqlResult = response.json().await.map_err(|e| {
-                RiptskError::General(format!("failed to parse Jira search/jql: {e}"))
+                RiptaskError::General(format!("failed to parse Jira search/jql: {e}"))
             })?;
             all_issues.extend(result.issues);
             match result.next_page_token {
@@ -709,7 +711,7 @@ impl JiraProvider {
     }
 
     /// Jira Server/DC: legacy `/rest/api/2/search` with startAt/maxResults pagination.
-    async fn search_issues_legacy(&self, jql: &str) -> Result<Vec<JiraIssue>, RiptskError> {
+    async fn search_issues_legacy(&self, jql: &str) -> Result<Vec<JiraIssue>, RiptaskError> {
         let mut all_issues = Vec::new();
         let mut start_at = 0u64;
         let max_results = 100u64;
@@ -726,7 +728,7 @@ impl JiraProvider {
             let result: JiraSearchResult = response
                 .json()
                 .await
-                .map_err(|e| RiptskError::General(format!("failed to parse Jira search: {e}")))?;
+                .map_err(|e| RiptaskError::General(format!("failed to parse Jira search: {e}")))?;
             let count = result.issues.len() as u64;
             all_issues.extend(result.issues);
             if start_at + count >= result.total {
@@ -738,13 +740,13 @@ impl JiraProvider {
         Ok(all_issues)
     }
 
-    async fn get_transitions(&self, issue_key: &str) -> Result<Vec<JiraTransition>, RiptskError> {
+    async fn get_transitions(&self, issue_key: &str) -> Result<Vec<JiraTransition>, RiptaskError> {
         let path = format!("/issue/{issue_key}/transitions?expand=transitions.fields");
         let response = Self::check_response(self.get(&path).await?).await?;
         let result: JiraTransitionsResponse = response
             .json()
             .await
-            .map_err(|e| RiptskError::General(format!("failed to parse transitions: {e}")))?;
+            .map_err(|e| RiptaskError::General(format!("failed to parse transitions: {e}")))?;
         Ok(result.transitions)
     }
 
@@ -756,7 +758,7 @@ impl JiraProvider {
         issue_key: &str,
         transition_id: &str,
         fields: Option<serde_json::Value>,
-    ) -> Result<(), RiptskError> {
+    ) -> Result<(), RiptaskError> {
         let mut body = serde_json::json!({
             "transition": { "id": transition_id }
         });
@@ -778,7 +780,7 @@ impl JiraProvider {
         &self,
         project_key: &str,
         query: &str,
-    ) -> Result<Vec<JiraUser>, RiptskError> {
+    ) -> Result<Vec<JiraUser>, RiptaskError> {
         let path = format!(
             "/user/assignable/search?project={}&query={}",
             urlencoding::encode(project_key),
@@ -788,7 +790,7 @@ impl JiraProvider {
         response
             .json::<Vec<JiraUser>>()
             .await
-            .map_err(|e| RiptskError::General(format!("failed to parse assignable users: {e}")))
+            .map_err(|e| RiptaskError::General(format!("failed to parse assignable users: {e}")))
     }
 
     /// Fetch valid issue types for a project from Jira's create metadata.
@@ -796,7 +798,7 @@ impl JiraProvider {
     pub async fn fetch_create_issue_types(
         &self,
         project_key: &str,
-    ) -> Result<Vec<String>, RiptskError> {
+    ) -> Result<Vec<String>, RiptaskError> {
         let path = format!(
             "/issue/createmeta?projectKeys={}&expand=projects.issuetypes",
             urlencoding::encode(project_key)
@@ -805,7 +807,7 @@ impl JiraProvider {
         let body: serde_json::Value = response
             .json()
             .await
-            .map_err(|e| RiptskError::General(format!("failed to parse create metadata: {e}")))?;
+            .map_err(|e| RiptaskError::General(format!("failed to parse create metadata: {e}")))?;
         let mut types = Vec::new();
         if let Some(projects) = body.get("projects").and_then(|v| v.as_array()) {
             for project in projects {
@@ -829,13 +831,13 @@ impl JiraProvider {
         &self,
         project_key: &str,
         configured_type: Option<&str>,
-    ) -> Result<String, RiptskError> {
+    ) -> Result<String, RiptaskError> {
         if let Some(t) = configured_type {
             return Ok(t.to_owned());
         }
         let types = self.fetch_create_issue_types(project_key).await?;
         if types.is_empty() {
-            return Err(RiptskError::General(format!(
+            return Err(RiptaskError::General(format!(
                 "no creatable issue types found for project {project_key}; \
                  set 'default_issue_type' in the backend config"
             )));
@@ -861,7 +863,7 @@ impl JiraProvider {
         issue_key: &str,
         project_key: &str,
         upsert: &BackendIssueUpsert,
-    ) -> Result<(), RiptskError> {
+    ) -> Result<(), RiptaskError> {
         let path = format!("/issue/{issue_key}/assignee");
 
         let assignee_display = match upsert.assignees.first() {
@@ -898,7 +900,7 @@ impl JiraProvider {
             } else if let Some(ref name) = user.name {
                 serde_json::json!({ "name": name })
             } else {
-                return Err(RiptskError::General(format!(
+                return Err(RiptaskError::General(format!(
                     "assignable user '{}' has no accountId or name",
                     user.display_name
                 )));
@@ -915,7 +917,7 @@ impl JiraProvider {
 
 #[async_trait]
 impl IssueTracker for JiraProvider {
-    async fn list_issues(&self, repo: &str) -> Result<Vec<BackendIssueRecord>, RiptskError> {
+    async fn list_issues(&self, repo: &str) -> Result<Vec<BackendIssueRecord>, RiptaskError> {
         let project_key = Self::project_key(repo);
         let jql = Self::build_list_jql(project_key, self.repo_project_label.as_deref());
         let issues = self.search_issues(&jql).await?;
@@ -929,7 +931,7 @@ impl IssueTracker for JiraProvider {
         &self,
         _repo: &str,
         issue_id: u64,
-    ) -> Result<BackendIssueRecord, RiptskError> {
+    ) -> Result<BackendIssueRecord, RiptaskError> {
         let path = format!(
             "/issue/{}?fields=summary,description,status,resolution,labels,assignee,fixVersions,issuetype,priority,duedate,security,comment,updated,created",
             issue_id
@@ -938,7 +940,7 @@ impl IssueTracker for JiraProvider {
         let issue: JiraIssue = response
             .json()
             .await
-            .map_err(|e| RiptskError::General(format!("failed to parse Jira issue: {e}")))?;
+            .map_err(|e| RiptaskError::General(format!("failed to parse Jira issue: {e}")))?;
         Ok(jira_issue_to_record(&issue, &self.host))
     }
 
@@ -946,7 +948,7 @@ impl IssueTracker for JiraProvider {
         &self,
         repo: &str,
         issue: &BackendIssueUpsert,
-    ) -> Result<BackendIssueRecord, RiptskError> {
+    ) -> Result<BackendIssueRecord, RiptaskError> {
         let project_key = Self::project_key(repo);
         let issue_type = self
             .resolve_issue_type(project_key, self.configured_issue_type.as_deref())
@@ -956,7 +958,7 @@ impl IssueTracker for JiraProvider {
         let created: JiraCreateResponse = response
             .json()
             .await
-            .map_err(|e| RiptskError::General(format!("failed to parse create response: {e}")))?;
+            .map_err(|e| RiptaskError::General(format!("failed to parse create response: {e}")))?;
 
         // Fetch the full issue to return a complete record
         let issue_id: u64 = created.id.parse().unwrap_or(0);
@@ -974,7 +976,7 @@ impl IssueTracker for JiraProvider {
         repo: &str,
         issue_id: u64,
         issue: &BackendIssueUpsert,
-    ) -> Result<BackendIssueRecord, RiptskError> {
+    ) -> Result<BackendIssueRecord, RiptaskError> {
         let payload = upsert_to_jira_update(issue);
         let path = format!("/issue/{issue_id}");
         Self::check_response(self.put(&path, &payload).await?).await?;
@@ -985,7 +987,7 @@ impl IssueTracker for JiraProvider {
         let jira_key: JiraIssueKey = response
             .json()
             .await
-            .map_err(|e| RiptskError::General(format!("failed to parse Jira issue key: {e}")))?;
+            .map_err(|e| RiptaskError::General(format!("failed to parse Jira issue key: {e}")))?;
         let project_key = Self::project_key(repo);
         self.set_assignee(&jira_key.key, project_key, issue).await?;
 
@@ -998,14 +1000,14 @@ impl IssueTracker for JiraProvider {
         _repo: &str,
         issue_id: u64,
         state_reason: Option<&str>,
-    ) -> Result<(), RiptskError> {
+    ) -> Result<(), RiptaskError> {
         // First get the issue key (needed for transitions API)
         let path = format!("/issue/{issue_id}?fields=status");
         let response = Self::check_response(self.get(&path).await?).await?;
         let issue: JiraIssueKey = response
             .json()
             .await
-            .map_err(|e| RiptskError::General(format!("failed to parse Jira issue key: {e}")))?;
+            .map_err(|e| RiptaskError::General(format!("failed to parse Jira issue key: {e}")))?;
 
         let transitions = self.get_transitions(&issue.key).await?;
         let transition = find_transition(&transitions, &IssueState::Done)?;
@@ -1019,13 +1021,13 @@ impl IssueTracker for JiraProvider {
             .await
     }
 
-    async fn reopen_issue(&self, _repo: &str, issue_id: u64) -> Result<(), RiptskError> {
+    async fn reopen_issue(&self, _repo: &str, issue_id: u64) -> Result<(), RiptaskError> {
         let path = format!("/issue/{issue_id}?fields=status");
         let response = Self::check_response(self.get(&path).await?).await?;
         let issue: JiraIssueKey = response
             .json()
             .await
-            .map_err(|e| RiptskError::General(format!("failed to parse Jira issue key: {e}")))?;
+            .map_err(|e| RiptaskError::General(format!("failed to parse Jira issue key: {e}")))?;
 
         let transitions = self.get_transitions(&issue.key).await?;
         let transition = find_transition(&transitions, &IssueState::Todo)?;
@@ -1040,7 +1042,11 @@ impl IssueTracker for JiraProvider {
         Ok(())
     }
 
-    async fn delete_issue(&self, _repo: &str, issue_id: u64) -> Result<DeleteOutcome, RiptskError> {
+    async fn delete_issue(
+        &self,
+        _repo: &str,
+        issue_id: u64,
+    ) -> Result<DeleteOutcome, RiptaskError> {
         let path = format!("/issue/{issue_id}");
         match self.delete_request(&path).await {
             Ok(response) if response.status().is_success() => Ok(DeleteOutcome::HardDeleted),
@@ -1052,7 +1058,7 @@ impl IssueTracker for JiraProvider {
             Ok(response) => {
                 let status = response.status();
                 let body = response.text().await.unwrap_or_default();
-                Err(RiptskError::Unreachable(format!(
+                Err(RiptaskError::Unreachable(format!(
                     "Jira delete failed ({status}): {body}"
                 )))
             }
@@ -1065,12 +1071,12 @@ impl IssueTracker for JiraProvider {
         _repo: &str,
         _issue_id: u64,
         _reason: Option<&str>,
-    ) -> Result<(), RiptskError> {
+    ) -> Result<(), RiptaskError> {
         // Jira has no lock concept — no-op
         Ok(())
     }
 
-    async fn unlock_issue(&self, _repo: &str, _issue_id: u64) -> Result<(), RiptskError> {
+    async fn unlock_issue(&self, _repo: &str, _issue_id: u64) -> Result<(), RiptaskError> {
         // Jira has no lock concept — no-op
         Ok(())
     }
@@ -1080,7 +1086,7 @@ impl IssueTracker for JiraProvider {
         _repo: &str,
         issue_id: u64,
         labels: &[String],
-    ) -> Result<(), RiptskError> {
+    ) -> Result<(), RiptaskError> {
         let payload = serde_json::json!({
             "fields": { "labels": labels }
         });
