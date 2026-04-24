@@ -117,7 +117,7 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptaskError> {
             &CliGit::new(),
             paths.riptask_repo.as_std_path(),
             &format!(
-                "riptsk: done {} - {}",
+                "riptask: done {} - {}",
                 issue.frontmatter.id, issue.frontmatter.title
             ),
             &[issue_path.as_std_path()],
@@ -301,7 +301,7 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptaskError> {
             &git,
             paths.riptask_repo.as_std_path(),
             &format!(
-                "riptsk: done {} - {}",
+                "riptask: done {} - {}",
                 issue.frontmatter.id, issue.frontmatter.title
             ),
             &[issue_path.as_std_path()],

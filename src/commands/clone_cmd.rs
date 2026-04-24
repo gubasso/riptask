@@ -77,7 +77,7 @@ pub async fn run(paths: &AppPaths, args: CloneArgs) -> Result<(), RiptaskError> 
         &git,
         paths.riptask_repo.as_std_path(),
         &format!(
-            "riptsk: branch {} - {}",
+            "riptask: branch {} - {}",
             issue.frontmatter.id, issue.frontmatter.title
         ),
         &[path.as_std_path()],

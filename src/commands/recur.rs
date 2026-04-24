@@ -157,7 +157,7 @@ fn run_due(paths: &AppPaths, date: Option<String>) -> Result<(), RiptaskError> {
             &config,
             &CliGit::new(),
             paths.riptask_repo.as_std_path(),
-            &format!("riptsk: recur run {} - {}", id, title),
+            &format!("riptask: recur run {} - {}", id, title),
             &files,
         )?;
     }
