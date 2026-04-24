@@ -1,8 +1,8 @@
 use camino::Utf8PathBuf;
-use riptsk::config::default_config;
-use riptsk::error::RiptskError;
-use riptsk::models::{BackendKind, RepoProject, TasksBackendSpec, VCBackendSpec};
-use riptsk::services::project_detection::register_project_auto;
+use riptask::config::default_config;
+use riptask::error::RiptskError;
+use riptask::models::{BackendKind, RepoProject, TasksBackendSpec, VCBackendSpec};
+use riptask::services::project_detection::register_project_auto;
 use tempfile::tempdir;
 
 fn repo_project(

@@ -1,8 +1,8 @@
 use insta::assert_snapshot;
-use riptsk::config::load_config;
-use riptsk::domain::backend_state::BackendState;
-use riptsk::domain::id_map::IdMap;
-use riptsk::storage::frontmatter;
+use riptask::config::load_config;
+use riptask::domain::backend_state::BackendState;
+use riptask::domain::id_map::IdMap;
+use riptask::storage::frontmatter;
 
 fn round_trip_issue(name: &str) -> String {
     let path = format!("tests/fixtures/issues/{name}");
