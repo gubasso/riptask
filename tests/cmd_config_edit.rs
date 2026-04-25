@@ -28,7 +28,7 @@ fn edit_zero_files_inside_project_creates_local_scaffold() {
 
     assert_eq!(
         fs::read_to_string(project.join(".riptask/config.yaml")).expect("local config"),
-        "# riptask config (scope: local)\nversion: 1\n"
+        "# riptask config (scope: local)\n"
     );
 }
 
@@ -63,7 +63,7 @@ fn edit_one_file_opens_directly_without_fzf() {
     let xdg = temp.path().join("xdg");
     let marker = temp.path().join("opened");
     fs::create_dir_all(&repo).expect("repo dir");
-    fs::write(repo.join("config.yaml"), "version: 1\n").expect("system");
+    fs::write(repo.join("config.yaml"), "").expect("system");
     let editor = shim(
         &temp,
         "editor",
@@ -101,8 +101,8 @@ fn edit_multiple_files_invokes_fzf_then_editor() {
     let fzf_marker = temp.path().join("fzf-called");
     fs::create_dir_all(&repo).expect("repo dir");
     fs::create_dir_all(&user).expect("user dir");
-    fs::write(repo.join("config.yaml"), "version: 1\n").expect("system");
-    fs::write(user.join("config.yaml"), "version: 1\n").expect("user");
+    fs::write(repo.join("config.yaml"), "").expect("system");
+    fs::write(user.join("config.yaml"), "").expect("user");
     let editor = shim(
         &temp,
         "editor",
@@ -147,8 +147,8 @@ fn edit_missing_editor_errors_before_fzf() {
     let fzf_marker = temp.path().join("fzf-called");
     fs::create_dir_all(&repo).expect("repo dir");
     fs::create_dir_all(&user).expect("user dir");
-    fs::write(repo.join("config.yaml"), "version: 1\n").expect("system");
-    fs::write(user.join("config.yaml"), "version: 1\n").expect("user");
+    fs::write(repo.join("config.yaml"), "").expect("system");
+    fs::write(user.join("config.yaml"), "").expect("user");
     let bin = temp.path().join("bin");
     fs::create_dir_all(&bin).expect("bin");
     shim_in(
@@ -184,8 +184,8 @@ fn edit_missing_fzf_errors_when_picker_needed() {
     let user = xdg.join("riptask");
     fs::create_dir_all(&repo).expect("repo dir");
     fs::create_dir_all(&user).expect("user dir");
-    fs::write(repo.join("config.yaml"), "version: 1\n").expect("system");
-    fs::write(user.join("config.yaml"), "version: 1\n").expect("user");
+    fs::write(repo.join("config.yaml"), "").expect("system");
+    fs::write(user.join("config.yaml"), "").expect("user");
     let editor = shim(&temp, "editor", "exit 0\n");
 
     Command::cargo_bin("tsk")
@@ -210,7 +210,7 @@ fn edit_validation_failure_leaves_file_on_disk() {
     let repo = temp.path().join("repo");
     let xdg = temp.path().join("xdg");
     fs::create_dir_all(&repo).expect("repo dir");
-    fs::write(repo.join("config.yaml"), "version: 1\n").expect("system");
+    fs::write(repo.join("config.yaml"), "").expect("system");
     let editor = shim(&temp, "editor", "printf 'unknown: true\\n' > \"$1\"\n");
 
     Command::cargo_bin("tsk")

@@ -2,7 +2,6 @@
 source: tests/format_contracts.rs
 expression: "serde_yaml_ng::to_string(&config).expect(\"serialize config\")"
 ---
-version: 1
 auto_commit: false
 defaults:
   board: personal
