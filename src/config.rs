@@ -57,6 +57,21 @@ impl ConfigScope {
             .map(|path| path.exists())
             .unwrap_or(false)
     }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ConfigScope::System => "system",
+            ConfigScope::User => "user",
+            ConfigScope::Local => "local",
+        }
+    }
+}
+
+/// Auto-created scaffold content for a fresh layer file. See
+/// pinned decision #10: minimal two-line header that always parses
+/// under `deny_unknown_fields`.
+pub fn scaffold_header(scope: ConfigScope) -> String {
+    format!("# riptask config (scope: {})\nversion: 1\n", scope.label())
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -442,8 +457,20 @@ pub fn load_effective_config(paths: &AppPaths, cwd: &Utf8Path) -> Result<Config,
 }
 
 pub fn save_layer(path: &Path, partial: &PartialConfig) -> Result<(), RiptaskError> {
-    let content = serde_yaml_ng::to_string(partial)
+    save_layer_with_header(path, partial, None)
+}
+
+fn save_layer_with_header(
+    path: &Path,
+    partial: &PartialConfig,
+    header: Option<&str>,
+) -> Result<(), RiptaskError> {
+    let body = serde_yaml_ng::to_string(partial)
         .map_err(|error| RiptaskError::Config(format!("failed to serialize config: {error}")))?;
+    let content = match header {
+        Some(header) => format!("{header}{body}"),
+        None => body,
+    };
     let dir = path
         .parent()
         .ok_or_else(|| RiptaskError::Config("config path has no parent".into()))?;
@@ -464,9 +491,15 @@ pub fn config_set_scoped(
     value: &str,
 ) -> Result<(), RiptaskError> {
     let target = scope.resolve(paths, cwd)?;
+    let creating = !target.exists();
     let mut partial = load_layer(target.as_std_path())?.unwrap_or_default();
     partial_config_set(&mut partial, key, value)?;
-    save_layer(target.as_std_path(), &partial)?;
+    let header = if creating {
+        Some(scaffold_header(scope))
+    } else {
+        None
+    };
+    save_layer_with_header(target.as_std_path(), &partial, header.as_deref())?;
     load_effective_config(paths, cwd).map_err(|error| {
         RiptaskError::Config(format!(
             "validation failed after writing {}: {}",
