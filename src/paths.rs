@@ -76,14 +76,23 @@ impl AppPaths {
         Ok(())
     }
 
-    pub fn require_initialized(&self) -> Result<(), RiptaskError> {
-        if !self.system_config_path().exists() {
-            return Err(RiptaskError::General(
-                "not initialized — run 'tsk init' first".into(),
-            ));
+    pub fn require_initialized(&self, cwd: &Utf8Path) -> Result<(), RiptaskError> {
+        if crate::config::any_config_exists(self, cwd) {
+            return Ok(());
         }
-        Ok(())
+        Err(RiptaskError::General(
+            "tsk is not initialized. Run `tsk init --system|--user|--local` first.".into(),
+        ))
     }
+}
+
+pub fn current_cwd() -> Utf8PathBuf {
+    Utf8PathBuf::from(
+        std::env::current_dir()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string(),
+    )
 }
 
 fn project_root(cwd: &Utf8Path) -> Option<Utf8PathBuf> {

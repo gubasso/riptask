@@ -13,7 +13,9 @@ fn view_builds_kanban_tree() {
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
-        .arg("init")
+        .env("XDG_STATE_HOME", temp.path().join("state"))
+        .current_dir(temp.path())
+        .args(["init", "--system"])
         .assert()
         .success();
     Command::cargo_bin("tsk")
@@ -22,6 +24,7 @@ fn view_builds_kanban_tree() {
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
+        .env("XDG_STATE_HOME", temp.path().join("state"))
         .args(["new", "--title", "Build views"])
         .assert()
         .success();
@@ -30,6 +33,8 @@ fn view_builds_kanban_tree() {
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
+        .env("XDG_STATE_HOME", temp.path().join("state"))
+        .current_dir(temp.path())
         .arg("view")
         .assert()
         .success();
@@ -47,7 +52,9 @@ fn board_respects_explicit_multi_project_scope() {
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
-        .arg("init")
+        .env("XDG_STATE_HOME", temp.path().join("state"))
+        .current_dir(temp.path())
+        .args(["init", "--system"])
         .assert()
         .success();
 
@@ -77,6 +84,8 @@ fn board_respects_explicit_multi_project_scope() {
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
+        .env("XDG_STATE_HOME", temp.path().join("state"))
+        .current_dir(temp.path())
         .args([
             "new",
             "--title",
@@ -100,6 +109,8 @@ fn board_respects_explicit_multi_project_scope() {
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
+        .env("XDG_STATE_HOME", temp.path().join("state"))
+        .current_dir(temp.path())
         .args([
             "board",
             "--all",

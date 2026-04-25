@@ -13,7 +13,7 @@ use crate::storage::issue_store;
 use camino::Utf8Path;
 
 pub async fn run(paths: &AppPaths, mut args: StartArgs) -> Result<(), RiptaskError> {
-    paths.require_initialized()?;
+    paths.require_initialized(&crate::paths::current_cwd())?;
     let config = load_effective_config(
         paths,
         &camino::Utf8PathBuf::from(

@@ -1,6 +1,9 @@
 use crate::adapters::git::CliGit;
 use crate::cli::{NewArgs, RecurArgs, RecurNewArgs, RecurSubcommand};
-use crate::config::{load_effective_config, load_layer, parse_priority, parse_state, save_layer};
+use crate::config::{
+    ConfigScope, config_mutate_scoped, default_write_scope, load_effective_config, load_layer,
+    parse_priority, parse_state,
+};
 use crate::error::RiptaskError;
 use crate::models::{RecurrenceFrequency, RecurringDef};
 use crate::paths::AppPaths;
@@ -14,7 +17,7 @@ use comfy_table::{Attribute, Cell, Color, ContentArrangement, Table, presets::NO
 use std::io::IsTerminal;
 
 pub fn run(paths: &AppPaths, args: RecurArgs) -> Result<(), RiptaskError> {
-    paths.require_initialized()?;
+    paths.require_initialized(&crate::paths::current_cwd())?;
     match args.subcommand.unwrap_or(RecurSubcommand::List) {
         RecurSubcommand::List => list(paths),
         RecurSubcommand::New(args) => new_recur(paths, *args),
@@ -69,9 +72,6 @@ fn list(paths: &AppPaths) -> Result<(), RiptaskError> {
 fn run_due(paths: &AppPaths, date: Option<String>) -> Result<(), RiptaskError> {
     let cwd = current_cwd();
     let mut config = load_effective_config(paths, &cwd)?;
-    let sys_path = paths.system_config_path();
-    let mut partial = load_layer(sys_path.as_std_path())?.unwrap_or_default();
-    let shadowing_ids = collect_shadowing_recurring_ids(paths, &cwd)?;
     let today = date
         .as_deref()
         .map(str::parse::<NaiveDate>)
@@ -90,13 +90,9 @@ fn run_due(paths: &AppPaths, date: Option<String>) -> Result<(), RiptaskError> {
         )
         .collect();
 
-    let mut changed_paths = vec![sys_path.clone()];
+    let mut changed_paths = Vec::new();
     let mut last_issue = None;
-    let mut changed_recurring = false;
-    // Iterate the merged effective recurring set so user/local-defined
-    // recurrences are honored (pinned decision #5). We still write
-    // `last_run` to the system layer per non-goal #1; ids defined only in
-    // a non-system layer get a warning and skip the persistence step.
+    let mut recurrence_writes: Vec<(ConfigScope, camino::Utf8PathBuf)> = Vec::new();
     let candidates: Vec<RecurringDef> = config.recurring.clone();
     for definition in candidates {
         if !is_due(&definition, today).map_err(RiptaskError::Other)? {
@@ -156,36 +152,34 @@ fn run_due(paths: &AppPaths, date: Option<String>) -> Result<(), RiptaskError> {
 
         println!("{}", issue.frontmatter.id);
 
-        update_last_run(&mut config, &definition.id, today);
-        let system_entry = if shadowing_ids.contains(&definition.id) {
-            None
-        } else {
-            partial
+        let (scope, _) =
+            recurring_resolving_layer(paths, &cwd, &definition.id)?.ok_or_else(|| {
+                RiptaskError::Config(format!(
+                    "recurrence '{}' has no resolving config layer",
+                    definition.id
+                ))
+            })?;
+        let id = definition.id.clone();
+        let receipt = config_mutate_scoped(paths, &cwd, scope, |partial| {
+            let recurring = partial
                 .recurring
                 .iter_mut()
-                .find(|candidate| candidate.id == definition.id)
-        };
-        if let Some(recurring) = system_entry {
+                .find(|candidate| candidate.id == id)
+                .ok_or_else(|| RiptaskError::Config(format!("unknown recurrence id: {id}")))?;
             recurring.last_run = Some(today.to_string());
-            changed_recurring = true;
-        } else {
-            // Recurrence is defined (or shadowed) in a non-system layer; we
-            // cannot persist last_run there until vec-mutating commands honor
-            // --scope. Persisting to a shadowed system entry would be wrong
-            // (the higher layer would still report no last_run).
-            // TODO(config-scope): honor --scope once vec-mutating commands accept it.
-            eprintln!(
-                "warning: recurrence '{}' resolves from a non-system layer; \
-                 last_run not persisted (per-scope writes for vec-mutating \
-                 commands not yet supported)",
-                definition.id
-            );
-        }
+            Ok(())
+        })?;
+        update_last_run(&mut config, &definition.id, today);
+        changed_paths.push(receipt.path.clone());
+        recurrence_writes.push((receipt.scope, receipt.path));
     }
-    if changed_recurring {
-        save_layer(sys_path.as_std_path(), &partial)?;
-        load_effective_config(paths, &cwd)?;
-        // TODO(config-scope): honor --scope once vec-mutating commands accept it.
+    for (scope, path, count) in summarize_recurrence_writes(recurrence_writes) {
+        crate::ui::success(&format!(
+            "wrote {} recurrence(s) to {} ({})",
+            count,
+            scope.label(),
+            path
+        ));
     }
     if let Some((id, title)) = last_issue {
         let files = changed_paths
@@ -216,60 +210,61 @@ fn skip(paths: &AppPaths, recur_id: Option<String>) -> Result<(), RiptaskError> 
             "unknown recurrence id: {recur_id}"
         )));
     }
-    let shadowing_ids = collect_shadowing_recurring_ids(paths, &cwd)?;
-    if shadowing_ids.contains(&recur_id) {
-        // Higher layer shadows the system entry (or owns the id outright);
-        // updating system would be invisible after the merge.
-        // TODO(config-scope): honor --scope once vec-mutating commands accept it.
-        return Err(RiptaskError::Config(format!(
-            "recurrence '{recur_id}' resolves from a non-system layer; \
-             --scope writes for vec-mutating commands are not yet supported"
-        )));
-    }
-    let sys_path = paths.system_config_path();
-    let mut partial = load_layer(sys_path.as_std_path())?.unwrap_or_default();
+    let (scope, _) = recurring_resolving_layer(paths, &cwd, &recur_id)?
+        .ok_or_else(|| RiptaskError::Config(format!("unknown recurrence id: {recur_id}")))?;
     let today = Utc::now().date_naive();
-    let Some(recurring) = partial
-        .recurring
-        .iter_mut()
-        .find(|definition| definition.id == recur_id)
-    else {
-        // Defined in user/local layer; per-scope writes for vec-mutating
-        // commands are an explicit non-goal of this PR.
-        // TODO(config-scope): honor --scope once vec-mutating commands accept it.
-        return Err(RiptaskError::Config(format!(
-            "recurrence '{recur_id}' is defined in a non-system layer; \
-             --scope writes for vec-mutating commands are not yet supported"
-        )));
-    };
-    recurring.last_run = Some(today.to_string());
-    save_layer(sys_path.as_std_path(), &partial)?;
-    load_effective_config(paths, &cwd)?;
-    // TODO(config-scope): honor --scope once vec-mutating commands accept it.
+    let receipt = config_mutate_scoped(paths, &cwd, scope, |partial| {
+        let recurring = partial
+            .recurring
+            .iter_mut()
+            .find(|definition| definition.id == recur_id)
+            .ok_or_else(|| RiptaskError::Config(format!("unknown recurrence id: {recur_id}")))?;
+        recurring.last_run = Some(today.to_string());
+        Ok(())
+    })?;
+    crate::ui::success(&format!(
+        "wrote recurrence to {} ({})",
+        receipt.scope.label(),
+        receipt.path
+    ));
     Ok(())
 }
 
-/// Returns the set of recurring `id`s that resolve from a non-system layer
-/// in the merged effective config. An id is "shadowing" when it is present
-/// in the user or local partial; in that case the higher layer wins under
-/// the merge contract, so writing `last_run` on a same-id entry in the
-/// system layer would be silently overridden.
-fn collect_shadowing_recurring_ids(
+/// Returns the highest-precedence layer that defines `id`, or `None` if no
+/// layer defines it.
+fn recurring_resolving_layer(
     paths: &AppPaths,
     cwd: &Utf8Path,
-) -> Result<std::collections::HashSet<String>, RiptaskError> {
-    let mut out = std::collections::HashSet::new();
-    let user = load_layer(paths.user_config_path().as_std_path())?.unwrap_or_default();
-    for definition in &user.recurring {
-        out.insert(definition.id.clone());
-    }
-    if let Some(local_path) = paths.local_config_path(cwd) {
-        let local = load_layer(local_path.as_std_path())?.unwrap_or_default();
-        for definition in &local.recurring {
-            out.insert(definition.id.clone());
+    id: &str,
+) -> Result<Option<(ConfigScope, camino::Utf8PathBuf)>, RiptaskError> {
+    for scope in [ConfigScope::Local, ConfigScope::User, ConfigScope::System] {
+        let path = match scope.resolve(paths, cwd) {
+            Ok(path) => path,
+            Err(_) => continue,
+        };
+        if let Some(partial) = load_layer(path.as_std_path())?
+            && partial.recurring.iter().any(|recurring| recurring.id == id)
+        {
+            return Ok(Some((scope, path)));
         }
     }
-    Ok(out)
+    Ok(None)
+}
+
+fn summarize_recurrence_writes(
+    writes: Vec<(ConfigScope, camino::Utf8PathBuf)>,
+) -> Vec<(ConfigScope, camino::Utf8PathBuf, usize)> {
+    let mut out = Vec::new();
+    for (scope, path) in writes {
+        if let Some((_, _, count)) = out.iter_mut().find(|(existing_scope, existing_path, _)| {
+            *existing_scope == scope && *existing_path == path
+        }) {
+            *count += 1;
+        } else {
+            out.push((scope, path, 1));
+        }
+    }
+    out
 }
 
 fn new_recur(paths: &AppPaths, args: RecurNewArgs) -> Result<(), RiptaskError> {
@@ -376,13 +371,19 @@ fn new_recur(paths: &AppPaths, args: RecurNewArgs) -> Result<(), RiptaskError> {
         end: args.end,
         last_run: None,
     };
-    let sys_path = paths.system_config_path();
-    let mut partial = load_layer(sys_path.as_std_path())?.unwrap_or_default();
-    partial.recurring.push(definition);
-    save_layer(sys_path.as_std_path(), &partial)?;
-    load_effective_config(paths, &cwd)?;
-    // TODO(config-scope): honor --scope once vec-mutating commands accept it.
-    crate::ui::success(&format!("added recurrence {}", args.id));
+    let scope = args
+        .scope
+        .scope()
+        .unwrap_or_else(|| default_write_scope(paths, &cwd));
+    let receipt = config_mutate_scoped(paths, &cwd, scope, |partial| {
+        partial.recurring.push(definition);
+        Ok(())
+    })?;
+    crate::ui::success(&format!(
+        "wrote recurrence to {} ({})",
+        receipt.scope.label(),
+        receipt.path
+    ));
     Ok(())
 }
 

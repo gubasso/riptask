@@ -26,7 +26,7 @@ use console::style;
 use std::io::IsTerminal;
 
 pub fn show(paths: &AppPaths, args: IdArgs) -> Result<(), RiptaskError> {
-    paths.require_initialized()?;
+    paths.require_initialized(&crate::paths::current_cwd())?;
     let IdArgs { scope, id, pick } = args;
     let config = load_effective_config(
         paths,
@@ -59,7 +59,7 @@ pub fn show(paths: &AppPaths, args: IdArgs) -> Result<(), RiptaskError> {
 }
 
 pub fn path(paths: &AppPaths, args: IdArgs) -> Result<(), RiptaskError> {
-    paths.require_initialized()?;
+    paths.require_initialized(&crate::paths::current_cwd())?;
     let IdArgs { scope, id, pick } = args;
     let config = load_effective_config(
         paths,
@@ -85,7 +85,7 @@ pub fn path(paths: &AppPaths, args: IdArgs) -> Result<(), RiptaskError> {
 }
 
 pub fn list(paths: &AppPaths, args: LsArgs) -> Result<(), RiptaskError> {
-    paths.require_initialized()?;
+    paths.require_initialized(&crate::paths::current_cwd())?;
     let config = load_effective_config(
         paths,
         &camino::Utf8PathBuf::from(
@@ -281,7 +281,7 @@ pub(crate) async fn create_issue_from_args(
     paths: &AppPaths,
     args: NewArgs,
 ) -> Result<(IssueDocument, camino::Utf8PathBuf), RiptaskError> {
-    paths.require_initialized()?;
+    paths.require_initialized(&crate::paths::current_cwd())?;
     let config = load_effective_config(
         paths,
         &camino::Utf8PathBuf::from(
@@ -560,7 +560,7 @@ fn style_with_color(text: String, color: Color) -> console::StyledObject<String>
 }
 
 pub fn edit(paths: &AppPaths, args: IdArgs) -> Result<(), RiptaskError> {
-    paths.require_initialized()?;
+    paths.require_initialized(&crate::paths::current_cwd())?;
     let IdArgs { scope, id, pick } = args;
     let config = load_effective_config(
         paths,
@@ -604,7 +604,7 @@ pub fn edit(paths: &AppPaths, args: IdArgs) -> Result<(), RiptaskError> {
 }
 
 pub fn set_status(paths: &AppPaths, args: StatusArgs) -> Result<(), RiptaskError> {
-    paths.require_initialized()?;
+    paths.require_initialized(&crate::paths::current_cwd())?;
     let StatusArgs {
         scope,
         id,
@@ -650,7 +650,7 @@ pub fn set_status(paths: &AppPaths, args: StatusArgs) -> Result<(), RiptaskError
 }
 
 pub fn close(paths: &AppPaths, args: IdArgs) -> Result<(), RiptaskError> {
-    paths.require_initialized()?;
+    paths.require_initialized(&crate::paths::current_cwd())?;
     set_status(
         paths,
         StatusArgs {
@@ -663,7 +663,7 @@ pub fn close(paths: &AppPaths, args: IdArgs) -> Result<(), RiptaskError> {
 }
 
 pub fn reopen(paths: &AppPaths, args: IdArgs) -> Result<(), RiptaskError> {
-    paths.require_initialized()?;
+    paths.require_initialized(&crate::paths::current_cwd())?;
     set_status(
         paths,
         StatusArgs {
@@ -676,7 +676,7 @@ pub fn reopen(paths: &AppPaths, args: IdArgs) -> Result<(), RiptaskError> {
 }
 
 pub fn remove(paths: &AppPaths, args: IdArgs) -> Result<(), RiptaskError> {
-    paths.require_initialized()?;
+    paths.require_initialized(&crate::paths::current_cwd())?;
     let IdArgs { scope, id, pick } = args;
     let config = load_effective_config(
         paths,

@@ -14,7 +14,7 @@ enum ConfirmChoice {
 }
 
 pub fn run(paths: &AppPaths, args: CommitArgs) -> Result<(), RiptaskError> {
-    paths.require_initialized()?;
+    paths.require_initialized(&crate::paths::current_cwd())?;
     let config = load_effective_config(
         paths,
         &camino::Utf8PathBuf::from(

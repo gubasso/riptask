@@ -75,6 +75,7 @@ fn edit_one_file_opens_directly_without_fzf() {
 
     Command::cargo_bin("tsk")
         .expect("binary")
+        .current_dir(temp.path())
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CONFIG_HOME", &xdg)
         .env("XDG_STATE_HOME", temp.path().join("state"))
@@ -121,6 +122,7 @@ fn edit_multiple_files_invokes_fzf_then_editor() {
 
     Command::cargo_bin("tsk")
         .expect("binary")
+        .current_dir(temp.path())
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CONFIG_HOME", &xdg)
         .env("XDG_STATE_HOME", temp.path().join("state"))
@@ -162,6 +164,7 @@ fn edit_missing_editor_errors_before_fzf() {
 
     Command::cargo_bin("tsk")
         .expect("binary")
+        .current_dir(temp.path())
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CONFIG_HOME", &xdg)
         .env("XDG_STATE_HOME", temp.path().join("state"))
@@ -215,6 +218,7 @@ fn edit_validation_failure_leaves_file_on_disk() {
 
     Command::cargo_bin("tsk")
         .expect("binary")
+        .current_dir(temp.path())
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CONFIG_HOME", &xdg)
         .env("XDG_STATE_HOME", temp.path().join("state"))
