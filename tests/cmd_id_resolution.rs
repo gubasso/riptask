@@ -199,8 +199,7 @@ fn write_issue_with_branch(repo: &std::path::Path, id: &str, branch: &str) {
 
 fn config_with_backend_path(path: &std::path::Path) -> String {
     format!(
-        "version: 1
-defaults:
+        "defaults:
   board: personal
   status: todo
   priority: medium

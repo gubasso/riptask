@@ -14,13 +14,9 @@ fn effective_config_uses_local_scalar_over_user_and_system() {
     fs::create_dir_all(&repo).expect("repo dir");
     fs::create_dir_all(&user).expect("user dir");
     fs::create_dir_all(project.join(".riptask")).expect("local dir");
-    fs::write(repo.join("config.yaml"), "version: 1\nauto_commit: false\n").expect("system");
-    fs::write(user.join("config.yaml"), "version: 1\nauto_commit: false\n").expect("user");
-    fs::write(
-        project.join(".riptask/config.yaml"),
-        "version: 1\nauto_commit: true\n",
-    )
-    .expect("local");
+    fs::write(repo.join("config.yaml"), "auto_commit: false\n").expect("system");
+    fs::write(user.join("config.yaml"), "auto_commit: false\n").expect("user");
+    fs::write(project.join(".riptask/config.yaml"), "auto_commit: true\n").expect("local");
     let paths = app_paths(&temp, &repo, &user);
 
     let config = load_effective_config(&paths, camino::Utf8Path::from_path(&project).unwrap())
@@ -38,12 +34,8 @@ fn config_set_global_writes_only_user_layer() {
     let project = temp.path().join("project");
     fs::create_dir_all(&repo).expect("repo dir");
     fs::create_dir_all(project.join(".riptask")).expect("local dir");
-    fs::write(repo.join("config.yaml"), "version: 1\nauto_commit: false\n").expect("system");
-    fs::write(
-        project.join(".riptask/config.yaml"),
-        "version: 1\nauto_commit: false\n",
-    )
-    .expect("local");
+    fs::write(repo.join("config.yaml"), "auto_commit: false\n").expect("system");
+    fs::write(project.join(".riptask/config.yaml"), "auto_commit: false\n").expect("local");
 
     Command::cargo_bin("tsk")
         .expect("binary")
@@ -81,7 +73,7 @@ fn config_set_without_scope_inside_project_writes_local() {
     let project = temp.path().join("project");
     fs::create_dir_all(&repo).expect("repo dir");
     fs::create_dir_all(project.join(".riptask")).expect("local dir");
-    fs::write(repo.join("config.yaml"), "version: 1\n").expect("system");
+    fs::write(repo.join("config.yaml"), "").expect("system");
 
     Command::cargo_bin("tsk")
         .expect("binary")
@@ -110,7 +102,7 @@ fn config_set_without_scope_outside_project_writes_user() {
     let outside = temp.path().join("outside");
     fs::create_dir_all(&repo).expect("repo dir");
     fs::create_dir_all(&outside).expect("outside dir");
-    fs::write(repo.join("config.yaml"), "version: 1\n").expect("system");
+    fs::write(repo.join("config.yaml"), "").expect("system");
 
     Command::cargo_bin("tsk")
         .expect("binary")
@@ -163,7 +155,7 @@ fn bare_config_prints_consulted_comment_and_yaml() {
     let outside = temp.path().join("outside");
     fs::create_dir_all(&repo).expect("repo dir");
     fs::create_dir_all(&outside).expect("outside dir");
-    fs::write(repo.join("config.yaml"), "version: 1\nauto_commit: true\n").expect("system");
+    fs::write(repo.join("config.yaml"), "auto_commit: true\n").expect("system");
 
     Command::cargo_bin("tsk")
         .expect("binary")
@@ -190,8 +182,7 @@ fn app_paths(temp: &tempfile::TempDir, repo: &std::path::Path, user: &std::path:
 
 fn project_yaml(name: &str, key: &str) -> String {
     format!(
-        r#"version: 1
-projects:
+        r#"projects:
   - name: {name}
     vc_backend:
       type: github
