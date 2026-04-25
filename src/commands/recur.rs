@@ -8,6 +8,7 @@ use crate::services::auto_commit::maybe_auto_commit;
 use crate::services::issue_service::IssueService;
 use crate::services::recurrence::{expand_tokens, instance_exists, is_due, update_last_run};
 use crate::storage::issue_store;
+use camino::Utf8Path;
 use chrono::{NaiveDate, Utc};
 use comfy_table::{Attribute, Cell, Color, ContentArrangement, Table, presets::NOTHING};
 use std::io::IsTerminal;
@@ -70,6 +71,7 @@ fn run_due(paths: &AppPaths, date: Option<String>) -> Result<(), RiptaskError> {
     let mut config = load_effective_config(paths, &cwd)?;
     let sys_path = paths.system_config_path();
     let mut partial = load_layer(sys_path.as_std_path())?.unwrap_or_default();
+    let shadowing_ids = collect_shadowing_recurring_ids(paths, &cwd)?;
     let today = date
         .as_deref()
         .map(str::parse::<NaiveDate>)
@@ -91,7 +93,12 @@ fn run_due(paths: &AppPaths, date: Option<String>) -> Result<(), RiptaskError> {
     let mut changed_paths = vec![sys_path.clone()];
     let mut last_issue = None;
     let mut changed_recurring = false;
-    for definition in partial.recurring.clone() {
+    // Iterate the merged effective recurring set so user/local-defined
+    // recurrences are honored (pinned decision #5). We still write
+    // `last_run` to the system layer per non-goal #1; ids defined only in
+    // a non-system layer get a warning and skip the persistence step.
+    let candidates: Vec<RecurringDef> = config.recurring.clone();
+    for definition in candidates {
         if !is_due(&definition, today).map_err(RiptaskError::Other)? {
             continue;
         }
@@ -150,13 +157,29 @@ fn run_due(paths: &AppPaths, date: Option<String>) -> Result<(), RiptaskError> {
         println!("{}", issue.frontmatter.id);
 
         update_last_run(&mut config, &definition.id, today);
-        if let Some(recurring) = partial
-            .recurring
-            .iter_mut()
-            .find(|candidate| candidate.id == definition.id)
-        {
+        let system_entry = if shadowing_ids.contains(&definition.id) {
+            None
+        } else {
+            partial
+                .recurring
+                .iter_mut()
+                .find(|candidate| candidate.id == definition.id)
+        };
+        if let Some(recurring) = system_entry {
             recurring.last_run = Some(today.to_string());
             changed_recurring = true;
+        } else {
+            // Recurrence is defined (or shadowed) in a non-system layer; we
+            // cannot persist last_run there until vec-mutating commands honor
+            // --scope. Persisting to a shadowed system entry would be wrong
+            // (the higher layer would still report no last_run).
+            // TODO(config-scope): honor --scope once vec-mutating commands accept it.
+            eprintln!(
+                "warning: recurrence '{}' resolves from a non-system layer; \
+                 last_run not persisted (per-scope writes for vec-mutating \
+                 commands not yet supported)",
+                definition.id
+            );
         }
     }
     if changed_recurring {
@@ -183,6 +206,26 @@ fn run_due(paths: &AppPaths, date: Option<String>) -> Result<(), RiptaskError> {
 fn skip(paths: &AppPaths, recur_id: Option<String>) -> Result<(), RiptaskError> {
     let recur_id = recur_id.ok_or_else(|| RiptaskError::General("missing recurrence id".into()))?;
     let cwd = current_cwd();
+    let effective = load_effective_config(paths, &cwd)?;
+    if !effective
+        .recurring
+        .iter()
+        .any(|definition| definition.id == recur_id)
+    {
+        return Err(RiptaskError::Config(format!(
+            "unknown recurrence id: {recur_id}"
+        )));
+    }
+    let shadowing_ids = collect_shadowing_recurring_ids(paths, &cwd)?;
+    if shadowing_ids.contains(&recur_id) {
+        // Higher layer shadows the system entry (or owns the id outright);
+        // updating system would be invisible after the merge.
+        // TODO(config-scope): honor --scope once vec-mutating commands accept it.
+        return Err(RiptaskError::Config(format!(
+            "recurrence '{recur_id}' resolves from a non-system layer; \
+             --scope writes for vec-mutating commands are not yet supported"
+        )));
+    }
     let sys_path = paths.system_config_path();
     let mut partial = load_layer(sys_path.as_std_path())?.unwrap_or_default();
     let today = Utc::now().date_naive();
@@ -191,8 +234,12 @@ fn skip(paths: &AppPaths, recur_id: Option<String>) -> Result<(), RiptaskError> 
         .iter_mut()
         .find(|definition| definition.id == recur_id)
     else {
+        // Defined in user/local layer; per-scope writes for vec-mutating
+        // commands are an explicit non-goal of this PR.
+        // TODO(config-scope): honor --scope once vec-mutating commands accept it.
         return Err(RiptaskError::Config(format!(
-            "unknown recurrence id: {recur_id}"
+            "recurrence '{recur_id}' is defined in a non-system layer; \
+             --scope writes for vec-mutating commands are not yet supported"
         )));
     };
     recurring.last_run = Some(today.to_string());
@@ -200,6 +247,29 @@ fn skip(paths: &AppPaths, recur_id: Option<String>) -> Result<(), RiptaskError> 
     load_effective_config(paths, &cwd)?;
     // TODO(config-scope): honor --scope once vec-mutating commands accept it.
     Ok(())
+}
+
+/// Returns the set of recurring `id`s that resolve from a non-system layer
+/// in the merged effective config. An id is "shadowing" when it is present
+/// in the user or local partial; in that case the higher layer wins under
+/// the merge contract, so writing `last_run` on a same-id entry in the
+/// system layer would be silently overridden.
+fn collect_shadowing_recurring_ids(
+    paths: &AppPaths,
+    cwd: &Utf8Path,
+) -> Result<std::collections::HashSet<String>, RiptaskError> {
+    let mut out = std::collections::HashSet::new();
+    let user = load_layer(paths.user_config_path().as_std_path())?.unwrap_or_default();
+    for definition in &user.recurring {
+        out.insert(definition.id.clone());
+    }
+    if let Some(local_path) = paths.local_config_path(cwd) {
+        let local = load_layer(local_path.as_std_path())?.unwrap_or_default();
+        for definition in &local.recurring {
+            out.insert(definition.id.clone());
+        }
+    }
+    Ok(out)
 }
 
 fn new_recur(paths: &AppPaths, args: RecurNewArgs) -> Result<(), RiptaskError> {

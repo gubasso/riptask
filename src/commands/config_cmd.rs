@@ -1,6 +1,6 @@
 use crate::adapters::picker::run_fzf_with_args;
 use crate::cli::{ConfigArgs, ConfigSubcommand};
-use crate::config::{ConfigScope, config_set_scoped, load_effective_config};
+use crate::config::{ConfigScope, config_set_scoped, load_effective_config, scaffold_header};
 use crate::error::RiptaskError;
 use crate::paths::AppPaths;
 use crate::services::editor::open_in_editor;
@@ -98,17 +98,11 @@ fn ensure_scaffold(path: &Utf8Path, scope: ConfigScope) -> Result<(), RiptaskErr
     if path.exists() {
         return Ok(());
     }
-    let label = match scope {
-        ConfigScope::System => "system",
-        ConfigScope::User => "user",
-        ConfigScope::Local => "local",
-    };
-    let content = format!("# riptask config (scope: {label})\nversion: 1\n");
     let dir = path
         .parent()
         .ok_or_else(|| RiptaskError::Config("no parent".into()))?;
     fs::create_dir_all(dir)?;
-    fs::write(path, content)?;
+    fs::write(path, scaffold_header(scope))?;
     Ok(())
 }
 
