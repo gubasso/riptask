@@ -15,6 +15,7 @@ fn init_repo() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
         .expect("binary")
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .arg("init")
         .assert()
         .success();
@@ -24,12 +25,13 @@ fn init_repo() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
 
 #[test]
 fn hooks_status_reports_not_installed() {
-    let (_temp, repo, cache) = init_repo();
+    let (temp, repo, cache) = init_repo();
 
     Command::cargo_bin("tsk")
         .expect("binary")
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .args(["store", "hooks", "status"])
         .assert()
         .failure()
@@ -38,13 +40,14 @@ fn hooks_status_reports_not_installed() {
 
 #[test]
 fn hooks_install_creates_hook_file() {
-    let (_temp, repo, cache) = init_repo();
+    let (temp, repo, cache) = init_repo();
     let hook_path = repo.join(".git/hooks/pre-commit");
 
     Command::cargo_bin("tsk")
         .expect("binary")
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .args(["store", "hooks", "install"])
         .assert()
         .success();
@@ -66,12 +69,13 @@ fn hooks_install_creates_hook_file() {
 
 #[test]
 fn hooks_status_reports_installed_after_install() {
-    let (_temp, repo, cache) = init_repo();
+    let (temp, repo, cache) = init_repo();
 
     Command::cargo_bin("tsk")
         .expect("binary")
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .args(["store", "hooks", "install"])
         .assert()
         .success();
@@ -80,6 +84,7 @@ fn hooks_status_reports_installed_after_install() {
         .expect("binary")
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .args(["store", "hooks", "status"])
         .assert()
         .success()
@@ -91,13 +96,14 @@ fn hooks_status_reports_installed_after_install() {
 
 #[test]
 fn hooks_update_restores_modified_hook() {
-    let (_temp, repo, cache) = init_repo();
+    let (temp, repo, cache) = init_repo();
     let hook_path = repo.join(".git/hooks/pre-commit");
 
     Command::cargo_bin("tsk")
         .expect("binary")
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .args(["store", "hooks", "install"])
         .assert()
         .success();
@@ -108,6 +114,7 @@ fn hooks_update_restores_modified_hook() {
         .expect("binary")
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .args(["store", "hooks", "update"])
         .assert()
         .success();
@@ -120,12 +127,13 @@ fn hooks_update_restores_modified_hook() {
 
 #[test]
 fn hooks_update_errors_when_not_installed() {
-    let (_temp, repo, cache) = init_repo();
+    let (temp, repo, cache) = init_repo();
 
     Command::cargo_bin("tsk")
         .expect("binary")
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .args(["store", "hooks", "update"])
         .assert()
         .failure()
@@ -134,13 +142,14 @@ fn hooks_update_errors_when_not_installed() {
 
 #[test]
 fn hooks_uninstall_removes_hook() {
-    let (_temp, repo, cache) = init_repo();
+    let (temp, repo, cache) = init_repo();
     let hook_path = repo.join(".git/hooks/pre-commit");
 
     Command::cargo_bin("tsk")
         .expect("binary")
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .args(["store", "hooks", "install"])
         .assert()
         .success();
@@ -154,6 +163,7 @@ fn hooks_uninstall_removes_hook() {
         .expect("binary")
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .args(["store", "hooks", "uninstall"])
         .assert()
         .success();
@@ -166,12 +176,13 @@ fn hooks_uninstall_removes_hook() {
 
 #[test]
 fn hooks_uninstall_is_idempotent() {
-    let (_temp, repo, cache) = init_repo();
+    let (temp, repo, cache) = init_repo();
 
     Command::cargo_bin("tsk")
         .expect("binary")
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .args(["store", "hooks", "uninstall"])
         .assert()
         .success();

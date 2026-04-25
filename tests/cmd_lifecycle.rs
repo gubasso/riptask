@@ -25,6 +25,7 @@ fn new_creates_issue_file() {
         .expect("binary")
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .arg("init")
         .assert()
         .success();
@@ -36,6 +37,7 @@ fn new_creates_issue_file() {
         .current_dir(temp.path())
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .args(["new", "--title", "Test issue", "--project", "personal"])
         .assert()
         .success()
@@ -55,6 +57,7 @@ fn new_edit_opens_editor_after_creation() {
         .expect("binary")
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .arg("init")
         .assert()
         .success();
@@ -75,6 +78,7 @@ fn new_edit_opens_editor_after_creation() {
         .current_dir(temp.path())
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .env("EDITOR", &editor_script)
         .args([
             "new",
@@ -109,6 +113,7 @@ fn new_auto_registers_unregistered_repo() {
         .expect("binary")
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .arg("init")
         .assert()
         .success();
@@ -127,6 +132,7 @@ fn new_auto_registers_unregistered_repo() {
         .current_dir(&worktree)
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .args(["new", "--title", "Auto registered"])
         .assert()
         .success()
@@ -155,6 +161,7 @@ fn new_with_title_skips_ai_body_by_default() {
         .expect("binary")
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .arg("init")
         .assert()
         .success();
@@ -164,6 +171,7 @@ fn new_with_title_skips_ai_body_by_default() {
         .current_dir(temp.path())
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .args(["new", "--title", "ai test"])
         .assert()
         .success()
@@ -193,6 +201,7 @@ fn new_with_title_and_description_skips_ai() {
         .expect("binary")
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .arg("init")
         .assert()
         .success();
@@ -202,6 +211,7 @@ fn new_with_title_and_description_skips_ai() {
         .current_dir(temp.path())
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .args(["new", "--title", "manual test", "--description", "my desc"])
         .assert()
         .success()
@@ -231,6 +241,7 @@ fn new_requires_initialization() {
         .expect("binary")
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .args(["new", "--title", "Test issue"])
         .assert()
         .failure()
@@ -248,6 +259,7 @@ fn new_without_args_non_tty_errors_clearly() {
         .expect("binary")
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .arg("init")
         .assert()
         .success();
@@ -257,6 +269,7 @@ fn new_without_args_non_tty_errors_clearly() {
         .current_dir(temp.path())
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .arg("new")
         .assert()
         .failure()
@@ -275,6 +288,7 @@ fn new_with_title_and_ai_flag_attempts_ai_body() {
         .expect("binary")
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .arg("init")
         .assert()
         .success();
@@ -284,6 +298,7 @@ fn new_with_title_and_ai_flag_attempts_ai_body() {
         .current_dir(temp.path())
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .args(["new", "--title", "ai test", "--ai"])
         .assert()
         .success()
@@ -307,6 +322,7 @@ fn new_with_title_and_ai_flag_sanitizes_wrapped_body() {
         .expect("binary")
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .arg("init")
         .assert()
         .success();
@@ -321,6 +337,7 @@ fn new_with_title_and_ai_flag_sanitizes_wrapped_body() {
         .current_dir(temp.path())
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .args(["new", "--title", "ai test", "--ai"])
         .assert()
         .success()
@@ -368,6 +385,7 @@ fn new_auto_registers_non_git_directory() {
         .expect("binary")
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .arg("init")
         .assert()
         .success();
@@ -377,6 +395,7 @@ fn new_auto_registers_non_git_directory() {
         .current_dir(&plain_dir)
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .args(["new", "--title", "Non-git issue"])
         .assert()
         .success();
@@ -408,6 +427,7 @@ fn new_non_git_no_stderr_leak() {
         .expect("binary")
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .arg("init")
         .assert()
         .success();
@@ -417,6 +437,7 @@ fn new_non_git_no_stderr_leak() {
         .current_dir(&plain_dir)
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .args(["new", "--title", "Quiet issue"])
         .assert()
         .success()
@@ -445,6 +466,7 @@ fn new_does_not_register_home_as_project() {
         .expect("binary")
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .arg("init")
         .assert()
         .success();
@@ -455,6 +477,7 @@ fn new_does_not_register_home_as_project() {
         .current_dir(&subdir)
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .env("HOME", &fake_home)
         .args(["new", "--title", "Home boundary test"])
         .assert()
