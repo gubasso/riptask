@@ -84,6 +84,17 @@ impl AppPaths {
             "tsk is not initialized. Run `tsk init --system|--user|--local` first.".into(),
         ))
     }
+
+    pub fn require_shared_layer(&self) -> Result<(), RiptaskError> {
+        if self.system_config_path().exists() {
+            return Ok(());
+        }
+        Err(RiptaskError::General(
+            "shared task store not initialized — run `tsk init --system` \
+             (or set RIPTASK_REPO to an initialized store)"
+                .into(),
+        ))
+    }
 }
 
 pub fn current_cwd() -> Utf8PathBuf {

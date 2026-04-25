@@ -144,7 +144,7 @@ fn command_without_any_config_reports_init_instruction() {
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "tsk is not initialized. Run `tsk init --system|--user|--local` first.",
+            "shared task store not initialized",
         ));
 }
 
