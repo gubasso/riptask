@@ -1,4 +1,3 @@
-version: 1
 defaults:
   board: personal
   status: todo

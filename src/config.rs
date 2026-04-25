@@ -14,7 +14,6 @@ use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Config {
-    pub version: u32,
     #[serde(default)]
     pub auto_commit: bool,
     pub defaults: DefaultsConfig,
@@ -67,18 +66,13 @@ impl ConfigScope {
     }
 }
 
-/// Auto-created scaffold content for a fresh layer file. See
-/// pinned decision #10: minimal two-line header that always parses
-/// under `deny_unknown_fields`.
 pub fn scaffold_header(scope: ConfigScope) -> String {
-    format!("# riptask config (scope: {})\nversion: 1\n", scope.label())
+    format!("# riptask config (scope: {})\n", scope.label())
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PartialConfig {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub version: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_commit: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -183,7 +177,6 @@ pub struct PartialSync {
 impl PartialConfig {
     pub fn merge(lower: Self, higher: Self) -> Self {
         Self {
-            version: higher.version.or(lower.version),
             auto_commit: higher.auto_commit.or(lower.auto_commit),
             defaults: merge_option_with(lower.defaults, higher.defaults, PartialDefaults::merge),
             projects: merge_vec(lower.projects, higher.projects, |project| {
@@ -207,7 +200,6 @@ impl PartialConfig {
         let partial_features = partial_ai.features.unwrap_or_default();
         let partial_sync = self.sync.unwrap_or_default();
         let mut config = Config {
-            version: self.version.unwrap_or(defaults.version),
             auto_commit: self.auto_commit.unwrap_or(defaults.auto_commit),
             defaults: DefaultsConfig {
                 board: partial_defaults.board.unwrap_or(defaults.defaults.board),
@@ -267,7 +259,6 @@ impl PartialConfig {
 impl From<Config> for PartialConfig {
     fn from(config: Config) -> Self {
         Self {
-            version: Some(config.version),
             auto_commit: Some(config.auto_commit),
             defaults: Some(PartialDefaults {
                 board: Some(config.defaults.board),
@@ -388,7 +379,6 @@ where
 
 pub fn default_config() -> Config {
     Config {
-        version: 1,
         auto_commit: false,
         defaults: DefaultsConfig {
             board: "personal".into(),
@@ -433,10 +423,11 @@ pub fn default_config() -> Config {
 pub fn load_layer(path: &Path) -> Result<Option<PartialConfig>, RiptaskError> {
     match fs::read_to_string(path) {
         Ok(content) => {
-            let partial: PartialConfig = serde_yaml_ng::from_str(&content).map_err(|error| {
-                RiptaskError::Config(format!("failed to parse {}: {error}", path.display()))
-            })?;
-            Ok(Some(partial))
+            let partial: Option<PartialConfig> =
+                serde_yaml_ng::from_str(&content).map_err(|error| {
+                    RiptaskError::Config(format!("failed to parse {}: {error}", path.display()))
+                })?;
+            Ok(Some(partial.unwrap_or_default()))
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(RiptaskError::Io(error)),
@@ -759,7 +750,6 @@ mod tests {
             .expect("layer")
             .finalize()
             .expect("finalize fixture config");
-        assert_eq!(config.version, 1);
         assert_eq!(config.projects.len(), 1);
     }
 
@@ -821,12 +811,6 @@ mod tests {
     }
 
     #[test]
-    fn finalize_missing_version_uses_default() {
-        let config = PartialConfig::default().finalize().expect("finalize");
-        assert_eq!(config.version, 1);
-    }
-
-    #[test]
     fn finalize_runs_validate_config() {
         let config = PartialConfig {
             projects: vec![project("demo", None)],
@@ -851,7 +835,7 @@ mod tests {
     #[test]
     fn load_layer_rejects_unknown_field_with_file_in_message() {
         let file = NamedTempFile::new().expect("temp file");
-        fs::write(file.path(), "version: 1\nunknown: true\n").expect("write yaml");
+        fs::write(file.path(), "unknown: true\n").expect("write yaml");
         let error = load_layer(file.path()).expect_err("unknown field");
         match error {
             RiptaskError::Config(message) => {
@@ -876,7 +860,7 @@ mod tests {
             .expect("layer")
             .finalize()
             .expect("finalize");
-        assert_eq!(reparsed.version, 1);
+        assert_eq!(reparsed.projects.len(), 1);
     }
 
     #[test]
@@ -898,8 +882,7 @@ mod tests {
         let user = temp.path().join("user");
         fs::create_dir_all(&system).expect("system dir");
         let config_path = system.join("config.yaml");
-        let yaml = r#"version: 1
-defaults:
+        let yaml = r#"defaults:
   board: personal
   status: todo
   priority: medium
