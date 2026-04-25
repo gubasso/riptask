@@ -75,7 +75,7 @@ async fn remote_pr_number_for_issue(
 }
 
 pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptaskError> {
-    paths.require_initialized(&crate::paths::current_cwd())?;
+    paths.require_shared_layer()?;
     let config = load_effective_config(
         paths,
         &camino::Utf8PathBuf::from(

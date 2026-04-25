@@ -15,7 +15,7 @@ fn validate_template_name(name: &str) -> Result<(), RiptaskError> {
 }
 
 pub fn run(paths: &AppPaths, args: TemplateArgs) -> Result<(), RiptaskError> {
-    paths.require_initialized(&crate::paths::current_cwd())?;
+    paths.require_shared_layer()?;
     let config = load_effective_config(
         paths,
         &camino::Utf8PathBuf::from(

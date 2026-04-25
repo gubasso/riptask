@@ -13,7 +13,7 @@ use crate::services::issue_service::generate_branch_slug;
 use crate::storage::{frontmatter, issue_store, work_clone};
 
 pub async fn run(paths: &AppPaths, args: CloneArgs) -> Result<(), RiptaskError> {
-    paths.require_initialized(&crate::paths::current_cwd())?;
+    paths.require_shared_layer()?;
     let config = load_effective_config(
         paths,
         &camino::Utf8PathBuf::from(
