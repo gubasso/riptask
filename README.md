@@ -465,8 +465,6 @@ Config is loaded from three YAML layers, lowest precedence to highest:
 
 Higher layers override scalar values. `projects`, `boards`, and `recurring` are concatenated and deduplicated by their identity keys (`name`, `name`, and `id` respectively), with higher layers winning collisions.
 
-Breaking change: the system config file is now `config.yaml`; users upgrading from older versions must manually rename `$RIPTASK_REPO/config.yaml` if their local checkout still uses the old filename.
-
 Example:
 
 ```yaml
