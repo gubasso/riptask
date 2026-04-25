@@ -3,6 +3,7 @@ pub mod branch;
 pub mod clone_cmd;
 pub mod commit;
 pub mod config_cmd;
+pub mod doctor;
 pub mod done;
 pub mod hooks;
 pub mod id;

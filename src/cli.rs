@@ -26,7 +26,7 @@ pub(crate) const HELP_GROUPS: &[(&str, &[&str])] = &[
     ("AI Assistance", &["ask", "summarize"]),
     (
         "Setup & Meta",
-        &["config", "help", "init", "template", "version"],
+        &["config", "doctor", "help", "init", "template", "version"],
     ),
 ];
 
@@ -196,6 +196,8 @@ pub enum Commands {
     Summarize(SummarizeArgs),
     /// View or update tsk configuration
     Config(ConfigArgs),
+    /// Print diagnostics: paths, config layers, and effective config
+    Doctor,
     /// Generate shell completions
     #[command(hide = true)]
     Completions {

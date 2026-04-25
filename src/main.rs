@@ -53,6 +53,7 @@ fn run() -> Result<(), RiptaskError> {
     match cli.command.unwrap_or(Commands::Help { command: None }) {
         Commands::Init => commands::init::run(&paths),
         Commands::Config(args) => commands::config_cmd::run(&paths, args),
+        Commands::Doctor => commands::doctor::run(&paths),
         Commands::Show(args) => commands::issues::show(&paths, args),
         Commands::Path(args) => commands::issues::path(&paths, args),
         Commands::Id => commands::id::run(&paths),
