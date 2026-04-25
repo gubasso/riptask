@@ -55,7 +55,7 @@ Token lookup order and alternatives (e.g. `glab auth`, `jira-cli-go` keychain) a
 If you have never run `tsk`, initialize the local store:
 
 ```bash
-tsk init
+tsk init --system
 ```
 
 This creates `$RIPTASK_REPO` (defaults to `$XDG_DATA_HOME/riptask`) with `issues/`, `templates/`, `config.yaml`, and a git repo.
@@ -69,7 +69,7 @@ cd /path/to/your/project
 tsk register
 ```
 
-`tsk register` detects the `gitlab` remote and adds a RepoProject entry to `config.yaml`. Confirm with:
+`tsk register` detects the `gitlab` remote and adds a RepoProject entry to the selected config layer. Use `tsk register --user` or `tsk register --local` to choose explicitly. Confirm with:
 
 ```bash
 tsk register --list

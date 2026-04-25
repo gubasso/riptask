@@ -15,7 +15,7 @@ fn validate_template_name(name: &str) -> Result<(), RiptaskError> {
 }
 
 pub fn run(paths: &AppPaths, args: TemplateArgs) -> Result<(), RiptaskError> {
-    paths.require_initialized()?;
+    paths.require_initialized(&crate::paths::current_cwd())?;
     let config = load_effective_config(
         paths,
         &camino::Utf8PathBuf::from(

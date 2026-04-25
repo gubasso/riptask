@@ -19,7 +19,7 @@ use std::collections::HashSet;
 use std::io::IsTerminal;
 
 pub async fn run(paths: &AppPaths, args: SyncArgs) -> Result<(), RiptaskError> {
-    paths.require_initialized()?;
+    paths.require_initialized(&crate::paths::current_cwd())?;
     match args.subcommand.clone() {
         Some(SyncSubcommand::Pull(subargs)) => pull(paths, &args, &subargs).await,
         Some(SyncSubcommand::Push(subargs)) => push(paths, &args, &subargs).await,
@@ -512,7 +512,7 @@ fn bump_local_updated_at(path: &camino::Utf8PathBuf) -> Result<(), RiptaskError>
 }
 
 pub fn session(paths: &AppPaths, args: SessionArgs) -> Result<(), RiptaskError> {
-    paths.require_initialized()?;
+    paths.require_initialized(&crate::paths::current_cwd())?;
     match args.subcommand {
         SessionSubcommand::Start(args) => session_start(paths, args),
         SessionSubcommand::End => session_end(paths),
@@ -520,7 +520,7 @@ pub fn session(paths: &AppPaths, args: SessionArgs) -> Result<(), RiptaskError> 
 }
 
 pub fn commit(paths: &AppPaths, args: StoreCommitArgs) -> Result<(), RiptaskError> {
-    paths.require_initialized()?;
+    paths.require_initialized(&crate::paths::current_cwd())?;
     let git = CliGit::new();
     let repo = paths.riptask_repo.as_std_path().to_path_buf();
     let tracked = [

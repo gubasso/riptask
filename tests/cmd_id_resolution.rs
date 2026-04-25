@@ -17,7 +17,8 @@ fn path_resolves_numeric_id_from_detected_project() {
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
-        .arg("init")
+        .env("XDG_STATE_HOME", temp.path().join("state"))
+        .args(["init", "--system"])
         .assert()
         .success();
 
@@ -34,6 +35,7 @@ fn path_resolves_numeric_id_from_detected_project() {
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
+        .env("XDG_STATE_HOME", temp.path().join("state"))
         .args(["path", "61"])
         .assert()
         .success()
@@ -53,7 +55,8 @@ fn path_resolves_numeric_id_by_unique_suffix_without_detected_project() {
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
-        .arg("init")
+        .env("XDG_STATE_HOME", temp.path().join("state"))
+        .args(["init", "--system"])
         .assert()
         .success();
 
@@ -72,6 +75,7 @@ fn path_resolves_numeric_id_by_unique_suffix_without_detected_project() {
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
+        .env("XDG_STATE_HOME", temp.path().join("state"))
         .args(["path", "42"])
         .assert()
         .success()
@@ -91,7 +95,8 @@ fn id_prints_issue_id_for_current_branch() {
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
-        .arg("init")
+        .env("XDG_STATE_HOME", temp.path().join("state"))
+        .args(["init", "--system"])
         .assert()
         .success();
 
@@ -110,6 +115,7 @@ fn id_prints_issue_id_for_current_branch() {
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
+        .env("XDG_STATE_HOME", temp.path().join("state"))
         .arg("id")
         .assert()
         .success()
@@ -129,7 +135,8 @@ fn id_errors_when_current_branch_has_no_issue() {
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
-        .arg("init")
+        .env("XDG_STATE_HOME", temp.path().join("state"))
+        .args(["init", "--system"])
         .assert()
         .success();
 
@@ -147,6 +154,7 @@ fn id_errors_when_current_branch_has_no_issue() {
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
+        .env("XDG_STATE_HOME", temp.path().join("state"))
         .arg("id")
         .assert()
         .failure()
@@ -174,7 +182,7 @@ fn init_worktree_branch(worktree: &std::path::Path, branch: &str) {
         .arg("commit")
         .arg("--allow-empty")
         .arg("-m")
-        .arg("init")
+        .arg("initial")
         .status()
         .expect("git commit");
     assert!(status.success());

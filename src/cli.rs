@@ -209,8 +209,8 @@ pub enum Commands {
         /// Command name
         command: Option<String>,
     },
-    /// Initialize a new tsk repository
-    Init,
+    /// Initialize a config layer. Does not register a project; run `tsk register` after init.
+    Init(InitArgs),
     /// Manage issue templates
     Template(TemplateArgs),
     /// Print version information
@@ -247,6 +247,15 @@ pub struct BranchArgs {
     /// Skip confirmation prompts (for -d/-D and --adopt overwrite)
     #[arg(short = 'y', long = "yes")]
     pub yes: bool,
+}
+
+#[derive(Debug, Clone, Args, Default)]
+pub struct InitArgs {
+    #[command(flatten)]
+    pub scope: ScopeFlags,
+    /// Overwrite an existing complete config at the chosen scope
+    #[arg(long)]
+    pub force: bool,
 }
 
 #[derive(Debug, Clone, Args, Default)]
@@ -661,6 +670,8 @@ pub enum RecurSubcommand {
 
 #[derive(Debug, Clone, Args, Default)]
 pub struct RecurNewArgs {
+    #[command(flatten)]
+    pub scope: ScopeFlags,
     /// Unique ID for this recurring definition
     #[arg(long)]
     pub id: String,
@@ -747,6 +758,8 @@ pub enum TemplateSubcommand {
 
 #[derive(Debug, Clone, Args, Default)]
 pub struct RegisterArgs {
+    #[command(flatten)]
+    pub scope: ScopeFlags,
     /// List registered RepoProjects
     #[arg(long)]
     pub list: bool,
@@ -803,8 +816,8 @@ pub enum ConfigSubcommand {
 pub struct ScopeFlags {
     #[arg(long)]
     pub system: bool,
-    #[arg(long)]
-    pub global: bool,
+    #[arg(long = "user", alias = "global")]
+    pub user: bool,
     #[arg(long)]
     pub local: bool,
 }
@@ -813,7 +826,7 @@ impl ScopeFlags {
     pub fn scope(&self) -> Option<ConfigScope> {
         if self.system {
             Some(ConfigScope::System)
-        } else if self.global {
+        } else if self.user {
             Some(ConfigScope::User)
         } else if self.local {
             Some(ConfigScope::Local)
@@ -855,7 +868,11 @@ pub enum HooksSubcommand {
 
 #[cfg(test)]
 mod tests {
-    use super::{Cli, Commands, HELP_GROUPS, PrSubcommand, SessionSubcommand, SyncSubcommand};
+    use super::{
+        Cli, Commands, ConfigSubcommand, HELP_GROUPS, PrSubcommand, SessionSubcommand,
+        SyncSubcommand,
+    };
+    use crate::config::ConfigScope;
     use clap::{CommandFactory, Parser};
 
     /// Guards against drift between `HELP_GROUPS` and the actual `Commands`
@@ -1405,5 +1422,31 @@ mod tests {
             panic!("expected sync resolve subcommand");
         };
         assert!(args.take_local);
+    }
+
+    #[test]
+    fn config_set_user_scope_parses() {
+        let cli = Cli::try_parse_from(["tsk", "config", "set", "--user", "auto_commit", "true"])
+            .expect("parse");
+        let Commands::Config(args) = cli.command.expect("command") else {
+            panic!("expected config command");
+        };
+        let Some(ConfigSubcommand::Set { scope, .. }) = args.subcommand else {
+            panic!("expected config set");
+        };
+        assert_eq!(scope.scope(), Some(ConfigScope::User));
+    }
+
+    #[test]
+    fn config_set_global_alias_parses() {
+        let cli = Cli::try_parse_from(["tsk", "config", "set", "--global", "auto_commit", "true"])
+            .expect("parse");
+        let Commands::Config(args) = cli.command.expect("command") else {
+            panic!("expected config command");
+        };
+        let Some(ConfigSubcommand::Set { scope, .. }) = args.subcommand else {
+            panic!("expected config set");
+        };
+        assert_eq!(scope.scope(), Some(ConfigScope::User));
     }
 }

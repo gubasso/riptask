@@ -1,19 +1,19 @@
 use crate::adapters::prompts::DialoguerPrompts;
 use crate::cli::RegisterArgs;
-use crate::config::{load_effective_config, load_layer, save_layer};
+use crate::config::{config_mutate_scoped, default_write_scope, load_effective_config};
 use crate::error::RiptaskError;
 use crate::paths::AppPaths;
 use comfy_table::{Attribute, Cell, Color, ContentArrangement, Table, presets::NOTHING};
 use std::io::IsTerminal;
 
 pub fn run(paths: &AppPaths, args: RegisterArgs) -> Result<(), RiptaskError> {
-    paths.require_initialized()?;
     let cwd = camino::Utf8PathBuf::from(
         std::env::current_dir()
             .unwrap_or_default()
             .to_string_lossy()
             .to_string(),
     );
+    paths.require_initialized(&cwd)?;
     let config = load_effective_config(paths, &cwd)?;
     if args.list {
         if std::io::stdout().is_terminal() {
@@ -109,17 +109,19 @@ pub fn run(paths: &AppPaths, args: RegisterArgs) -> Result<(), RiptaskError> {
         &cwd,
         args.repo_project_label,
     )?;
-    let sys_path = paths.system_config_path();
-    let mut partial = load_layer(sys_path.as_std_path())?.unwrap_or_default();
-    partial.projects.push(repo_project.clone());
-    save_layer(sys_path.as_std_path(), &partial)?;
-    load_effective_config(paths, &cwd)?;
-    // TODO(config-scope): honor --scope once vec-mutating commands accept it.
+    let scope = args
+        .scope
+        .scope()
+        .unwrap_or_else(|| default_write_scope(paths, &cwd));
+    let receipt = config_mutate_scoped(paths, &cwd, scope, |partial| {
+        partial.projects.push(repo_project.clone());
+        Ok(())
+    })?;
     crate::ui::success(&format!(
-        "registered {} (vc: {}, tasks: {})",
+        "registered {} in {} ({})",
         repo_project.name,
-        repo_project.vc_backend.kind.as_str(),
-        repo_project.tasks_backend.kind.as_str()
+        receipt.scope.label(),
+        receipt.path
     ));
     Ok(())
 }

@@ -44,14 +44,17 @@ fn run() -> Result<(), RiptaskError> {
         .try_init()
         .context("failed to initialize tracing subscriber")?;
 
-    riptask::services::project_detection::ensure_registered(
-        &paths,
-        &riptask::adapters::git::CliGit::new(),
-        &riptask::adapters::prompts::DialoguerPrompts,
-    )?;
+    let command = cli.command.unwrap_or(Commands::Help { command: None });
+    if needs_auto_register(&command) {
+        riptask::services::project_detection::ensure_registered(
+            &paths,
+            &riptask::adapters::git::CliGit::new(),
+            &riptask::adapters::prompts::DialoguerPrompts,
+        )?;
+    }
 
-    match cli.command.unwrap_or(Commands::Help { command: None }) {
-        Commands::Init => commands::init::run(&paths),
+    match command {
+        Commands::Init(args) => commands::init::run(&paths, args),
         Commands::Config(args) => commands::config_cmd::run(&paths, args),
         Commands::Doctor => commands::doctor::run(&paths),
         Commands::Show(args) => commands::issues::show(&paths, args),
@@ -158,4 +161,21 @@ fn run() -> Result<(), RiptaskError> {
         Commands::Summarize(args) => commands::ai::summarize(&paths, args),
         Commands::Ask(args) => commands::ai::ask(&paths, args),
     }
+}
+
+fn needs_auto_register(command: &Commands) -> bool {
+    // `tsk register` runs auto-registration itself (via `register_project_interactive`),
+    // so the unconditional pre-dispatch hook must skip it. Otherwise `tsk register --list`
+    // would mutate the config before listing, and `tsk register --user` in a fresh repo
+    // would auto-register to the default scope and then duplicate-register to --user.
+    !matches!(
+        command,
+        Commands::Init(_)
+            | Commands::Config(_)
+            | Commands::Doctor
+            | Commands::Help { .. }
+            | Commands::Version
+            | Commands::Completions { .. }
+            | Commands::Register(_)
+    )
 }

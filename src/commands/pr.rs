@@ -48,7 +48,7 @@ pub async fn run(paths: &AppPaths, args: PrArgs) -> Result<(), RiptaskError> {
 }
 
 pub(crate) async fn create(paths: &AppPaths, args: PrCreateArgs) -> Result<(), RiptaskError> {
-    paths.require_initialized()?;
+    paths.require_initialized(&crate::paths::current_cwd())?;
     let config = load_effective_config(
         paths,
         &camino::Utf8PathBuf::from(
@@ -196,7 +196,7 @@ pub(crate) async fn create(paths: &AppPaths, args: PrCreateArgs) -> Result<(), R
 }
 
 async fn show(paths: &AppPaths, args: PrShowArgs) -> Result<(), RiptaskError> {
-    paths.require_initialized()?;
+    paths.require_initialized(&crate::paths::current_cwd())?;
     let config = load_effective_config(
         paths,
         &camino::Utf8PathBuf::from(
@@ -234,7 +234,7 @@ async fn show(paths: &AppPaths, args: PrShowArgs) -> Result<(), RiptaskError> {
 }
 
 async fn merge(paths: &AppPaths, args: PrMergeArgs) -> Result<(), RiptaskError> {
-    paths.require_initialized()?;
+    paths.require_initialized(&crate::paths::current_cwd())?;
     let config = load_effective_config(
         paths,
         &camino::Utf8PathBuf::from(
@@ -294,7 +294,7 @@ async fn merge(paths: &AppPaths, args: PrMergeArgs) -> Result<(), RiptaskError> 
 }
 
 async fn edit(paths: &AppPaths, args: PrEditArgs) -> Result<(), RiptaskError> {
-    paths.require_initialized()?;
+    paths.require_initialized(&crate::paths::current_cwd())?;
     let config = load_effective_config(
         paths,
         &camino::Utf8PathBuf::from(

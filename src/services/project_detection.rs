@@ -1,7 +1,9 @@
 use crate::adapters::ai::AiBackend;
 use crate::adapters::git::GitBackend;
 use crate::adapters::prompts::PromptBackend;
-use crate::config::{Config, load_effective_config, load_layer, save_layer};
+use crate::config::{
+    Config, any_config_exists, config_mutate_scoped, default_write_scope, load_effective_config,
+};
 use crate::error::{ProjectKeyCollision, ProjectKeyProjectMeta, RiptaskError};
 use crate::models::{BackendKind, RepoProject, TasksBackendSpec, VCBackendSpec};
 use crate::paths::AppPaths;
@@ -17,16 +19,17 @@ pub fn ensure_registered(
     git: &dyn GitBackend,
     prompts: &dyn PromptBackend,
 ) -> Result<(), RiptaskError> {
-    let config_path = paths.system_config_path();
-    if !config_path.exists() {
-        return Ok(());
-    }
     let cwd = camino::Utf8PathBuf::from(
         std::env::current_dir()
             .unwrap_or_default()
             .to_string_lossy()
             .to_string(),
     );
+    if !any_config_exists(paths, &cwd) {
+        return Err(RiptaskError::General(
+            "tsk is not initialized. Run `tsk init --system|--user|--local` first.".into(),
+        ));
+    }
     let mut config = load_effective_config(paths, &cwd)?;
     let detected = match detect_from_cwd(&cwd, &config) {
         Ok(result) => result,
@@ -50,17 +53,23 @@ pub fn ensure_registered(
         Err(_) => return Ok(()),
     };
     if let Some(repo_project) = registered {
-        let mut partial = load_layer(config_path.as_std_path())?.unwrap_or_default();
-        partial.projects.push(repo_project);
-        save_layer(config_path.as_std_path(), &partial)?;
-        load_effective_config(paths, &cwd)?;
-        // TODO(config-scope): honor --scope once vec-mutating commands accept it.
+        let scope = default_write_scope(paths, &cwd);
+        let receipt = config_mutate_scoped(paths, &cwd, scope, |partial| {
+            partial.projects.push(repo_project.clone());
+            Ok(())
+        })?;
+        crate::ui::success(&format!(
+            "registered {} in {} ({})",
+            repo_project.name,
+            receipt.scope.label(),
+            receipt.path
+        ));
         maybe_auto_commit(
             &config,
             git,
             paths.riptask_repo.as_std_path(),
             "riptask: auto-register project",
-            &[config_path.as_std_path()],
+            &[receipt.path.as_std_path()],
         )?;
     }
     Ok(())

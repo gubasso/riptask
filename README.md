@@ -124,7 +124,7 @@ just install
 cargo install --path .
 ```
 
-After installing, run `tsk init` before using the task store.
+After installing, run `tsk init --system`, `tsk init --user`, or `tsk init --local` before using the task store. Running `tsk init` without a scope prompts interactively on a TTY.
 
 Shell completions:
 
@@ -152,7 +152,7 @@ Project repositories are separate. Commands like `tsk branch`, `tsk pr`, `tsk do
 | `$XDG_CONFIG_HOME/riptask/config.env` | `~/.config/riptask/config.env` | Optional `RIPTASK_REPO=...` override |
 | `$XDG_CACHE_HOME/riptask` | `~/.cache/riptask` | `views/`, `backend_state.json`, `id_map.json`, `deleted_keys.json`, `session.json` |
 
-`tsk init` creates the task store, seeds built-in templates, writes `config.yaml`, and initializes a git repo there.
+`tsk init --system` creates the task store, seeds built-in templates, writes `$RIPTASK_REPO/config.yaml`, and initializes a git repo there. `tsk init --user` and `tsk init --local` create header-only partial config layers. `tsk init` does not register a project; run `tsk register --user` or `tsk register --local` after init.
 
 ## Issue lifecycle
 
@@ -516,15 +516,15 @@ recurring: []
 
 ### Settable via `tsk config set`
 
-`tsk config set` accepts git-style scope flags:
+`tsk config set` accepts scope flags. `--user` is canonical; `--global` remains an alias:
 
 ```bash
 tsk config set --system auto_commit true
-tsk config set --global ui.opener "nvim -R"
+tsk config set --user ui.opener "nvim -R"
 tsk config set --local defaults.board personal
 ```
 
-When no scope flag is provided, writes go to Local when run inside a project and User otherwise. `tsk config edit` accepts the same scope flags. Without a scope flag, it opens the single existing layer file directly, uses `fzf` when multiple layer files exist, or creates a Local config when no layer files exist and the command is run inside a project.
+When no scope flag is provided, config-mutating commands write to Local when run inside a project and User otherwise, except `tsk init`, which never assumes a default. `tsk config edit` accepts the same scope flags. Without a scope flag, it opens the single existing layer file directly, uses `fzf` when multiple layer files exist, or creates a Local config when no layer files exist and the command is run inside a project.
 
 Exactly these keys are supported:
 

@@ -5,7 +5,7 @@ use crate::services::id_resolution;
 /// Implementation of `tsk id`: print the issue id associated with the current
 /// git branch, or error with a non-zero exit code.
 pub fn run(paths: &AppPaths) -> Result<(), RiptaskError> {
-    paths.require_initialized()?;
+    paths.require_initialized(&crate::paths::current_cwd())?;
     let id = id_resolution::id_for_current_branch(paths)?;
     println!("{id}");
     Ok(())

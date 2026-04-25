@@ -38,15 +38,19 @@ pub enum ConfigScope {
     Local,
 }
 
+#[derive(Debug, Clone)]
+pub struct ConfigWriteReceipt {
+    pub scope: ConfigScope,
+    pub path: Utf8PathBuf,
+}
+
 impl ConfigScope {
     pub fn resolve(self, paths: &AppPaths, cwd: &Utf8Path) -> Result<Utf8PathBuf, RiptaskError> {
         match self {
             ConfigScope::System => Ok(paths.system_config_path()),
             ConfigScope::User => Ok(paths.user_config_path()),
             ConfigScope::Local => paths.local_config_path(cwd).ok_or_else(|| {
-                RiptaskError::Config(
-                    "not inside a riptask project; use --system or --global".into(),
-                )
+                RiptaskError::Config("not inside a riptask project; use --system or --user".into())
             }),
         }
     }
@@ -480,24 +484,75 @@ pub fn config_set_scoped(
     scope: ConfigScope,
     key: &str,
     value: &str,
-) -> Result<(), RiptaskError> {
+) -> Result<ConfigWriteReceipt, RiptaskError> {
+    config_mutate_scoped(paths, cwd, scope, |partial| {
+        partial_config_set(partial, key, value)
+    })
+}
+
+pub fn config_mutate_scoped<F>(
+    paths: &AppPaths,
+    cwd: &Utf8Path,
+    scope: ConfigScope,
+    mutate: F,
+) -> Result<ConfigWriteReceipt, RiptaskError>
+where
+    F: FnOnce(&mut PartialConfig) -> Result<(), RiptaskError>,
+{
     let target = scope.resolve(paths, cwd)?;
     let creating = !target.exists();
+    // Snapshot the existing file (if any) so we can roll back if validation fails after write.
+    let prior_contents = if creating {
+        None
+    } else {
+        Some(std::fs::read(target.as_std_path()).map_err(|error| {
+            RiptaskError::Config(format!("failed to read {}: {}", target, error))
+        })?)
+    };
     let mut partial = load_layer(target.as_std_path())?.unwrap_or_default();
-    partial_config_set(&mut partial, key, value)?;
+    mutate(&mut partial)?;
     let header = if creating {
         Some(scaffold_header(scope))
     } else {
         None
     };
     save_layer_with_header(target.as_std_path(), &partial, header.as_deref())?;
-    load_effective_config(paths, cwd).map_err(|error| {
-        RiptaskError::Config(format!(
-            "validation failed after writing {}: {}",
-            target, error
-        ))
-    })?;
-    Ok(())
+    if let Err(error) = load_effective_config(paths, cwd) {
+        // Roll back the write so the on-disk config is not left in a broken state.
+        let rollback = match &prior_contents {
+            Some(bytes) => std::fs::write(target.as_std_path(), bytes),
+            None => std::fs::remove_file(target.as_std_path()),
+        };
+        let rollback_note = match rollback {
+            Ok(()) => String::new(),
+            Err(rollback_error) => format!(
+                " (rollback also failed: {}; file may be left in an inconsistent state)",
+                rollback_error
+            ),
+        };
+        return Err(RiptaskError::Config(format!(
+            "validation failed after writing {}: {}{}",
+            target, error, rollback_note
+        )));
+    }
+    Ok(ConfigWriteReceipt {
+        scope,
+        path: target,
+    })
+}
+
+pub fn default_write_scope(paths: &AppPaths, cwd: &Utf8Path) -> ConfigScope {
+    if paths.local_config_path(cwd).is_some() {
+        ConfigScope::Local
+    } else {
+        ConfigScope::User
+    }
+}
+
+pub fn any_config_exists(paths: &AppPaths, cwd: &Utf8Path) -> bool {
+    ConfigScope::System.exists(paths, cwd)
+        || ConfigScope::User.exists(paths, cwd)
+        || ConfigScope::Local.exists(paths, cwd)
 }
 
 pub fn validate_config(config: &mut Config) -> Result<(), RiptaskError> {
@@ -733,8 +788,8 @@ pub fn parse_priority(value: &str) -> anyhow::Result<Priority> {
 #[cfg(test)]
 mod tests {
     use super::{
-        PartialConfig, PartialUi, load_effective_config, load_layer, parse_priority, parse_state,
-        save_layer,
+        ConfigScope, PartialConfig, PartialUi, config_mutate_scoped, load_effective_config,
+        load_layer, parse_priority, parse_state, save_layer,
     };
     use crate::error::RiptaskError;
     use crate::models::{BackendKind, RepoProject, TasksBackendSpec, VCBackendSpec};
@@ -978,6 +1033,179 @@ recurring: []
             }
             other => panic!("expected RiptaskError::Config, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn config_mutate_scoped_creates_local_with_header() {
+        let temp = tempdir().expect("temp dir");
+        let system = temp.path().join("repo");
+        let user = temp.path().join("user");
+        let project_root = temp.path().join("project");
+        fs::create_dir_all(&system).expect("system dir");
+        fs::create_dir_all(&user).expect("user dir");
+        fs::create_dir_all(project_root.join(".riptask")).expect("local dir marker");
+        let paths = AppPaths {
+            riptask_repo: system.to_string_lossy().to_string().into(),
+            user_config_root: user.to_string_lossy().to_string().into(),
+            cache_root: temp
+                .path()
+                .join("cache")
+                .to_string_lossy()
+                .to_string()
+                .into(),
+            state_root: temp
+                .path()
+                .join("state")
+                .to_string_lossy()
+                .to_string()
+                .into(),
+        };
+        let cwd = camino::Utf8Path::from_path(&project_root).expect("utf8 cwd");
+
+        let receipt = config_mutate_scoped(&paths, cwd, ConfigScope::Local, |partial| {
+            partial.auto_commit = Some(true);
+            Ok(())
+        })
+        .expect("mutate local");
+
+        let content = fs::read_to_string(receipt.path).expect("local config");
+        assert!(content.starts_with("# riptask config (scope: local)\n"));
+        assert!(content.contains("auto_commit: true"));
+    }
+
+    #[test]
+    fn config_mutate_scoped_preserves_other_layers() {
+        let temp = tempdir().expect("temp dir");
+        let system = temp.path().join("repo");
+        let user = temp.path().join("user");
+        fs::create_dir_all(&system).expect("system dir");
+        fs::create_dir_all(&user).expect("user dir");
+        let system_config = system.join("config.yaml");
+        fs::write(&system_config, "auto_commit: false\n").expect("system config");
+        let before = fs::read_to_string(&system_config).expect("before");
+        let paths = AppPaths {
+            riptask_repo: system.to_string_lossy().to_string().into(),
+            user_config_root: user.to_string_lossy().to_string().into(),
+            cache_root: temp
+                .path()
+                .join("cache")
+                .to_string_lossy()
+                .to_string()
+                .into(),
+            state_root: temp
+                .path()
+                .join("state")
+                .to_string_lossy()
+                .to_string()
+                .into(),
+        };
+
+        config_mutate_scoped(
+            &paths,
+            camino::Utf8Path::new("/tmp"),
+            ConfigScope::User,
+            |partial| {
+                partial.auto_commit = Some(true);
+                Ok(())
+            },
+        )
+        .expect("mutate user");
+
+        let after = fs::read_to_string(system_config).expect("after");
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn config_mutate_scoped_revalidates_after_write() {
+        let temp = tempdir().expect("temp dir");
+        let system = temp.path().join("repo");
+        let user = temp.path().join("user");
+        fs::create_dir_all(&system).expect("system dir");
+        fs::create_dir_all(&user).expect("user dir");
+        let paths = AppPaths {
+            riptask_repo: system.to_string_lossy().to_string().into(),
+            user_config_root: user.to_string_lossy().to_string().into(),
+            cache_root: temp
+                .path()
+                .join("cache")
+                .to_string_lossy()
+                .to_string()
+                .into(),
+            state_root: temp
+                .path()
+                .join("state")
+                .to_string_lossy()
+                .to_string()
+                .into(),
+        };
+
+        let error = config_mutate_scoped(
+            &paths,
+            camino::Utf8Path::new("/tmp"),
+            ConfigScope::System,
+            |partial| {
+                let mut invalid = project("invalid", None);
+                invalid.vc_backend.kind = BackendKind::Jira;
+                partial.projects.push(invalid);
+                Ok(())
+            },
+        )
+        .expect_err("validation failure");
+
+        assert!(matches!(error, RiptaskError::Config(_)));
+        // The newly-created system file must be rolled back since the write failed validation.
+        assert!(
+            !system.join("config.yaml").exists(),
+            "rollback should remove the file created during a failed write"
+        );
+    }
+
+    #[test]
+    fn config_mutate_scoped_rolls_back_existing_file_on_validation_failure() {
+        let temp = tempdir().expect("temp dir");
+        let system = temp.path().join("repo");
+        let user = temp.path().join("user");
+        fs::create_dir_all(&system).expect("system dir");
+        fs::create_dir_all(&user).expect("user dir");
+        let system_config = system.join("config.yaml");
+        let original = "# riptask config (scope: system)\nauto_commit: false\n";
+        fs::write(&system_config, original).expect("seed system config");
+        let paths = AppPaths {
+            riptask_repo: system.to_string_lossy().to_string().into(),
+            user_config_root: user.to_string_lossy().to_string().into(),
+            cache_root: temp
+                .path()
+                .join("cache")
+                .to_string_lossy()
+                .to_string()
+                .into(),
+            state_root: temp
+                .path()
+                .join("state")
+                .to_string_lossy()
+                .to_string()
+                .into(),
+        };
+
+        let error = config_mutate_scoped(
+            &paths,
+            camino::Utf8Path::new("/tmp"),
+            ConfigScope::System,
+            |partial| {
+                let mut invalid = project("invalid", None);
+                invalid.vc_backend.kind = BackendKind::Jira;
+                partial.projects.push(invalid);
+                Ok(())
+            },
+        )
+        .expect_err("validation failure");
+
+        assert!(matches!(error, RiptaskError::Config(_)));
+        let after = fs::read_to_string(&system_config).expect("config still present");
+        assert_eq!(
+            after, original,
+            "rollback should restore the prior file contents byte-for-byte"
+        );
     }
 
     fn project(name: &str, key: Option<&str>) -> RepoProject {
