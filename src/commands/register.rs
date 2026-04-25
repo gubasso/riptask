@@ -13,7 +13,9 @@ pub fn run(paths: &AppPaths, args: RegisterArgs) -> Result<(), RiptaskError> {
             .to_string_lossy()
             .to_string(),
     );
-    paths.require_initialized(&cwd)?;
+    if args.list {
+        paths.require_initialized(&cwd)?;
+    }
     let config = load_effective_config(paths, &cwd)?;
     if args.list {
         if std::io::stdout().is_terminal() {

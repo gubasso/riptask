@@ -17,12 +17,24 @@ use comfy_table::{Attribute, Cell, Color, ContentArrangement, Table, presets::NO
 use std::io::IsTerminal;
 
 pub fn run(paths: &AppPaths, args: RecurArgs) -> Result<(), RiptaskError> {
-    paths.require_initialized(&crate::paths::current_cwd())?;
+    let cwd = crate::paths::current_cwd();
     match args.subcommand.unwrap_or(RecurSubcommand::List) {
-        RecurSubcommand::List => list(paths),
-        RecurSubcommand::New(args) => new_recur(paths, *args),
-        RecurSubcommand::Run { date } => run_due(paths, date),
-        RecurSubcommand::Skip { recur_id } => skip(paths, recur_id),
+        RecurSubcommand::List => {
+            paths.require_initialized(&cwd)?;
+            list(paths)
+        }
+        RecurSubcommand::New(args) => {
+            paths.require_initialized(&cwd)?;
+            new_recur(paths, *args)
+        }
+        RecurSubcommand::Run { date } => {
+            paths.require_shared_layer()?;
+            run_due(paths, date)
+        }
+        RecurSubcommand::Skip { recur_id } => {
+            paths.require_shared_layer()?;
+            skip(paths, recur_id)
+        }
     }
 }
 

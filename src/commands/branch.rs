@@ -24,7 +24,7 @@ pub async fn branch(paths: &AppPaths, args: BranchArgs) -> Result<(), RiptaskErr
 }
 
 async fn adopt_branch(paths: &AppPaths, args: BranchArgs) -> Result<(), RiptaskError> {
-    paths.require_initialized(&crate::paths::current_cwd())?;
+    paths.require_shared_layer()?;
     let BranchArgs { id, yes, .. } = args;
     let config = load_effective_config(
         paths,
@@ -119,7 +119,7 @@ fn parse_leading_issue_number(branch: &str) -> Option<u64> {
 }
 
 async fn create_branch(paths: &AppPaths, args: BranchArgs) -> Result<(), RiptaskError> {
-    paths.require_initialized(&crate::paths::current_cwd())?;
+    paths.require_shared_layer()?;
     let BranchArgs {
         scope, id, pick, ..
     } = args;
@@ -146,7 +146,7 @@ pub(crate) async fn create_branch_for_issue(
     paths: &AppPaths,
     id: &str,
 ) -> Result<String, RiptaskError> {
-    paths.require_initialized(&crate::paths::current_cwd())?;
+    paths.require_shared_layer()?;
     let config = load_effective_config(
         paths,
         &camino::Utf8PathBuf::from(
@@ -233,7 +233,7 @@ pub(crate) async fn create_branch_for_issue(
 }
 
 async fn delete_branch(paths: &AppPaths, args: BranchArgs) -> Result<(), RiptaskError> {
-    paths.require_initialized(&crate::paths::current_cwd())?;
+    paths.require_shared_layer()?;
     let config = load_effective_config(
         paths,
         &camino::Utf8PathBuf::from(

@@ -1,9 +1,7 @@
 use crate::adapters::ai::AiBackend;
 use crate::adapters::git::GitBackend;
 use crate::adapters::prompts::PromptBackend;
-use crate::config::{
-    Config, any_config_exists, config_mutate_scoped, default_write_scope, load_effective_config,
-};
+use crate::config::{Config, config_mutate_scoped, default_write_scope, load_effective_config};
 use crate::error::{ProjectKeyCollision, ProjectKeyProjectMeta, RiptaskError};
 use crate::models::{BackendKind, RepoProject, TasksBackendSpec, VCBackendSpec};
 use crate::paths::AppPaths;
@@ -25,10 +23,14 @@ pub fn ensure_registered(
             .to_string_lossy()
             .to_string(),
     );
-    if !any_config_exists(paths, &cwd) {
-        return Err(RiptaskError::General(
-            "tsk is not initialized. Run `tsk init --system|--user|--local` first.".into(),
-        ));
+    // Auto-registration writes a project entry that only makes sense once the
+    // shared task store exists (issues live under `$RIPTASK_REPO/issues`).
+    // If the system layer is missing, skip silently so the dispatched
+    // command's own gate (`require_shared_layer` or `require_initialized`)
+    // surfaces the failure cleanly instead of leaving an orphan project entry
+    // in a user/local layer.
+    if !paths.system_config_path().exists() {
+        return Ok(());
     }
     let mut config = load_effective_config(paths, &cwd)?;
     let detected = match detect_from_cwd(&cwd, &config) {

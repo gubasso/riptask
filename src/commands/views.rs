@@ -12,7 +12,7 @@ use std::fs;
 use std::io::IsTerminal;
 
 pub fn view(paths: &AppPaths) -> Result<(), RiptaskError> {
-    paths.require_initialized(&crate::paths::current_cwd())?;
+    paths.require_shared_layer()?;
     let config = load_effective_config(
         paths,
         &camino::Utf8PathBuf::from(
@@ -30,7 +30,7 @@ pub fn view(paths: &AppPaths) -> Result<(), RiptaskError> {
 }
 
 pub fn board(paths: &AppPaths, args: BoardArgs) -> Result<(), RiptaskError> {
-    paths.require_initialized(&crate::paths::current_cwd())?;
+    paths.require_shared_layer()?;
     let config = load_effective_config(
         paths,
         &camino::Utf8PathBuf::from(
@@ -186,7 +186,7 @@ fn color_issue_file(name: &str) -> String {
 }
 
 pub fn reorder(paths: &AppPaths, args: ReorderArgs) -> Result<(), RiptaskError> {
-    paths.require_initialized(&crate::paths::current_cwd())?;
+    paths.require_shared_layer()?;
     let config = load_effective_config(
         paths,
         &camino::Utf8PathBuf::from(
@@ -250,12 +250,12 @@ pub fn reorder(paths: &AppPaths, args: ReorderArgs) -> Result<(), RiptaskError> 
 }
 
 pub fn reorder_up(paths: &AppPaths, args: IdArgs) -> Result<(), RiptaskError> {
-    paths.require_initialized(&crate::paths::current_cwd())?;
+    paths.require_shared_layer()?;
     shift(paths, args, ShiftDirection::Up)
 }
 
 pub fn reorder_down(paths: &AppPaths, args: IdArgs) -> Result<(), RiptaskError> {
-    paths.require_initialized(&crate::paths::current_cwd())?;
+    paths.require_shared_layer()?;
     shift(paths, args, ShiftDirection::Down)
 }
 
