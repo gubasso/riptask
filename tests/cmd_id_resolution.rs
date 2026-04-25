@@ -16,6 +16,7 @@ fn path_resolves_numeric_id_from_detected_project() {
         .expect("binary")
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .arg("init")
         .assert()
         .success();
@@ -32,6 +33,7 @@ fn path_resolves_numeric_id_from_detected_project() {
         .current_dir(&worktree)
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .args(["path", "61"])
         .assert()
         .success()
@@ -50,6 +52,7 @@ fn path_resolves_numeric_id_by_unique_suffix_without_detected_project() {
         .expect("binary")
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .arg("init")
         .assert()
         .success();
@@ -68,6 +71,7 @@ fn path_resolves_numeric_id_by_unique_suffix_without_detected_project() {
         .current_dir(&outside)
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .args(["path", "42"])
         .assert()
         .success()
@@ -86,6 +90,7 @@ fn id_prints_issue_id_for_current_branch() {
         .expect("binary")
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .arg("init")
         .assert()
         .success();
@@ -104,6 +109,7 @@ fn id_prints_issue_id_for_current_branch() {
         .current_dir(&worktree)
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .arg("id")
         .assert()
         .success()
@@ -122,6 +128,7 @@ fn id_errors_when_current_branch_has_no_issue() {
         .expect("binary")
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .arg("init")
         .assert()
         .success();
@@ -139,6 +146,7 @@ fn id_errors_when_current_branch_has_no_issue() {
         .current_dir(&worktree)
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .arg("id")
         .assert()
         .failure()

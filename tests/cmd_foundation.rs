@@ -103,6 +103,7 @@ fn init_creates_repository_layout() {
         .expect("binary")
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .arg("init")
         .assert()
         .success();
@@ -121,6 +122,7 @@ fn summarize_warns_when_ai_command_not_configured() {
         .expect("binary")
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .arg("init")
         .assert()
         .success();
@@ -137,6 +139,7 @@ fn summarize_warns_when_ai_command_not_configured() {
         .expect("binary")
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .arg("summarize")
         .assert()
         .success()
@@ -153,6 +156,7 @@ fn summarize_uses_echo_ai_command_end_to_end() {
         .expect("binary")
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .arg("init")
         .assert()
         .success();
@@ -181,6 +185,7 @@ fn summarize_uses_echo_ai_command_end_to_end() {
         .expect("binary")
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
+        .env("XDG_CONFIG_HOME", temp.path())
         .arg("summarize")
         .assert()
         .success()
