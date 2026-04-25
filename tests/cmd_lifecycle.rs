@@ -23,10 +23,12 @@ fn new_creates_issue_file() {
     let cache = temp.path().join("cache");
     Command::cargo_bin("tsk")
         .expect("binary")
+        .current_dir(temp.path())
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
-        .arg("init")
+        .env("XDG_STATE_HOME", temp.path().join("state"))
+        .args(["init", "--system"])
         .assert()
         .success();
 
@@ -38,6 +40,7 @@ fn new_creates_issue_file() {
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
+        .env("XDG_STATE_HOME", temp.path().join("state"))
         .args(["new", "--title", "Test issue", "--project", "personal"])
         .assert()
         .success()
@@ -55,10 +58,12 @@ fn new_edit_opens_editor_after_creation() {
 
     Command::cargo_bin("tsk")
         .expect("binary")
+        .current_dir(temp.path())
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
-        .arg("init")
+        .env("XDG_STATE_HOME", temp.path().join("state"))
+        .args(["init", "--system"])
         .assert()
         .success();
 
@@ -79,6 +84,7 @@ fn new_edit_opens_editor_after_creation() {
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
+        .env("XDG_STATE_HOME", temp.path().join("state"))
         .env("EDITOR", &editor_script)
         .args([
             "new",
@@ -114,7 +120,8 @@ fn new_auto_registers_unregistered_repo() {
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
-        .arg("init")
+        .env("XDG_STATE_HOME", temp.path().join("state"))
+        .args(["init", "--system"])
         .assert()
         .success();
 
@@ -133,12 +140,14 @@ fn new_auto_registers_unregistered_repo() {
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
+        .env("XDG_STATE_HOME", temp.path().join("state"))
         .args(["new", "--title", "Auto registered"])
         .assert()
         .success()
         .stdout(predicate::str::contains("WORKTREE--1"));
 
-    let config = fs::read_to_string(repo.join("config.yaml")).expect("read config");
+    let config =
+        fs::read_to_string(worktree.join(".riptask/config.yaml")).expect("read local config");
     assert!(config.contains("name: worktree"));
 
     let issue_path = fs::read_dir(repo.join("issues"))
@@ -162,7 +171,8 @@ fn new_with_title_skips_ai_body_by_default() {
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
-        .arg("init")
+        .env("XDG_STATE_HOME", temp.path().join("state"))
+        .args(["init", "--system"])
         .assert()
         .success();
 
@@ -172,6 +182,7 @@ fn new_with_title_skips_ai_body_by_default() {
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
+        .env("XDG_STATE_HOME", temp.path().join("state"))
         .args(["new", "--title", "ai test"])
         .assert()
         .success()
@@ -202,7 +213,8 @@ fn new_with_title_and_description_skips_ai() {
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
-        .arg("init")
+        .env("XDG_STATE_HOME", temp.path().join("state"))
+        .args(["init", "--system"])
         .assert()
         .success();
 
@@ -212,6 +224,7 @@ fn new_with_title_and_description_skips_ai() {
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
+        .env("XDG_STATE_HOME", temp.path().join("state"))
         .args(["new", "--title", "manual test", "--description", "my desc"])
         .assert()
         .success()
@@ -239,14 +252,16 @@ fn new_requires_initialization() {
 
     Command::cargo_bin("tsk")
         .expect("binary")
+        .current_dir(temp.path())
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
+        .env("XDG_STATE_HOME", temp.path().join("state"))
         .args(["new", "--title", "Test issue"])
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "not initialized — run 'tsk init' first",
+            "tsk is not initialized. Run `tsk init --system|--user|--local` first.",
         ));
 }
 
@@ -260,7 +275,8 @@ fn new_without_args_non_tty_errors_clearly() {
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
-        .arg("init")
+        .env("XDG_STATE_HOME", temp.path().join("state"))
+        .args(["init", "--system"])
         .assert()
         .success();
 
@@ -270,6 +286,7 @@ fn new_without_args_non_tty_errors_clearly() {
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
+        .env("XDG_STATE_HOME", temp.path().join("state"))
         .arg("new")
         .assert()
         .failure()
@@ -289,7 +306,8 @@ fn new_with_title_and_ai_flag_attempts_ai_body() {
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
-        .arg("init")
+        .env("XDG_STATE_HOME", temp.path().join("state"))
+        .args(["init", "--system"])
         .assert()
         .success();
 
@@ -299,6 +317,7 @@ fn new_with_title_and_ai_flag_attempts_ai_body() {
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
+        .env("XDG_STATE_HOME", temp.path().join("state"))
         .args(["new", "--title", "ai test", "--ai"])
         .assert()
         .success()
@@ -323,7 +342,8 @@ fn new_with_title_and_ai_flag_sanitizes_wrapped_body() {
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
-        .arg("init")
+        .env("XDG_STATE_HOME", temp.path().join("state"))
+        .args(["init", "--system"])
         .assert()
         .success();
 
@@ -338,6 +358,7 @@ fn new_with_title_and_ai_flag_sanitizes_wrapped_body() {
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
+        .env("XDG_STATE_HOME", temp.path().join("state"))
         .args(["new", "--title", "ai test", "--ai"])
         .assert()
         .success()
@@ -386,7 +407,8 @@ fn new_auto_registers_non_git_directory() {
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
-        .arg("init")
+        .env("XDG_STATE_HOME", temp.path().join("state"))
+        .args(["init", "--system"])
         .assert()
         .success();
 
@@ -396,6 +418,7 @@ fn new_auto_registers_non_git_directory() {
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
+        .env("XDG_STATE_HOME", temp.path().join("state"))
         .args(["new", "--title", "Non-git issue"])
         .assert()
         .success();
@@ -404,7 +427,8 @@ fn new_auto_registers_non_git_directory() {
     assert.stdout(predicate::str::starts_with("MYPROJ--"));
 
     // Config should contain the auto-registered backend
-    let config = fs::read_to_string(repo.join("config.yaml")).expect("read config");
+    let config =
+        fs::read_to_string(temp.path().join("riptask/config.yaml")).expect("read user config");
     assert!(
         config.contains("name: my-proj"),
         "backend name missing from config"
@@ -428,7 +452,8 @@ fn new_non_git_no_stderr_leak() {
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
-        .arg("init")
+        .env("XDG_STATE_HOME", temp.path().join("state"))
+        .args(["init", "--system"])
         .assert()
         .success();
 
@@ -438,6 +463,7 @@ fn new_non_git_no_stderr_leak() {
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
+        .env("XDG_STATE_HOME", temp.path().join("state"))
         .args(["new", "--title", "Quiet issue"])
         .assert()
         .success()
@@ -467,7 +493,8 @@ fn new_does_not_register_home_as_project() {
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
-        .arg("init")
+        .env("XDG_STATE_HOME", temp.path().join("state"))
+        .args(["init", "--system"])
         .assert()
         .success();
 
@@ -478,13 +505,15 @@ fn new_does_not_register_home_as_project() {
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
+        .env("XDG_STATE_HOME", temp.path().join("state"))
         .env("HOME", &fake_home)
         .args(["new", "--title", "Home boundary test"])
         .assert()
         .success();
 
     // The registered project should be "subdir", not "fakehome"
-    let config = fs::read_to_string(repo.join("config.yaml")).expect("read config");
+    let config =
+        fs::read_to_string(fake_home.join(".riptask/config.yaml")).expect("read local config");
     assert!(
         config.contains("name: subdir"),
         "should register subdir, not $HOME. Config:\n{config}"

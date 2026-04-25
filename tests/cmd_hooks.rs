@@ -16,7 +16,9 @@ fn init_repo() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
-        .arg("init")
+        .env("XDG_STATE_HOME", temp.path().join("state"))
+        .current_dir(temp.path())
+        .args(["init", "--system"])
         .assert()
         .success();
 
@@ -32,6 +34,8 @@ fn hooks_status_reports_not_installed() {
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
+        .env("XDG_STATE_HOME", temp.path().join("state"))
+        .current_dir(temp.path())
         .args(["store", "hooks", "status"])
         .assert()
         .failure()
@@ -48,6 +52,8 @@ fn hooks_install_creates_hook_file() {
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
+        .env("XDG_STATE_HOME", temp.path().join("state"))
+        .current_dir(temp.path())
         .args(["store", "hooks", "install"])
         .assert()
         .success();
@@ -76,6 +82,8 @@ fn hooks_status_reports_installed_after_install() {
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
+        .env("XDG_STATE_HOME", temp.path().join("state"))
+        .current_dir(temp.path())
         .args(["store", "hooks", "install"])
         .assert()
         .success();
@@ -85,6 +93,8 @@ fn hooks_status_reports_installed_after_install() {
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
+        .env("XDG_STATE_HOME", temp.path().join("state"))
+        .current_dir(temp.path())
         .args(["store", "hooks", "status"])
         .assert()
         .success()
@@ -104,6 +114,8 @@ fn hooks_update_restores_modified_hook() {
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
+        .env("XDG_STATE_HOME", temp.path().join("state"))
+        .current_dir(temp.path())
         .args(["store", "hooks", "install"])
         .assert()
         .success();
@@ -115,6 +127,8 @@ fn hooks_update_restores_modified_hook() {
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
+        .env("XDG_STATE_HOME", temp.path().join("state"))
+        .current_dir(temp.path())
         .args(["store", "hooks", "update"])
         .assert()
         .success();
@@ -134,6 +148,8 @@ fn hooks_update_errors_when_not_installed() {
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
+        .env("XDG_STATE_HOME", temp.path().join("state"))
+        .current_dir(temp.path())
         .args(["store", "hooks", "update"])
         .assert()
         .failure()
@@ -150,6 +166,8 @@ fn hooks_uninstall_removes_hook() {
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
+        .env("XDG_STATE_HOME", temp.path().join("state"))
+        .current_dir(temp.path())
         .args(["store", "hooks", "install"])
         .assert()
         .success();
@@ -164,6 +182,8 @@ fn hooks_uninstall_removes_hook() {
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
+        .env("XDG_STATE_HOME", temp.path().join("state"))
+        .current_dir(temp.path())
         .args(["store", "hooks", "uninstall"])
         .assert()
         .success();
@@ -183,6 +203,8 @@ fn hooks_uninstall_is_idempotent() {
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
+        .env("XDG_STATE_HOME", temp.path().join("state"))
+        .current_dir(temp.path())
         .args(["store", "hooks", "uninstall"])
         .assert()
         .success();

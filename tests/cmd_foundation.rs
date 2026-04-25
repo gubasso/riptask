@@ -3,10 +3,21 @@ use predicates::prelude::*;
 use std::fs;
 use tempfile::tempdir;
 
+fn isolated_command() -> (tempfile::TempDir, Command) {
+    let temp = tempdir().expect("temp dir");
+    let mut command = Command::cargo_bin("tsk").expect("binary");
+    command
+        .env("XDG_STATE_HOME", temp.path().join("state"))
+        .env("XDG_CONFIG_HOME", temp.path().join("xdg"))
+        .env("XDG_CACHE_HOME", temp.path().join("cache"))
+        .env("HOME", temp.path());
+    (temp, command)
+}
+
 #[test]
 fn version_prints_package_version() {
-    Command::cargo_bin("tsk")
-        .expect("binary")
+    let (_temp, mut command) = isolated_command();
+    command
         .arg("version")
         .assert()
         .success()
@@ -18,8 +29,8 @@ fn version_prints_package_version() {
 
 #[test]
 fn help_prints_usage() {
-    Command::cargo_bin("tsk")
-        .expect("binary")
+    let (_temp, mut command) = isolated_command();
+    command
         .arg("--help")
         .assert()
         .success()
@@ -28,8 +39,8 @@ fn help_prints_usage() {
 
 #[test]
 fn done_help_prints_expected_flags() {
-    Command::cargo_bin("tsk")
-        .expect("binary")
+    let (_temp, mut command) = isolated_command();
+    command
         .args(["done", "--help"])
         .assert()
         .success()
@@ -42,8 +53,8 @@ fn done_help_prints_expected_flags() {
 
 #[test]
 fn pr_merge_help_prints_expected_flags() {
-    Command::cargo_bin("tsk")
-        .expect("binary")
+    let (_temp, mut command) = isolated_command();
+    command
         .args(["pr", "merge", "--help"])
         .assert()
         .success()
@@ -56,8 +67,8 @@ fn pr_merge_help_prints_expected_flags() {
 
 #[test]
 fn completions_bash_produces_valid_output() {
-    Command::cargo_bin("tsk")
-        .expect("binary")
+    let (_temp, mut command) = isolated_command();
+    command
         .args(["completions", "bash"])
         .assert()
         .success()
@@ -66,8 +77,8 @@ fn completions_bash_produces_valid_output() {
 
 #[test]
 fn completions_zsh_produces_valid_output() {
-    Command::cargo_bin("tsk")
-        .expect("binary")
+    let (_temp, mut command) = isolated_command();
+    command
         .args(["completions", "zsh"])
         .assert()
         .success()
@@ -76,8 +87,8 @@ fn completions_zsh_produces_valid_output() {
 
 #[test]
 fn completions_fish_produces_valid_output() {
-    Command::cargo_bin("tsk")
-        .expect("binary")
+    let (_temp, mut command) = isolated_command();
+    command
         .args(["completions", "fish"])
         .assert()
         .success()
@@ -86,8 +97,8 @@ fn completions_fish_produces_valid_output() {
 
 #[test]
 fn completions_rejects_invalid_shell() {
-    Command::cargo_bin("tsk")
-        .expect("binary")
+    let (_temp, mut command) = isolated_command();
+    command
         .args(["completions", "invalid"])
         .assert()
         .failure()
@@ -101,15 +112,40 @@ fn init_creates_repository_layout() {
     let cache = temp.path().join("cache");
     Command::cargo_bin("tsk")
         .expect("binary")
+        .current_dir(temp.path())
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
-        .arg("init")
+        .env("XDG_STATE_HOME", temp.path().join("state"))
+        .args(["init", "--system"])
         .assert()
         .success();
     assert!(repo.join("issues").exists());
     assert!(repo.join("templates").exists());
     assert!(repo.join("config.yaml").exists());
+}
+
+#[test]
+fn command_without_any_config_reports_init_instruction() {
+    let temp = tempdir().expect("temp dir");
+    let repo = temp.path().join("repo");
+    let work = temp.path().join("work");
+    fs::create_dir_all(&work).expect("work dir");
+
+    Command::cargo_bin("tsk")
+        .expect("binary")
+        .current_dir(&work)
+        .env("RIPTASK_REPO", &repo)
+        .env("XDG_CACHE_HOME", temp.path().join("cache"))
+        .env("XDG_CONFIG_HOME", temp.path().join("xdg"))
+        .env("XDG_STATE_HOME", temp.path().join("state"))
+        .env("HOME", temp.path())
+        .args(["show", "1"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "tsk is not initialized. Run `tsk init --system|--user|--local` first.",
+        ));
 }
 
 #[test]
@@ -120,10 +156,12 @@ fn summarize_warns_when_ai_command_not_configured() {
 
     Command::cargo_bin("tsk")
         .expect("binary")
+        .current_dir(temp.path())
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
-        .arg("init")
+        .env("XDG_STATE_HOME", temp.path().join("state"))
+        .args(["init", "--system"])
         .assert()
         .success();
 
@@ -137,9 +175,11 @@ fn summarize_warns_when_ai_command_not_configured() {
 
     Command::cargo_bin("tsk")
         .expect("binary")
+        .current_dir(temp.path())
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
+        .env("XDG_STATE_HOME", temp.path().join("state"))
         .arg("summarize")
         .assert()
         .success()
@@ -154,10 +194,12 @@ fn summarize_uses_echo_ai_command_end_to_end() {
 
     Command::cargo_bin("tsk")
         .expect("binary")
+        .current_dir(temp.path())
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
-        .arg("init")
+        .env("XDG_STATE_HOME", temp.path().join("state"))
+        .args(["init", "--system"])
         .assert()
         .success();
 
@@ -183,9 +225,11 @@ fn summarize_uses_echo_ai_command_end_to_end() {
 
     Command::cargo_bin("tsk")
         .expect("binary")
+        .current_dir(temp.path())
         .env("RIPTASK_REPO", &repo)
         .env("XDG_CACHE_HOME", &cache)
         .env("XDG_CONFIG_HOME", temp.path())
+        .env("XDG_STATE_HOME", temp.path().join("state"))
         .arg("summarize")
         .assert()
         .success()

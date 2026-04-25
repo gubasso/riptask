@@ -8,7 +8,7 @@ use crate::storage::{frontmatter, issue_store};
 pub(crate) const AI_BACKEND_MISSING: &str = "ai.command is not configured";
 
 pub fn summarize(paths: &AppPaths, args: SummarizeArgs) -> Result<(), RiptaskError> {
-    paths.require_initialized()?;
+    paths.require_initialized(&crate::paths::current_cwd())?;
     let config = load_effective_config(
         paths,
         &camino::Utf8PathBuf::from(
@@ -65,7 +65,7 @@ pub fn summarize(paths: &AppPaths, args: SummarizeArgs) -> Result<(), RiptaskErr
 }
 
 pub fn ask(paths: &AppPaths, args: AskArgs) -> Result<(), RiptaskError> {
-    paths.require_initialized()?;
+    paths.require_initialized(&crate::paths::current_cwd())?;
     let config = load_effective_config(
         paths,
         &camino::Utf8PathBuf::from(
@@ -111,7 +111,7 @@ pub fn ask(paths: &AppPaths, args: AskArgs) -> Result<(), RiptaskError> {
 }
 
 pub fn generate_body(paths: &AppPaths, title: &str, project: &str) -> Result<String, RiptaskError> {
-    paths.require_initialized()?;
+    paths.require_initialized(&crate::paths::current_cwd())?;
     let config = load_effective_config(
         paths,
         &camino::Utf8PathBuf::from(
@@ -132,7 +132,7 @@ pub fn generate_issue_content(
     paths: &AppPaths,
     context: &str,
 ) -> Result<GeneratedIssueContent, RiptaskError> {
-    paths.require_initialized()?;
+    paths.require_initialized(&crate::paths::current_cwd())?;
     let config = load_effective_config(
         paths,
         &camino::Utf8PathBuf::from(

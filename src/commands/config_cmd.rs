@@ -1,6 +1,8 @@
 use crate::adapters::picker::run_fzf_with_args;
 use crate::cli::{ConfigArgs, ConfigSubcommand};
-use crate::config::{ConfigScope, config_set_scoped, load_effective_config, scaffold_header};
+use crate::config::{
+    ConfigScope, config_set_scoped, default_write_scope, load_effective_config, scaffold_header,
+};
 use crate::error::RiptaskError;
 use crate::paths::AppPaths;
 use crate::services::editor::open_in_editor;
@@ -24,14 +26,16 @@ pub fn run(paths: &AppPaths, args: ConfigArgs) -> Result<(), RiptaskError> {
             Ok(())
         }
         Some(ConfigSubcommand::Set { key, value, scope }) => {
-            let scope = scope.scope().unwrap_or_else(|| {
-                if paths.local_config_path(&cwd).is_some() {
-                    ConfigScope::Local
-                } else {
-                    ConfigScope::User
-                }
-            });
-            config_set_scoped(paths, &cwd, scope, &key, &value)
+            let scope = scope
+                .scope()
+                .unwrap_or_else(|| default_write_scope(paths, &cwd));
+            let receipt = config_set_scoped(paths, &cwd, scope, &key, &value)?;
+            crate::ui::success(&format!(
+                "wrote config to {} ({})",
+                receipt.scope.label(),
+                receipt.path
+            ));
+            Ok(())
         }
         Some(ConfigSubcommand::Edit { scope }) => {
             if std::env::var("EDITOR").is_err() {

@@ -35,7 +35,9 @@ riptask loads config from three YAML layers, lowest precedence to highest:
 - User: `$XDG_CONFIG_HOME/riptask/config.yaml`
 - Local: `<project-root>/.riptask/config.yaml`
 
-Layer files are parsed as partial config and merged before validation. `tsk config set` and `tsk config edit` accept `--system`, `--global`, and `--local`; unscoped writes use Local inside a project and User otherwise.
+Layer files are parsed as partial config and merged before validation. `--user` is the canonical user-scope flag; `--global` is an alias. `tsk config set` and `tsk config edit` accept `--system`, `--user`, `--global`, and `--local`; unscoped writes use Local inside a project and User otherwise.
+
+`tsk init` does not register projects. It always prompts interactively if no scope flag is given; in non-TTY contexts it requires `--system`, `--user`, or `--local`.
 
 ## Pre-commit configs
 
