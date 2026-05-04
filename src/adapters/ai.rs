@@ -1,3 +1,4 @@
+use crate::adapters::ai_prompts;
 use crate::error::RiptaskError;
 use regex::Regex;
 use shell_escape::escape;
@@ -49,37 +50,18 @@ enum ErrorKind {
     Execution,
 }
 
+const TITLE_MAX_LEN: usize = 120;
+
 impl AiBackend for TemplateAiBackend {
     fn generate_issue_content(&self, context: &str) -> Result<GeneratedIssueContent, RiptaskError> {
-        let output = run_ai(
-            &self.command_template,
-            "Generate a concise issue title and body. Return strict JSON with exactly two keys: \"title\" (string) and \"body\" (string). The \"body\" value must contain ONLY the issue description body itself (no preamble like \"I'll generate...\" or \"Based on the context...\", no framing horizontal rules, no trailing questions or offers to revise, no meta commentary). Do not include any text outside the JSON object.",
-            context,
-        )?;
+        let system = ai_prompts::generate_issue_content_system();
+        let output = run_ai(&self.command_template, &system, context)?;
         parse_issue_content_output(&output)
     }
 
     fn generate_body(&self, context: &str) -> Result<String, RiptaskError> {
-        let raw = run_ai(
-            &self.command_template,
-            concat!(
-                "Generate an issue description body.\n",
-                "\n",
-                "OUTPUT RULES (output ONLY the raw body — no commentary, no wrapping):\n",
-                "- Output only the issue description body itself, as if written by a human author.\n",
-                "- Do NOT include any preamble such as \"I'll generate...\", \"Based on the context...\", or \"Here's a suggested format:\".\n",
-                "- Do NOT wrap the body in horizontal-rule separators (---) used as framing.\n",
-                "- Do NOT include trailing questions or offers to revise (e.g. \"Would you like me to adjust...\", \"Let me know if...\").\n",
-                "- Do NOT wrap output in markdown code fences.\n",
-                "- Do NOT add meta commentary about what you are about to do, are doing, or just did.\n",
-                "\n",
-                "CONTENT SHAPE:\n",
-                "- A short description paragraph followed by a checklist of concrete acceptance criteria.\n",
-                "- Use markdown headings and `- [ ]` checklist items as needed.\n",
-                "- Internal `---` thematic breaks inside the description are allowed only if genuinely needed; do not use them as wrappers.\n",
-            ),
-            context,
-        )?;
+        let system = ai_prompts::generate_body_system();
+        let raw = run_ai(&self.command_template, &system, context)?;
         sanitize_issue_body(&raw)
     }
 
@@ -89,30 +71,24 @@ impl AiBackend for TemplateAiBackend {
         backend_type: &str,
         existing_keys: &[String],
     ) -> Result<String, RiptaskError> {
+        let mut system = ai_prompts::suggest_project_key_system();
+        system.push_str("\n\nAlready-taken keys to avoid: ");
+        system.push_str(&existing_keys.join(", "));
         run_ai(
             &self.command_template,
-            &format!(
-                "You suggest a short project key for an issue tracker. Return a single uppercase ASCII token of 2 to 10 characters, matching [A-Z0-9]+, with no prefix, suffix, explanation, whitespace, or punctuation. Avoid any of these already-taken keys: {}.",
-                existing_keys.join(", ")
-            ),
+            &system,
             &format!("repo: {repo_name}\nbackend: {backend_type}\n"),
         )
     }
 
     fn generate_pr_description(&self, context: &str) -> Result<String, RiptaskError> {
-        run_ai(
-            &self.command_template,
-            "Generate a concise PR description summarizing the changes. Include a summary section and key changes. Do not include the title.",
-            context,
-        )
+        let system = ai_prompts::generate_pr_description_system();
+        run_ai(&self.command_template, &system, context)
     }
 
     fn triage(&self, issue_context: &str) -> Result<TriageSuggestion, RiptaskError> {
-        let output = run_ai(
-            &self.command_template,
-            "Return JSON with keys status, priority, labels.",
-            issue_context,
-        )?;
+        let system = ai_prompts::triage_system();
+        let output = run_ai(&self.command_template, &system, issue_context)?;
         let parsed: serde_json::Value = serde_json::from_str(&output).map_err(|error| {
             RiptaskError::General(format!("invalid AI triage response: {error}"))
         })?;
@@ -139,60 +115,33 @@ impl AiBackend for TemplateAiBackend {
     }
 
     fn summarize(&self, issues: &str) -> Result<String, RiptaskError> {
-        run_ai(
-            &self.command_template,
-            "Summarize issue status concisely.",
-            issues,
-        )
+        let system = ai_prompts::summarize_system();
+        run_ai(&self.command_template, &system, issues)
     }
 
     fn ask(&self, question: &str, context: &str) -> Result<String, RiptaskError> {
+        let system = ai_prompts::ask_system();
         run_ai(
             &self.command_template,
-            "Answer the user's question from the provided issue corpus.",
+            &system,
             &format!("Question: {question}\n\nIssues:\n{context}"),
         )
     }
 
     fn update_pr_description(&self, context: &str) -> Result<String, RiptaskError> {
-        run_ai(
-            &self.command_template,
-            "Update this PR description based on the current changes. Keep it concise and focused on implementation details.",
-            context,
-        )
+        let system = ai_prompts::update_pr_description_system();
+        run_ai(&self.command_template, &system, context)
     }
 
     fn generate_commit_message(&self, diff: &str) -> Result<String, RiptaskError> {
-        run_ai(
-            &self.command_template,
-            concat!(
-                "Generate a conventional commit message for the given diff.\n",
-                "\n",
-                "FORMAT (output ONLY the raw commit message — no fences, no markdown, no commentary):\n",
-                "\n",
-                "Line 1: subject in the form type(scope): imperative description\n",
-                "Line 2: blank\n",
-                "Line 3+: body (required if change is non-trivial)\n",
-                "\n",
-                "SUBJECT RULES:\n",
-                "- type: feat|fix|refactor|docs|test|chore|ci|style|perf|build\n",
-                "- scope: lowercase module or area, hierarchical with / (e.g. cli/commit, adapters/git)\n",
-                "- description: imperative mood, lowercase start, no trailing period\n",
-                "- HARD LIMIT: 72 characters total for the subject line\n",
-                "\n",
-                "BODY RULES:\n",
-                "- 1-2 sentence summary of why, then 2-6 bullet points of what changed\n",
-                "- HARD LIMIT: every body line must be at most 72 characters\n",
-                "- Do NOT mention AI, generated, automated, or similar\n",
-                "\n",
-                "CRITICAL: Output the raw commit message text only. Do NOT wrap in ``` or any other formatting.",
-            ),
-            diff,
-        )
+        let system = ai_prompts::generate_commit_message_system();
+        let raw = run_ai(&self.command_template, &system, diff)?;
+        validate_commit_message_output(&raw)
     }
 }
 
 #[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct GeneratedIssueContentResponse {
     title: String,
     body: String,
@@ -205,56 +154,46 @@ fn parse_issue_content_output(output: &str) -> Result<GeneratedIssueContent, Rip
             "AI returned empty output for issue generation".into(),
         ));
     }
-
-    match serde_json::from_str::<GeneratedIssueContentResponse>(trimmed) {
-        Ok(parsed) => {
-            let title = parsed.title.trim().to_owned();
-            let body = sanitize_issue_body(&parsed.body).unwrap_or_default();
-            if title.is_empty() {
-                return Err(RiptaskError::General(
-                    "AI issue generation returned an empty title".into(),
-                ));
-            }
-            if body.is_empty() {
-                return Err(RiptaskError::General(
-                    "AI issue generation returned an empty body".into(),
-                ));
-            }
-            Ok(GeneratedIssueContent { title, body })
-        }
-        Err(json_err) => {
-            let stripped = strip_markdown_fences(trimmed);
-            if let Ok(retry) = serde_json::from_str::<GeneratedIssueContentResponse>(&stripped) {
-                let title = retry.title.trim().to_owned();
-                let body = sanitize_issue_body(&retry.body).unwrap_or_default();
-                if title.is_empty() || body.is_empty() {
-                    return Err(RiptaskError::General(
-                        "AI issue generation returned empty title or body".into(),
-                    ));
-                }
-                return Ok(GeneratedIssueContent { title, body });
-            }
-            if trimmed.starts_with('{') || stripped.starts_with('{') {
-                return Err(RiptaskError::General(format!(
-                    "AI returned malformed JSON for issue generation: {json_err}"
-                )));
-            }
-            fallback_issue_content(trimmed)
-        }
+    if trimmed.starts_with("```") {
+        return Err(RiptaskError::General(
+            "AI returned fenced output for issue generation; expected a raw JSON object".into(),
+        ));
     }
-}
+    let parsed = serde_json::from_str::<GeneratedIssueContentResponse>(trimmed).map_err(|err| {
+        RiptaskError::General(format!(
+            "AI returned malformed JSON for issue generation: {err}"
+        ))
+    })?;
 
-fn strip_markdown_fences(text: &str) -> String {
-    let trimmed = text.trim();
-    if let Some(rest) = trimmed.strip_prefix("```") {
-        let inner = rest
-            .trim_start_matches(|c: char| c.is_alphanumeric())
-            .trim_start();
-        if let Some(stripped) = inner.strip_suffix("```") {
-            return stripped.trim().to_owned();
-        }
+    let title = parsed.title.trim().to_owned();
+    if title.is_empty() {
+        return Err(RiptaskError::General(
+            "AI issue generation returned an empty title".into(),
+        ));
     }
-    trimmed.to_owned()
+    if title.contains('\n') || title.contains('\r') {
+        return Err(RiptaskError::General(
+            "AI issue generation returned a multiline title".into(),
+        ));
+    }
+    if title.chars().count() > TITLE_MAX_LEN {
+        return Err(RiptaskError::General(format!(
+            "AI issue generation title exceeds {TITLE_MAX_LEN} chars"
+        )));
+    }
+    if is_preface_line(&title) {
+        return Err(RiptaskError::General(
+            "AI issue generation returned a conversational title".into(),
+        ));
+    }
+    if ends_with_question_mark(&title) {
+        return Err(RiptaskError::General(
+            "AI issue generation returned a question title".into(),
+        ));
+    }
+
+    let body = sanitize_issue_body(&parsed.body)?;
+    Ok(GeneratedIssueContent { title, body })
 }
 
 fn sanitize_issue_body(raw: &str) -> Result<String, RiptaskError> {
@@ -310,11 +249,21 @@ fn is_preface_line(line: &str) -> bool {
     PREFACE_RE
         .get_or_init(|| {
             Regex::new(
-                r"(?i)^(I'?ll|I will|I'?m going to|Let me|Here'?s|Here is|Based on (the )?(context|the above|your)|Sure[,!]?|Certainly[,!]?|Of course[,!]?)\b.*",
+                r"(?i)^(I'?ll|I will|I'?m going to|Let me|Here'?s|Here is|Based on (the )?(context|the above|your)|Looking at|Reviewing|Sure[,!]?|Certainly[,!]?|Of course[,!]?)\b.*",
             )
             .expect("valid preface regex")
         })
-        .is_match(line.trim())
+        .is_match(&normalize_apostrophes(line.trim()))
+}
+
+/// Normalize Unicode "smart" apostrophes (U+2019) to ASCII apostrophes so the
+/// preface regex catches phrases like "I’ll" alongside "I'll".
+fn normalize_apostrophes(text: &str) -> String {
+    text.replace('\u{2019}', "'")
+}
+
+fn ends_with_question_mark(text: &str) -> bool {
+    matches!(text.chars().next_back(), Some('?' | '\u{FF1F}'))
 }
 
 fn is_followup_paragraph(paragraph: &str) -> bool {
@@ -355,20 +304,67 @@ fn is_horizontal_rule(line: &str) -> bool {
     line.trim() == "---"
 }
 
-fn fallback_issue_content(output: &str) -> Result<GeneratedIssueContent, RiptaskError> {
-    let body = sanitize_issue_body(output).unwrap_or_default();
-    let Some(first_line) = body.lines().find(|line| !line.trim().is_empty()) else {
+fn validate_commit_message_output(raw: &str) -> Result<String, RiptaskError> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
         return Err(RiptaskError::General(
-            "AI issue generation fallback could not derive a title from empty output".into(),
-        ));
-    };
-    let title = first_line.trim().trim_start_matches('#').trim().to_owned();
-    if title.is_empty() {
-        return Err(RiptaskError::General(
-            "AI issue generation fallback derived an empty title".into(),
+            "AI returned empty commit message".into(),
         ));
     }
-    Ok(GeneratedIssueContent { title, body })
+    if trimmed.starts_with("```") || trimmed.contains("\n```") {
+        return Err(RiptaskError::General(
+            "AI returned fenced commit message; expected raw text".into(),
+        ));
+    }
+
+    let mut lines = trimmed.lines();
+    let subject = lines.next().unwrap_or("").trim_end();
+    let subject_chars = subject.chars().count();
+    if subject_chars > 72 {
+        return Err(RiptaskError::General(format!(
+            "AI commit subject exceeds 72 chars ({subject_chars} chars)"
+        )));
+    }
+    if subject.ends_with('.') {
+        return Err(RiptaskError::General(
+            "AI commit subject ends with a period".into(),
+        ));
+    }
+
+    static SUBJECT_RE: OnceLock<Regex> = OnceLock::new();
+    let re = SUBJECT_RE.get_or_init(|| {
+        Regex::new(
+            r"^(feat|fix|refactor|docs|test|chore|ci|style|perf|build)(\([a-z0-9_./-]+\))?: \S.*",
+        )
+        .expect("valid commit subject regex")
+    });
+    if !re.is_match(subject) {
+        return Err(RiptaskError::General(format!(
+            "AI commit subject does not match conventional commits: {subject:?}"
+        )));
+    }
+    if is_preface_line(subject) {
+        return Err(RiptaskError::General(
+            "AI commit subject is a conversational opener".into(),
+        ));
+    }
+
+    if let Some(blank) = lines.next()
+        && !blank.trim().is_empty()
+    {
+        return Err(RiptaskError::General(
+            "AI commit message missing blank line after subject".into(),
+        ));
+    }
+    for line in trimmed.lines().skip(2) {
+        if line.chars().count() > 72 {
+            return Err(RiptaskError::General(format!(
+                "AI commit body line exceeds 72 chars: {line:?}"
+            )));
+        }
+    }
+
+    Ok(trimmed.to_owned())
 }
 
 fn run_ai(template: &str, system: &str, input: &str) -> Result<String, RiptaskError> {
@@ -622,18 +618,16 @@ mod tests {
     }
 
     #[test]
-    fn generate_issue_content_falls_back_on_malformed_json() {
+    fn generate_issue_content_rejects_non_json_prose() {
         let backend = TemplateAiBackend {
             command_template:
                 "printf '%s' 'Investigate mobile timeout\n\n## Description\n\nDetails'".into(),
         };
 
-        let result = backend
+        let err = backend
             .generate_issue_content("context")
-            .expect("fallback issue content");
-
-        assert_eq!(result.title, "Investigate mobile timeout");
-        assert!(result.body.contains("## Description"));
+            .expect_err("non-json prose should be rejected");
+        assert!(err.to_string().contains("malformed JSON"));
     }
 
     #[test]
@@ -745,20 +739,251 @@ mod tests {
     }
 
     #[test]
-    fn generate_issue_content_fallback_sanitizes_body() {
+    fn generate_issue_content_rejects_prosed_fallback_body() {
         let backend = TemplateAiBackend {
             command_template: "cat <<'EOF'\nI'll generate a concise issue body. Based on the context, here's a suggested format:\n\n---\n\n# Investigate mobile timeout\n\n## Description\n\nDetails\n\n---\n\nWould you like me to adjust the description?\nEOF".into(),
         };
 
+        let err = backend
+            .generate_issue_content("context")
+            .expect_err("prose fallback should be rejected");
+        assert!(err.to_string().contains("malformed JSON"));
+    }
+
+    #[test]
+    fn generate_issue_content_rejects_fenced_json() {
+        let backend = TemplateAiBackend {
+            command_template:
+                "cat <<'EOF'\n```json\n{\"title\":\"Fix login\",\"body\":\"Details\"}\n```\nEOF"
+                    .into(),
+        };
+
+        let err = backend
+            .generate_issue_content("context")
+            .expect_err("fenced json should be rejected");
+        assert!(err.to_string().contains("fenced output"));
+    }
+
+    #[test]
+    fn generate_issue_content_rejects_extra_keys() {
+        let backend = TemplateAiBackend {
+            command_template:
+                "printf '%s' '{\"title\":\"Fix login\",\"body\":\"Details\",\"notes\":\"z\"}'"
+                    .into(),
+        };
+
+        let err = backend
+            .generate_issue_content("context")
+            .expect_err("extra keys should be rejected");
+        assert!(err.to_string().contains("malformed JSON"));
+    }
+
+    #[test]
+    fn generate_issue_content_rejects_multiline_title() {
+        let backend = TemplateAiBackend {
+            command_template: "printf '%s' '{\"title\":\"line1\\nline2\",\"body\":\"Details\"}'"
+                .into(),
+        };
+
+        let err = backend
+            .generate_issue_content("context")
+            .expect_err("multiline title should be rejected");
+        assert!(err.to_string().contains("multiline title"));
+    }
+
+    #[test]
+    fn generate_issue_content_rejects_question_title() {
+        let backend = TemplateAiBackend {
+            command_template:
+                "printf '%s' '{\"title\":\"What should we do?\",\"body\":\"Details\"}'".into(),
+        };
+
+        let err = backend
+            .generate_issue_content("context")
+            .expect_err("question title should be rejected");
+        assert!(err.to_string().contains("question title"));
+    }
+
+    #[test]
+    fn generate_issue_content_rejects_conversational_title() {
+        let backend = TemplateAiBackend {
+            command_template: "cat <<'EOF'\n{\"title\":\"Looking at the diff, you've made two important improvements...\",\"body\":\"Details\"}\nEOF".into(),
+        };
+
+        let err = backend
+            .generate_issue_content("context")
+            .expect_err("conversational title should be rejected");
+        assert!(err.to_string().contains("conversational"));
+    }
+
+    #[test]
+    fn generate_issue_content_rejects_overlong_title() {
+        let title = "a".repeat(TITLE_MAX_LEN + 1);
+        let backend = TemplateAiBackend {
+            command_template: format!(
+                "printf '%s' '{{\"title\":\"{title}\",\"body\":\"Details\"}}'"
+            ),
+        };
+
+        let err = backend
+            .generate_issue_content("context")
+            .expect_err("overlong title should be rejected");
+        assert!(err.to_string().contains("exceeds"));
+    }
+
+    #[test]
+    fn generate_issue_content_strips_trailing_prose_from_json_body() {
+        let backend = TemplateAiBackend {
+            command_template: "cat <<'EOF'\n{\"title\":\"Fix login\",\"body\":\"## Description\\n\\nDetails\\n\\nWould you like me to commit these changes?\"}\nEOF".into(),
+        };
+
         let result = backend
             .generate_issue_content("context")
-            .expect("fallback issue content");
+            .expect("issue content");
+        assert_eq!(result.body, "## Description\n\nDetails");
+    }
 
-        assert_eq!(result.title, "Investigate mobile timeout");
+    #[test]
+    fn generate_issue_content_real_example_a_rejected() {
+        let backend = TemplateAiBackend {
+            command_template: "cat <<'EOF'\nLooking at the diff, you've made two important improvements to the agent Dockerfile:\n\n1. **Retry loop for package installation** — Wraps `zypper install` in a 3-attempt loop with metadata refresh between retries to handle temporary CDN 404s\n2. **Pre-create bind mount parent directories** — Creates `.local/lib` and `.local/state/claude-cost` with correct ownership before the non-root user runs, preventing Docker's auto-creation as root:root from breaking writes\n\nWould you like me to commit these changes? I can use the `/commit` skill to create a conventional commit with the full context.\nEOF".into(),
+        };
+
+        let err = backend
+            .generate_issue_content("context")
+            .expect_err("real example a should be rejected");
+        assert!(err.to_string().contains("malformed JSON"));
+    }
+
+    #[test]
+    fn generate_issue_content_real_example_b_rejected() {
+        let backend = TemplateAiBackend {
+            command_template: "cat <<'EOF'\nLooking at these changes, I can see you're adding support for:\n1. **MCP auth caching** (`.claude.json` and `mcp-needs-auth-cache.json` to sync files)\n2. **Plugins directory** (adding `plugins/` to linked directories)\n\nWhat would you like me to do with these changes?\n- Commit them (with a commit message)?\n- Review them for completeness?\nEOF".into(),
+        };
+
+        let err = backend
+            .generate_issue_content("context")
+            .expect_err("real example b should be rejected");
+        assert!(err.to_string().contains("malformed JSON"));
+    }
+
+    #[test]
+    fn commit_message_validator_accepts_valid_message() {
+        let message = "feat(cli): add new flag\n\nDetail line.";
         assert_eq!(
-            result.body,
-            "# Investigate mobile timeout\n\n## Description\n\nDetails"
+            validate_commit_message_output(message).expect("valid commit message"),
+            message
         );
+    }
+
+    #[test]
+    fn commit_message_validator_rejects_fenced() {
+        let err = validate_commit_message_output("```text\nfeat(cli): add new flag\n```")
+            .expect_err("fenced commit message should be rejected");
+        assert!(err.to_string().contains("fenced commit message"));
+    }
+
+    #[test]
+    fn commit_message_validator_rejects_conversational() {
+        let err = validate_commit_message_output(
+            "Looking at the diff, you've made two important improvements...",
+        )
+        .expect_err("conversational commit subject should be rejected");
+        assert!(
+            err.to_string().contains("exceeds 72 chars")
+                || err.to_string().contains("ends with a period")
+                || err.to_string().contains("conventional commits")
+                || err.to_string().contains("conversational opener")
+        );
+    }
+
+    #[test]
+    fn commit_message_validator_rejects_invalid_subject() {
+        let err = validate_commit_message_output("added a thing\n\nDetail line.")
+            .expect_err("invalid subject should be rejected");
+        assert!(err.to_string().contains("conventional commits"));
+    }
+
+    #[test]
+    fn commit_message_validator_rejects_overlong_subject() {
+        let subject = format!("feat: {}", "a".repeat(67));
+        let err = validate_commit_message_output(&subject)
+            .expect_err("overlong subject should be rejected");
+        assert!(err.to_string().contains("exceeds 72 chars"));
+    }
+
+    #[test]
+    fn commit_message_validator_rejects_overlong_body_line() {
+        let message = format!("feat(cli): add new flag\n\n{}", "a".repeat(73));
+        let err = validate_commit_message_output(&message)
+            .expect_err("overlong body line should be rejected");
+        assert!(err.to_string().contains("body line exceeds 72 chars"));
+    }
+
+    #[test]
+    fn commit_message_validator_rejects_missing_blank_line() {
+        let err = validate_commit_message_output("feat(cli): add new flag\nDetail line.")
+            .expect_err("missing blank line should be rejected");
+        assert!(err.to_string().contains("missing blank line"));
+    }
+
+    #[test]
+    fn commit_message_validator_rejects_trailing_period() {
+        let err = validate_commit_message_output("feat(cli): add new flag.\n\nDetail line.")
+            .expect_err("trailing period should be rejected");
+        assert!(err.to_string().contains("ends with a period"));
+    }
+
+    #[test]
+    fn commit_message_validator_accepts_multibyte_subject_within_char_limit() {
+        // 72 multibyte chars total: "feat(cli): " (11) + 61 'é's = 72 chars,
+        // but 11 + 61*2 = 133 bytes. Must pass char-based limit.
+        let subject = format!("feat(cli): {}", "é".repeat(61));
+        assert_eq!(subject.chars().count(), 72);
+        assert!(subject.len() > 72);
+        let result = validate_commit_message_output(&subject)
+            .expect("multibyte subject within char limit should be accepted");
+        assert_eq!(result, subject);
+    }
+
+    #[test]
+    fn commit_message_validator_accepts_multibyte_body_within_char_limit() {
+        // body line: 72 multibyte chars = 144 bytes.
+        let body_line = "é".repeat(72);
+        let message = format!("feat(cli): add\n\n{body_line}");
+        assert!(body_line.len() > 72);
+        let result = validate_commit_message_output(&message)
+            .expect("multibyte body line within char limit should be accepted");
+        assert_eq!(result, message);
+    }
+
+    #[test]
+    fn generate_issue_content_rejects_smart_apostrophe_conversational_title() {
+        // U+2019 right single quotation mark instead of ASCII apostrophe.
+        let backend = TemplateAiBackend {
+            command_template:
+                "cat <<'EOF'\n{\"title\":\"I\u{2019}ll fix the bug\",\"body\":\"Details\"}\nEOF"
+                    .into(),
+        };
+
+        let err = backend
+            .generate_issue_content("context")
+            .expect_err("smart-apostrophe conversational title should be rejected");
+        assert!(err.to_string().contains("conversational"));
+    }
+
+    #[test]
+    fn generate_issue_content_rejects_fullwidth_question_title() {
+        // U+FF1F fullwidth question mark.
+        let backend = TemplateAiBackend {
+            command_template: "printf '%s' '{\"title\":\"What now\u{FF1F}\",\"body\":\"Details\"}'"
+                .into(),
+        };
+
+        let err = backend
+            .generate_issue_content("context")
+            .expect_err("fullwidth question title should be rejected");
+        assert!(err.to_string().contains("question title"));
     }
 
     #[test]

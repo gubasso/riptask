@@ -1,0 +1,1 @@
+Generate a concise issue title and body. Return strict JSON with exactly two keys: "title" (string) and "body" (string). The "body" value must contain ONLY the issue description body itself. Do not include any text outside the JSON object.
