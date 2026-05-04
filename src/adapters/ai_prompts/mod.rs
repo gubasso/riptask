@@ -14,12 +14,19 @@ const ASK: &str = include_str!("ask.md");
 const UPDATE_PR_DESCRIPTION: &str = include_str!("update_pr_description.md");
 const GENERATE_COMMIT_MESSAGE: &str = include_str!("generate_commit_message.md");
 
+pub(crate) const ISSUE_CONTENT_SCHEMA: &str = include_str!("schemas/issue_content.schema.json");
+pub(crate) const TRIAGE_SCHEMA: &str = include_str!("schemas/triage.schema.json");
+
 fn compose(task: &str) -> String {
     format!("{HOUSE_RULES}\n\n{task}")
 }
 
+fn compose_with_schema(task: &str, schema: &str) -> String {
+    format!("{HOUSE_RULES}\n\n{task}\n\n<output_schema>\n{schema}\n</output_schema>\n")
+}
+
 pub fn generate_issue_content_system() -> String {
-    compose(GENERATE_ISSUE_CONTENT)
+    compose_with_schema(GENERATE_ISSUE_CONTENT, ISSUE_CONTENT_SCHEMA)
 }
 
 pub fn generate_body_system() -> String {
@@ -35,7 +42,7 @@ pub fn generate_pr_description_system() -> String {
 }
 
 pub fn triage_system() -> String {
-    compose(TRIAGE)
+    compose_with_schema(TRIAGE, TRIAGE_SCHEMA)
 }
 
 pub fn summarize_system() -> String {
@@ -108,5 +115,53 @@ mod tests {
         assert!(rules.contains("Looking at"));
         assert!(rules.contains("Would you like"));
         assert!(rules.contains("Let me know"));
+    }
+
+    #[test]
+    fn issue_content_schema_is_valid_json() {
+        let parsed: serde_json::Value = serde_json::from_str(ISSUE_CONTENT_SCHEMA)
+            .expect("issue content schema must be valid JSON");
+        assert_eq!(parsed["type"], "object");
+        assert_eq!(parsed["additionalProperties"], false);
+        let required = parsed["required"]
+            .as_array()
+            .expect("required must be an array");
+        let required_names: Vec<&str> = required.iter().filter_map(|v| v.as_str()).collect();
+        assert!(required_names.contains(&"title"));
+        assert!(required_names.contains(&"body"));
+    }
+
+    #[test]
+    fn generate_issue_content_system_includes_schema() {
+        let system = generate_issue_content_system();
+        assert!(system.contains("<output_schema>"));
+        assert!(system.contains("</output_schema>"));
+        assert!(system.contains("\"additionalProperties\": false"));
+        assert!(system.contains("\"title\""));
+        assert!(system.contains("\"body\""));
+    }
+
+    #[test]
+    fn triage_schema_is_valid_json() {
+        let parsed: serde_json::Value =
+            serde_json::from_str(TRIAGE_SCHEMA).expect("triage schema must be valid JSON");
+        assert_eq!(parsed["type"], "object");
+        assert_eq!(parsed["additionalProperties"], false);
+        let required = parsed["required"]
+            .as_array()
+            .expect("required must be an array");
+        let names: Vec<&str> = required.iter().filter_map(|v| v.as_str()).collect();
+        assert!(names.contains(&"status"));
+        assert!(names.contains(&"priority"));
+        assert!(names.contains(&"labels"));
+    }
+
+    #[test]
+    fn triage_system_includes_schema() {
+        let system = triage_system();
+        assert!(system.contains("<output_schema>"));
+        assert!(system.contains("\"status\""));
+        assert!(system.contains("\"priority\""));
+        assert!(system.contains("\"labels\""));
     }
 }

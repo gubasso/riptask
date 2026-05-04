@@ -74,11 +74,12 @@ impl AiBackend for TemplateAiBackend {
         let mut system = ai_prompts::suggest_project_key_system();
         system.push_str("\n\nAlready-taken keys to avoid: ");
         system.push_str(&existing_keys.join(", "));
-        run_ai(
+        let raw = run_ai(
             &self.command_template,
             &system,
             &format!("repo: {repo_name}\nbackend: {backend_type}\n"),
-        )
+        )?;
+        validate_project_key_output(&raw, existing_keys)
     }
 
     fn generate_pr_description(&self, context: &str) -> Result<String, RiptaskError> {
@@ -89,29 +90,7 @@ impl AiBackend for TemplateAiBackend {
     fn triage(&self, issue_context: &str) -> Result<TriageSuggestion, RiptaskError> {
         let system = ai_prompts::triage_system();
         let output = run_ai(&self.command_template, &system, issue_context)?;
-        let parsed: serde_json::Value = serde_json::from_str(&output).map_err(|error| {
-            RiptaskError::General(format!("invalid AI triage response: {error}"))
-        })?;
-        Ok(TriageSuggestion {
-            state: parsed
-                .get("status")
-                .and_then(|value| value.as_str())
-                .map(ToOwned::to_owned),
-            priority: parsed
-                .get("priority")
-                .and_then(|value| value.as_str())
-                .map(ToOwned::to_owned),
-            labels: parsed
-                .get("labels")
-                .and_then(|value| value.as_array())
-                .map(|labels| {
-                    labels
-                        .iter()
-                        .filter_map(|label| label.as_str().map(ToOwned::to_owned))
-                        .collect()
-                })
-                .unwrap_or_default(),
-        })
+        parse_triage_output(&output)
     }
 
     fn summarize(&self, issues: &str) -> Result<String, RiptaskError> {
@@ -147,23 +126,113 @@ struct GeneratedIssueContentResponse {
     body: String,
 }
 
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TriageResponse {
+    status: Option<String>,
+    priority: Option<String>,
+    #[serde(default)]
+    labels: Vec<String>,
+}
+
+const TRIAGE_STATUS_ALLOWED: &[&str] = &["todo", "doing", "blocked", "done"];
+const TRIAGE_PRIORITY_ALLOWED: &[&str] = &["low", "medium", "high", "critical"];
+const TRIAGE_LABEL_MAX_LEN: usize = 64;
+const TRIAGE_LABELS_MAX_ITEMS: usize = 10;
+
+fn parse_triage_output(output: &str) -> Result<TriageSuggestion, RiptaskError> {
+    if output.trim().is_empty() {
+        return Err(RiptaskError::General(
+            "AI returned empty output for triage".into(),
+        ));
+    }
+    let json_slice = extract_first_json_object(output).ok_or_else(|| {
+        RiptaskError::General(
+            "AI returned no JSON object for triage; expected a single {…} object".into(),
+        )
+    })?;
+    let parsed = serde_json::from_str::<TriageResponse>(json_slice).map_err(|err| {
+        RiptaskError::General(format!("AI returned malformed JSON for triage: {err}"))
+    })?;
+
+    let status = match parsed.status {
+        Some(s) => {
+            let trimmed = s.trim().to_owned();
+            if trimmed.is_empty() {
+                None
+            } else if TRIAGE_STATUS_ALLOWED.contains(&trimmed.as_str()) {
+                Some(trimmed)
+            } else {
+                return Err(RiptaskError::General(format!(
+                    "AI triage returned an invalid status: {trimmed:?} (allowed: {})",
+                    TRIAGE_STATUS_ALLOWED.join(", ")
+                )));
+            }
+        }
+        None => None,
+    };
+
+    let priority = match parsed.priority {
+        Some(p) => {
+            let trimmed = p.trim().to_owned();
+            if trimmed.is_empty() {
+                None
+            } else if TRIAGE_PRIORITY_ALLOWED.contains(&trimmed.as_str()) {
+                Some(trimmed)
+            } else {
+                return Err(RiptaskError::General(format!(
+                    "AI triage returned an invalid priority: {trimmed:?} (allowed: {})",
+                    TRIAGE_PRIORITY_ALLOWED.join(", ")
+                )));
+            }
+        }
+        None => None,
+    };
+
+    if parsed.labels.len() > TRIAGE_LABELS_MAX_ITEMS {
+        return Err(RiptaskError::General(format!(
+            "AI triage returned too many labels ({} > {TRIAGE_LABELS_MAX_ITEMS})",
+            parsed.labels.len()
+        )));
+    }
+    let mut labels = Vec::with_capacity(parsed.labels.len());
+    for label in parsed.labels {
+        let trimmed = label.trim().to_owned();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed.chars().count() > TRIAGE_LABEL_MAX_LEN {
+            return Err(RiptaskError::General(format!(
+                "AI triage returned a label exceeding {TRIAGE_LABEL_MAX_LEN} chars: {trimmed:?}"
+            )));
+        }
+        labels.push(trimmed);
+    }
+
+    Ok(TriageSuggestion {
+        state: status,
+        priority,
+        labels,
+    })
+}
+
 fn parse_issue_content_output(output: &str) -> Result<GeneratedIssueContent, RiptaskError> {
-    let trimmed = output.trim();
-    if trimmed.is_empty() {
+    if output.trim().is_empty() {
         return Err(RiptaskError::General(
             "AI returned empty output for issue generation".into(),
         ));
     }
-    if trimmed.starts_with("```") {
-        return Err(RiptaskError::General(
-            "AI returned fenced output for issue generation; expected a raw JSON object".into(),
-        ));
-    }
-    let parsed = serde_json::from_str::<GeneratedIssueContentResponse>(trimmed).map_err(|err| {
-        RiptaskError::General(format!(
-            "AI returned malformed JSON for issue generation: {err}"
-        ))
+    let json_slice = extract_first_json_object(output).ok_or_else(|| {
+        RiptaskError::General(
+            "AI returned no JSON object for issue generation; expected a single {…} object".into(),
+        )
     })?;
+    let parsed =
+        serde_json::from_str::<GeneratedIssueContentResponse>(json_slice).map_err(|err| {
+            RiptaskError::General(format!(
+                "AI returned malformed JSON for issue generation: {err}"
+            ))
+        })?;
 
     let title = parsed.title.trim().to_owned();
     if title.is_empty() {
@@ -304,16 +373,108 @@ fn is_horizontal_rule(line: &str) -> bool {
     line.trim() == "---"
 }
 
-fn validate_commit_message_output(raw: &str) -> Result<String, RiptaskError> {
+/// Extract the first complete JSON object (`{...}`) from arbitrary text.
+///
+/// Walks the input as bytes, tracks brace depth, and is aware of JSON string
+/// state (so braces inside `"..."` strings, including escaped quotes, do not
+/// affect the depth count). Returns the slice from the first `{` to the
+/// matching `}`, inclusive. Anything before or after that slice — preamble,
+/// code fences, trailing prose — is ignored.
+///
+/// This is structurally bounded: the returned slice still has to parse as
+/// valid JSON, and downstream code still validates every field. It is not a
+/// salvage-from-prose path.
+fn extract_first_json_object(text: &str) -> Option<&str> {
+    let bytes = text.as_bytes();
+    let start = bytes.iter().position(|&b| b == b'{')?;
+    let mut depth: usize = 0;
+    let mut in_string = false;
+    let mut escape = false;
+    for (offset, &b) in bytes[start..].iter().enumerate() {
+        if escape {
+            escape = false;
+            continue;
+        }
+        if in_string {
+            match b {
+                b'\\' => escape = true,
+                b'"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match b {
+            b'"' => in_string = true,
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&text[start..start + offset + 1]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn strip_optional_outer_fence(text: &str) -> String {
+    let trimmed = text.trim();
+    let Some(rest) = trimmed.strip_prefix("```") else {
+        return trimmed.to_owned();
+    };
+    let Some((header, body)) = rest.split_once('\n') else {
+        return trimmed.to_owned();
+    };
+    let header = header.trim();
+    if !header.is_empty() && !header.chars().all(|c| c.is_alphanumeric()) {
+        return trimmed.to_owned();
+    }
+    let body_trimmed = body.trim_end();
+    let Some(inner) = body_trimmed.strip_suffix("```") else {
+        return trimmed.to_owned();
+    };
+    inner.trim().to_owned()
+}
+
+fn validate_project_key_output(
+    raw: &str,
+    existing_keys: &[String],
+) -> Result<String, RiptaskError> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return Err(RiptaskError::General(
-            "AI returned empty commit message".into(),
+            "AI returned empty output for project key".into(),
         ));
     }
-    if trimmed.starts_with("```") || trimmed.contains("\n```") {
+    // Reject any output that would imply prose, formatting, or explanation.
+    if trimmed.contains('\n') || trimmed.contains('\r') {
         return Err(RiptaskError::General(
-            "AI returned fenced commit message; expected raw text".into(),
+            "AI project key output spans multiple lines".into(),
+        ));
+    }
+    static KEY_RE: OnceLock<Regex> = OnceLock::new();
+    let re =
+        KEY_RE.get_or_init(|| Regex::new(r"^[A-Z0-9]{2,10}$").expect("valid project key regex"));
+    if !re.is_match(trimmed) {
+        return Err(RiptaskError::General(format!(
+            "AI project key {trimmed:?} does not match required pattern ^[A-Z0-9]{{2,10}}$"
+        )));
+    }
+    if existing_keys.iter().any(|existing| existing == trimmed) {
+        return Err(RiptaskError::General(format!(
+            "AI project key {trimmed:?} collides with an already-taken key"
+        )));
+    }
+    Ok(trimmed.to_owned())
+}
+
+fn validate_commit_message_output(raw: &str) -> Result<String, RiptaskError> {
+    let unwrapped = strip_optional_outer_fence(raw);
+    let trimmed = unwrapped.trim();
+    if trimmed.is_empty() {
+        return Err(RiptaskError::General(
+            "AI returned empty commit message".into(),
         ));
     }
 
@@ -627,7 +788,7 @@ mod tests {
         let err = backend
             .generate_issue_content("context")
             .expect_err("non-json prose should be rejected");
-        assert!(err.to_string().contains("malformed JSON"));
+        assert!(err.to_string().contains("no JSON object"));
     }
 
     #[test]
@@ -747,21 +908,128 @@ mod tests {
         let err = backend
             .generate_issue_content("context")
             .expect_err("prose fallback should be rejected");
-        assert!(err.to_string().contains("malformed JSON"));
+        assert!(err.to_string().contains("no JSON object"));
     }
 
     #[test]
-    fn generate_issue_content_rejects_fenced_json() {
+    fn generate_issue_content_unwraps_fenced_json() {
         let backend = TemplateAiBackend {
             command_template:
                 "cat <<'EOF'\n```json\n{\"title\":\"Fix login\",\"body\":\"Details\"}\n```\nEOF"
                     .into(),
         };
 
+        let result = backend
+            .generate_issue_content("context")
+            .expect("fenced json with valid content should be unwrapped and parsed");
+        assert_eq!(result.title, "Fix login");
+        assert_eq!(result.body, "Details");
+    }
+
+    #[test]
+    fn generate_issue_content_unwraps_bare_fenced_json() {
+        let backend = TemplateAiBackend {
+            command_template:
+                "cat <<'EOF'\n```\n{\"title\":\"Fix login\",\"body\":\"Details\"}\n```\nEOF".into(),
+        };
+
+        let result = backend
+            .generate_issue_content("context")
+            .expect("bare fenced json should be unwrapped and parsed");
+        assert_eq!(result.title, "Fix login");
+        assert_eq!(result.body, "Details");
+    }
+
+    #[test]
+    fn generate_issue_content_rejects_fenced_prose() {
+        let backend = TemplateAiBackend {
+            command_template:
+                "cat <<'EOF'\n```\nLooking at the diff, you've made improvements...\n```\nEOF"
+                    .into(),
+        };
+
         let err = backend
             .generate_issue_content("context")
-            .expect_err("fenced json should be rejected");
-        assert!(err.to_string().contains("fenced output"));
+            .expect_err("fenced prose with no JSON object should be rejected");
+        assert!(err.to_string().contains("no JSON object"));
+    }
+
+    #[test]
+    fn generate_issue_content_extracts_json_with_prose_preamble() {
+        let backend = TemplateAiBackend {
+            command_template:
+                "cat <<'EOF'\nHere is the JSON for the issue:\n\n{\"title\":\"Fix login\",\"body\":\"Details\"}\nEOF"
+                    .into(),
+        };
+
+        let result = backend
+            .generate_issue_content("context")
+            .expect("prose preamble before JSON should be ignored");
+        assert_eq!(result.title, "Fix login");
+        assert_eq!(result.body, "Details");
+    }
+
+    #[test]
+    fn generate_issue_content_extracts_json_with_prose_postamble() {
+        let backend = TemplateAiBackend {
+            command_template:
+                "cat <<'EOF'\n{\"title\":\"Fix login\",\"body\":\"Details\"}\n\nLet me know if you need any changes.\nEOF"
+                    .into(),
+        };
+
+        let result = backend
+            .generate_issue_content("context")
+            .expect("prose postamble after JSON should be ignored");
+        assert_eq!(result.title, "Fix login");
+        assert_eq!(result.body, "Details");
+    }
+
+    #[test]
+    fn generate_issue_content_extracts_json_with_prose_and_fence() {
+        let backend = TemplateAiBackend {
+            command_template:
+                "cat <<'EOF'\nSure! Here's the issue:\n\n```json\n{\"title\":\"Fix login\",\"body\":\"Details\"}\n```\n\nLet me know if you'd like changes.\nEOF"
+                    .into(),
+        };
+
+        let result = backend
+            .generate_issue_content("context")
+            .expect("preamble + fenced JSON + postamble should all be ignored");
+        assert_eq!(result.title, "Fix login");
+        assert_eq!(result.body, "Details");
+    }
+
+    #[test]
+    fn generate_issue_content_handles_braces_inside_json_strings() {
+        let backend = TemplateAiBackend {
+            command_template:
+                "cat <<'EOF'\n{\"title\":\"Use let x = {a:1} in Rust\",\"body\":\"## Notes\\n\\nNested {braces} inside strings must not break extraction.\"}\nEOF"
+                    .into(),
+        };
+
+        let result = backend
+            .generate_issue_content("context")
+            .expect("braces inside JSON string values must not confuse the extractor");
+        assert_eq!(result.title, "Use let x = {a:1} in Rust");
+        assert!(result.body.contains("{braces}"));
+    }
+
+    #[test]
+    fn extract_first_json_object_is_string_aware() {
+        // Bare unit test for the helper: a `}` inside a string must not close the object.
+        let input = r#"prefix {"k":"v with } brace","n":1} suffix"#;
+        let extracted = extract_first_json_object(input).expect("balanced object");
+        assert_eq!(extracted, r#"{"k":"v with } brace","n":1}"#);
+    }
+
+    #[test]
+    fn extract_first_json_object_returns_none_without_brace() {
+        assert!(extract_first_json_object("Looking at the diff...").is_none());
+    }
+
+    #[test]
+    fn extract_first_json_object_returns_none_when_unbalanced() {
+        assert!(extract_first_json_object("{\"k\": \"v\"").is_none());
     }
 
     #[test]
@@ -852,7 +1120,7 @@ mod tests {
         let err = backend
             .generate_issue_content("context")
             .expect_err("real example a should be rejected");
-        assert!(err.to_string().contains("malformed JSON"));
+        assert!(err.to_string().contains("no JSON object"));
     }
 
     #[test]
@@ -864,7 +1132,7 @@ mod tests {
         let err = backend
             .generate_issue_content("context")
             .expect_err("real example b should be rejected");
-        assert!(err.to_string().contains("malformed JSON"));
+        assert!(err.to_string().contains("no JSON object"));
     }
 
     #[test]
@@ -877,10 +1145,29 @@ mod tests {
     }
 
     #[test]
-    fn commit_message_validator_rejects_fenced() {
-        let err = validate_commit_message_output("```text\nfeat(cli): add new flag\n```")
-            .expect_err("fenced commit message should be rejected");
-        assert!(err.to_string().contains("fenced commit message"));
+    fn commit_message_validator_unwraps_fenced() {
+        let result = validate_commit_message_output("```text\nfeat(cli): add new flag\n```")
+            .expect("fenced commit message with valid content should be unwrapped");
+        assert_eq!(result, "feat(cli): add new flag");
+    }
+
+    #[test]
+    fn commit_message_validator_unwraps_bare_fenced() {
+        let result = validate_commit_message_output("```\nfeat(cli): add new flag\n```")
+            .expect("bare fenced commit message should be unwrapped");
+        assert_eq!(result, "feat(cli): add new flag");
+    }
+
+    #[test]
+    fn commit_message_validator_rejects_fenced_conversational() {
+        let err = validate_commit_message_output(
+            "```\nLooking at the diff, you've made improvements\n```",
+        )
+        .expect_err("fenced conversational commit should still be rejected after unwrapping");
+        assert!(
+            err.to_string().contains("conventional commits")
+                || err.to_string().contains("conversational opener")
+        );
     }
 
     #[test]
@@ -984,6 +1271,164 @@ mod tests {
             .generate_issue_content("context")
             .expect_err("fullwidth question title should be rejected");
         assert!(err.to_string().contains("question title"));
+    }
+
+    // --- Triage parser ---
+
+    #[test]
+    fn triage_parser_accepts_minimal_object() {
+        let parsed = parse_triage_output(r#"{"status":"todo","priority":"high","labels":["bug"]}"#)
+            .expect("minimal triage object");
+        assert_eq!(parsed.state.as_deref(), Some("todo"));
+        assert_eq!(parsed.priority.as_deref(), Some("high"));
+        assert_eq!(parsed.labels, vec!["bug".to_string()]);
+    }
+
+    #[test]
+    fn triage_parser_accepts_nulls_and_empty_labels() {
+        let parsed = parse_triage_output(r#"{"status":null,"priority":null,"labels":[]}"#)
+            .expect("nulls and empty labels");
+        assert!(parsed.state.is_none());
+        assert!(parsed.priority.is_none());
+        assert!(parsed.labels.is_empty());
+    }
+
+    #[test]
+    fn triage_parser_extracts_json_with_prose_preamble() {
+        let parsed = parse_triage_output(
+            "Here is the triage:\n{\"status\":\"todo\",\"priority\":\"high\",\"labels\":[\"bug\"]}",
+        )
+        .expect("prose preamble should be ignored");
+        assert_eq!(parsed.state.as_deref(), Some("todo"));
+    }
+
+    #[test]
+    fn triage_parser_rejects_non_json_prose() {
+        let err = parse_triage_output("Looking at the issue, I think it should be todo.")
+            .expect_err("prose with no JSON object should be rejected");
+        assert!(err.to_string().contains("no JSON object"));
+    }
+
+    #[test]
+    fn triage_parser_rejects_invalid_status() {
+        let err =
+            parse_triage_output(r#"{"status":"in-progress","priority":"high","labels":["bug"]}"#)
+                .expect_err("invalid status should be rejected");
+        assert!(err.to_string().contains("invalid status"));
+    }
+
+    #[test]
+    fn triage_parser_rejects_invalid_priority() {
+        let err = parse_triage_output(r#"{"status":"todo","priority":"urgent","labels":["bug"]}"#)
+            .expect_err("invalid priority should be rejected");
+        assert!(err.to_string().contains("invalid priority"));
+    }
+
+    #[test]
+    fn triage_parser_rejects_extra_keys() {
+        let err = parse_triage_output(
+            r#"{"status":"todo","priority":"high","labels":["bug"],"notes":"x"}"#,
+        )
+        .expect_err("extra keys should be rejected");
+        assert!(err.to_string().contains("malformed JSON"));
+    }
+
+    #[test]
+    fn triage_parser_rejects_too_many_labels() {
+        let labels: Vec<String> = (0..11).map(|i| format!("\"l{i}\"")).collect();
+        let payload = format!(
+            r#"{{"status":"todo","priority":"high","labels":[{}]}}"#,
+            labels.join(",")
+        );
+        let err = parse_triage_output(&payload).expect_err("too many labels should be rejected");
+        assert!(err.to_string().contains("too many labels"));
+    }
+
+    #[test]
+    fn triage_parser_rejects_overlong_label() {
+        let long = "x".repeat(TRIAGE_LABEL_MAX_LEN + 1);
+        let payload = format!(r#"{{"status":"todo","priority":"high","labels":["{long}"]}}"#);
+        let err = parse_triage_output(&payload).expect_err("overlong label should be rejected");
+        assert!(err.to_string().contains("exceeding"));
+    }
+
+    // --- Project-key validator ---
+
+    #[test]
+    fn project_key_validator_accepts_valid_key() {
+        let key =
+            validate_project_key_output("RIPTASK", &[]).expect("valid project key should pass");
+        assert_eq!(key, "RIPTASK");
+    }
+
+    #[test]
+    fn project_key_validator_trims_surrounding_whitespace() {
+        let key = validate_project_key_output("  RIPTASK  \n", &[])
+            .expect("surrounding whitespace should be trimmed");
+        assert_eq!(key, "RIPTASK");
+    }
+
+    #[test]
+    fn project_key_validator_rejects_lowercase() {
+        let err = validate_project_key_output("riptask", &[])
+            .expect_err("lowercase keys should be rejected");
+        assert!(err.to_string().contains("does not match required pattern"));
+    }
+
+    #[test]
+    fn project_key_validator_rejects_hyphen() {
+        let err = validate_project_key_output("RIP-TASK", &[])
+            .expect_err("hyphenated keys should be rejected");
+        assert!(err.to_string().contains("does not match required pattern"));
+    }
+
+    #[test]
+    fn project_key_validator_rejects_prose_preamble() {
+        let err = validate_project_key_output("Here is a suggested key: RIPTASK", &[])
+            .expect_err("prose preamble should be rejected");
+        assert!(err.to_string().contains("does not match required pattern"));
+    }
+
+    #[test]
+    fn project_key_validator_rejects_backticks() {
+        let err = validate_project_key_output("`RIPTASK`", &[])
+            .expect_err("backtick wrapping should be rejected");
+        assert!(err.to_string().contains("does not match required pattern"));
+    }
+
+    #[test]
+    fn project_key_validator_rejects_too_short() {
+        let err =
+            validate_project_key_output("R", &[]).expect_err("single-char keys should be rejected");
+        assert!(err.to_string().contains("does not match required pattern"));
+    }
+
+    #[test]
+    fn project_key_validator_rejects_too_long() {
+        let err = validate_project_key_output("ABCDEFGHIJK", &[])
+            .expect_err("11-char keys should be rejected");
+        assert!(err.to_string().contains("does not match required pattern"));
+    }
+
+    #[test]
+    fn project_key_validator_rejects_collision() {
+        let err = validate_project_key_output("RIPTASK", &["RIPTASK".to_string()])
+            .expect_err("collision with existing key should be rejected");
+        assert!(err.to_string().contains("collides"));
+    }
+
+    #[test]
+    fn project_key_validator_rejects_empty() {
+        let err =
+            validate_project_key_output("", &[]).expect_err("empty output should be rejected");
+        assert!(err.to_string().contains("empty"));
+    }
+
+    #[test]
+    fn project_key_validator_rejects_multiline() {
+        let err = validate_project_key_output("RIPTASK\nDEVCTL", &[])
+            .expect_err("multiline output should be rejected");
+        assert!(err.to_string().contains("multiple lines"));
     }
 
     #[test]

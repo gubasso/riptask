@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "riptask://ai_prompts/triage",
+  "title": "TriageSuggestion",
+  "description": "An issue-triage suggestion produced by the riptask AI helper. The output is a single JSON object that validates strictly against this schema. No additional properties are allowed.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "status",
+    "priority",
+    "labels"
+  ],
+  "properties": {
+    "status": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "todo",
+        "doing",
+        "blocked",
+        "done",
+        null
+      ],
+      "description": "Suggested issue status. One of the riptask states (todo, doing, blocked, done) or null if no suggestion is appropriate."
+    },
+    "priority": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "critical",
+        null
+      ],
+      "description": "Suggested priority. One of low, medium, high, critical or null if no suggestion is appropriate."
+    },
+    "labels": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64
+      },
+      "maxItems": 10,
+      "description": "Suggested labels. Each label is a non-empty string up to 64 characters. The array may be empty."
+    }
+  }
+}
