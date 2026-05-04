@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "riptask://ai_prompts/issue_content",
+  "title": "GeneratedIssueContent",
+  "description": "A software-development issue (title and body) produced by the riptask AI helper. The output is a single JSON object that validates strictly against this schema. No additional properties are allowed.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "title",
+    "body"
+  ],
+  "properties": {
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120,
+      "pattern": "^[^\\n\\r?]+$",
+      "description": "Single-line imperative summary of the work. No newline, carriage return, or trailing question mark. No leading conversational phrase such as 'Looking at', 'Based on', 'Here is', 'Sure,', 'Certainly,'. No surrounding quotes. At most 120 characters."
+    },
+    "body": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Markdown-formatted issue body. May contain headings, lists, and code blocks. Must be self-contained — no trailing offers ('Would you like me to...', 'Let me know if...'), no trailing questions to the user, no meta commentary about the AI's process."
+    }
+  }
+}
