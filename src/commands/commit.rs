@@ -71,7 +71,7 @@ pub fn run(paths: &AppPaths, args: CommitArgs) -> Result<(), RiptaskError> {
         backend.generate_commit_message(&diff)
     }) {
         Ok(message) => {
-            let trimmed = strip_markdown_fences(&message);
+            let trimmed = message.trim().to_owned();
             if trimmed.is_empty() {
                 tracing::info!("AI commit message generation returned empty output");
                 crate::ui::warn("AI returned an empty commit message; opening editor");
@@ -170,22 +170,4 @@ fn run_git_commit_edit(repo: &std::path::Path, message: &str) -> Result<(), Ript
         return Err(RiptaskError::General("git commit failed".into()));
     }
     Ok(())
-}
-
-/// Strip markdown code fences that LLMs sometimes wrap around output.
-/// Applies repeatedly in case of nested fences.
-fn strip_markdown_fences(text: &str) -> String {
-    let mut result = text.trim().to_owned();
-    loop {
-        let lines: Vec<&str> = result.lines().collect();
-        if lines.len() >= 2
-            && lines[0].trim().starts_with("```")
-            && lines.last().is_some_and(|l| l.trim() == "```")
-        {
-            result = lines[1..lines.len() - 1].join("\n").trim().to_owned();
-        } else {
-            break;
-        }
-    }
-    result
 }
