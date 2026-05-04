@@ -147,9 +147,11 @@ fn recur_run_updates_system_when_only_system_defines_id() {
     let repo = temp.path().join("repo");
     init_system(&repo, &temp);
 
+    let mut new_args = recur_new_args("--system");
+    new_args.extend(["--start", "2026-04-24"]);
     command_with_env(&repo, &temp)
         .current_dir(temp.path())
-        .args(recur_new_args("--system"))
+        .args(new_args)
         .assert()
         .success();
 
