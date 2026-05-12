@@ -492,7 +492,8 @@ impl GitBackend for CliGit {
     }
 
     fn working_tree_diff(&self, repo: &Path) -> Result<String, RiptaskError> {
-        let output = if has_head_commit(repo)? {
+        // Tracked changes vs HEAD (or staged when no HEAD exists yet).
+        let tracked = if has_head_commit(repo)? {
             git_command()
                 .arg("-C")
                 .arg(repo)
@@ -505,14 +506,43 @@ impl GitBackend for CliGit {
                 .args(["diff", "--cached"])
                 .output()?
         };
-        if !output.status.success() {
+        if !tracked.status.success() {
             return Err(RiptaskError::General(
                 "failed to read working tree git diff".into(),
             ));
         }
-        Ok(truncate_diff(
-            String::from_utf8_lossy(&output.stdout).trim().to_owned(),
-        ))
+        let mut combined = String::from_utf8_lossy(&tracked.stdout).into_owned();
+
+        // Untracked files: `git diff HEAD` ignores them, so synthesize a diff
+        // against /dev/null for each so AI flows see new files too. Stop once
+        // we're past the truncation budget — no point spawning more subprocesses
+        // for content truncate_diff will drop.
+        for path in list_untracked_files(repo)? {
+            if combined.len() >= MAX_DIFF_CHARS {
+                break;
+            }
+            let abs = repo.join(&path);
+            let untracked = git_command()
+                .arg("-C")
+                .arg(repo)
+                .args(["diff", "--no-index", "--"])
+                .arg("/dev/null")
+                .arg(&abs)
+                .output()?;
+            // `git diff --no-index` exits 0 when files are identical and 1 when
+            // they differ; both are success for us.
+            match untracked.status.code() {
+                Some(0) | Some(1) => {}
+                _ => {
+                    return Err(RiptaskError::General(
+                        "failed to read untracked file diff".into(),
+                    ));
+                }
+            }
+            combined.push_str(&String::from_utf8_lossy(&untracked.stdout));
+        }
+
+        Ok(truncate_diff(combined.trim().to_owned()))
     }
 
     fn staged_diff(&self, repo: &Path) -> Result<String, RiptaskError> {
@@ -652,8 +682,9 @@ fn has_head_commit(repo: &Path) -> Result<bool, RiptaskError> {
     Ok(status.success())
 }
 
+const MAX_DIFF_CHARS: usize = 8000;
+
 fn truncate_diff(mut diff: String) -> String {
-    const MAX_DIFF_CHARS: usize = 8000;
     if diff.len() > MAX_DIFF_CHARS {
         // Find the nearest char boundary at or before MAX_DIFF_CHARS to avoid
         // panicking on multi-byte UTF-8 sequences.
@@ -661,6 +692,30 @@ fn truncate_diff(mut diff: String) -> String {
         diff.truncate(boundary);
     }
     diff
+}
+
+fn list_untracked_files(repo: &Path) -> Result<Vec<std::path::PathBuf>, RiptaskError> {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let output = git_command()
+        .arg("-C")
+        .arg(repo)
+        .args(["ls-files", "--others", "--exclude-standard", "-z"])
+        .output()?;
+    if !output.status.success() {
+        return Err(RiptaskError::General(
+            "failed to list untracked files".into(),
+        ));
+    }
+    let mut paths = Vec::new();
+    for chunk in output.stdout.split(|b| *b == 0) {
+        if chunk.is_empty() {
+            continue;
+        }
+        paths.push(std::path::PathBuf::from(OsStr::from_bytes(chunk)));
+    }
+    Ok(paths)
 }
 
 fn build_askpass_script(token: &str) -> String {
@@ -768,6 +823,91 @@ mod tests {
 
         assert!(diff.contains("-before"));
         assert!(diff.contains("+after"));
+    }
+
+    #[test]
+    fn working_tree_diff_includes_untracked_files() {
+        let temp = tempdir().expect("temp dir");
+        run_git(temp.path(), &["init"]);
+        run_git(temp.path(), &["config", "user.name", "Test User"]);
+        run_git(temp.path(), &["config", "user.email", "test@example.com"]);
+
+        fs::write(temp.path().join("tracked.txt"), "kept\n").expect("write file");
+        run_git(temp.path(), &["add", "tracked.txt"]);
+        run_git(temp.path(), &["commit", "-m", "initial"]);
+
+        fs::write(temp.path().join("brand_new.rs"), "fn main() {}\n").expect("write untracked");
+
+        let diff = CliGit::new()
+            .working_tree_diff(temp.path())
+            .expect("working tree diff");
+
+        assert!(
+            diff.contains("brand_new.rs"),
+            "diff missing untracked filename: {diff}"
+        );
+        assert!(
+            diff.contains("+fn main() {}"),
+            "diff missing untracked content: {diff}"
+        );
+    }
+
+    #[test]
+    fn working_tree_diff_combines_modified_and_untracked() {
+        let temp = tempdir().expect("temp dir");
+        run_git(temp.path(), &["init"]);
+        run_git(temp.path(), &["config", "user.name", "Test User"]);
+        run_git(temp.path(), &["config", "user.email", "test@example.com"]);
+
+        fs::write(temp.path().join("note.txt"), "before\n").expect("write file");
+        run_git(temp.path(), &["add", "note.txt"]);
+        run_git(temp.path(), &["commit", "-m", "initial"]);
+
+        fs::write(temp.path().join("note.txt"), "after\n").expect("modify file");
+        fs::write(temp.path().join("extra.rs"), "fn extra() {}\n").expect("write untracked");
+
+        let diff = CliGit::new()
+            .working_tree_diff(temp.path())
+            .expect("working tree diff");
+
+        assert!(diff.contains("-before"), "missing modified -before: {diff}");
+        assert!(diff.contains("+after"), "missing modified +after: {diff}");
+        assert!(
+            diff.contains("extra.rs"),
+            "missing untracked filename: {diff}"
+        );
+        assert!(
+            diff.contains("+fn extra() {}"),
+            "missing untracked content: {diff}"
+        );
+    }
+
+    #[test]
+    fn working_tree_diff_returns_untracked_when_no_head() {
+        let temp = tempdir().expect("temp dir");
+        run_git(temp.path(), &["init"]);
+        run_git(temp.path(), &["config", "user.name", "Test User"]);
+        run_git(temp.path(), &["config", "user.email", "test@example.com"]);
+
+        // No commits yet — HEAD does not resolve.
+        fs::write(temp.path().join("seed.rs"), "fn seed() {}\n").expect("write untracked");
+
+        let diff = CliGit::new()
+            .working_tree_diff(temp.path())
+            .expect("working tree diff");
+
+        assert!(
+            !diff.is_empty(),
+            "expected non-empty diff for HEAD-less repo with untracked file"
+        );
+        assert!(
+            diff.contains("seed.rs"),
+            "missing untracked filename: {diff}"
+        );
+        assert!(
+            diff.contains("+fn seed() {}"),
+            "missing untracked content: {diff}"
+        );
     }
 
     #[test]
