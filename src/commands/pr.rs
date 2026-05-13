@@ -1,4 +1,6 @@
 use crate::adapters::ai::AiBackend;
+#[cfg(test)]
+use crate::adapters::backend::PrChecksReport;
 use crate::adapters::backend::{BackendPrRecord, MergeMethod, PrChecksStatus, VersionControl};
 use crate::adapters::git::{CliGit, GitBackend};
 use crate::adapters::prompts::{DialoguerPrompts, PromptBackend};
@@ -26,6 +28,12 @@ use std::time::{Duration, Instant};
 const EMPTY_BRANCH_COMMIT_MESSAGE: &str = "chore: initialize branch for PR\n\n\
                                           Empty commit to allow PR creation on a branch with no changes yet.";
 const CHECKS_POLL_INTERVAL: Duration = Duration::from_secs(10);
+const REGISTRATION_GRACE: Duration = Duration::from_secs(90);
+
+struct InitialChecksState {
+    expected: Vec<String>,
+    head_sha: String,
+}
 
 pub async fn run(paths: &AppPaths, args: PrArgs) -> Result<(), RiptaskError> {
     match args.subcommand {
@@ -495,16 +503,7 @@ pub(crate) async fn merge_pr_workflow(
     }
 
     if !opts.auto_merge {
-        handle_ci_checks(
-            provider,
-            prompts,
-            repo_path,
-            repo_name,
-            pr_number,
-            &backend_kind,
-            opts,
-        )
-        .await?;
+        handle_ci_checks(provider, repo_name, pr_number, opts).await?;
     }
     ui::spin_on_async("Merging pull request", async {
         provider
@@ -636,95 +635,39 @@ fn confirm_merge(
     prompts.confirm(&prompt, false)
 }
 
-fn has_local_ci(repo_path: &Path, backend_kind: &BackendKind) -> bool {
-    match backend_kind {
-        BackendKind::Github => has_local_github_ci(repo_path),
-        BackendKind::Gitlab => has_local_gitlab_ci(repo_path),
-        BackendKind::Jira => false,
-        BackendKind::Local => false,
-    }
-}
-
-fn has_local_github_ci(repo_path: &Path) -> bool {
-    !local_github_workflow_names(repo_path).is_empty()
-}
-
-fn has_local_gitlab_ci(repo_path: &Path) -> bool {
-    repo_path.join(".gitlab-ci.yml").is_file()
-}
-
-fn local_github_workflow_names(repo_path: &Path) -> Vec<String> {
-    let workflow_dir = repo_path.join(".github").join("workflows");
-    let Ok(entries) = fs::read_dir(workflow_dir) else {
-        return Vec::new();
-    };
-    let mut names: Vec<String> = entries
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.is_file())
-        .filter(|path| {
-            matches!(
-                path.extension().and_then(|ext| ext.to_str()),
-                Some("yml" | "yaml")
-            )
-        })
-        .filter_map(|path| {
-            path.file_stem()
-                .map(|stem| stem.to_string_lossy().to_string())
-        })
-        .collect();
-    names.sort();
-    names
-}
-
 async fn handle_ci_checks(
     provider: &dyn VersionControl,
-    prompts: &dyn PromptBackend,
-    repo_path: &Path,
     repo_name: &str,
     pr_number: u64,
-    backend_kind: &BackendKind,
     opts: &MergeOptions,
 ) -> Result<PrChecksStatus, RiptaskError> {
-    let has_local = has_local_ci(repo_path, backend_kind);
-    let presence = provider.get_ci_presence(repo_name).await?;
-    match (has_local, presence.has_remote_ci) {
-        (false, false) => {
-            ui::info("no CI configured, proceeding");
-            Ok(PrChecksStatus::None)
-        }
-        (false, true) => if opts.yes {
-            ui::warn("remote CI detected without local CI config; waiting for checks");
-            wait_for_checks(provider, repo_name, pr_number, opts.timeout).await
-        } else if prompts.confirm(
-            "remote CI detected but no local CI config found. Wait for remote CI before merging?",
-            true,
-        )? {
-            wait_for_checks(provider, repo_name, pr_number, opts.timeout).await
-        } else {
-            ui::warn("bypassing remote CI checks");
-            Ok(PrChecksStatus::None)
-        },
-        (true, false) | (true, true) => {
-            wait_for_checks(provider, repo_name, pr_number, opts.timeout).await
-        }
+    let report = provider.get_pr_checks_report(repo_name, pr_number).await?;
+    for warning in &report.warnings {
+        ui::warn(warning);
     }
-}
-
-async fn wait_for_checks(
-    provider: &dyn VersionControl,
-    repo: &str,
-    pr_number: u64,
-    timeout_secs: u64,
-) -> Result<PrChecksStatus, RiptaskError> {
-    wait_for_checks_inner(
+    if report.expected.is_empty() && matches!(report.status, PrChecksStatus::None) {
+        ui::info("no CI checks configured for this PR, proceeding");
+        return Ok(PrChecksStatus::None);
+    }
+    let status = wait_for_checks_inner(
         provider,
-        repo,
+        repo_name,
         pr_number,
-        Duration::from_secs(timeout_secs),
+        Duration::from_secs(opts.timeout),
+        REGISTRATION_GRACE,
         CHECKS_POLL_INTERVAL,
+        InitialChecksState {
+            expected: report.expected,
+            head_sha: report.head_sha,
+        },
     )
-    .await
+    .await?;
+    if status == PrChecksStatus::Failed {
+        return Err(RiptaskError::General(format!(
+            "checks failed for PR #{pr_number}"
+        )));
+    }
+    Ok(status)
 }
 
 async fn wait_for_checks_inner(
@@ -732,61 +675,187 @@ async fn wait_for_checks_inner(
     repo: &str,
     pr_number: u64,
     timeout: Duration,
+    registration_grace: Duration,
     poll_interval: Duration,
+    initial: InitialChecksState,
 ) -> Result<PrChecksStatus, RiptaskError> {
     let started = Instant::now();
     let spinner = ui::spinner("waiting for checks to register");
-    let mut saw_checks = false;
+    let mut current_head_sha = initial.head_sha;
+    let mut expected_set = initial.expected;
+    let mut registered = std::collections::BTreeSet::<String>::new();
+    let mut grace_started = Instant::now();
 
     loop {
-        let status = match provider.get_pr_checks_status(repo, pr_number).await {
-            Ok(s) => s,
+        let report = match provider.get_pr_checks_report(repo, pr_number).await {
+            Ok(report) => report,
             Err(e) => {
                 finish_spinner(&spinner);
                 return Err(e);
             }
         };
 
-        match status {
-            PrChecksStatus::Passed => {
+        for warning in &report.warnings {
+            ui::warn(warning);
+        }
+
+        if report.head_sha != current_head_sha {
+            current_head_sha = report.head_sha.clone();
+            let next_expected = report.expected.clone();
+            let next_expected_set = next_expected
+                .iter()
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>();
+            let known_registered = report
+                .registered
+                .iter()
+                .filter(|name| next_expected_set.contains(*name))
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>();
+            // Reset grace whenever the new head still has expected checks that
+            // have not registered on it yet. Comparing against the previous
+            // head's registrations (the old behavior) misses the common case of
+            // a rebase / new push where the expected names are unchanged but
+            // none of them have registered on the new SHA yet.
+            let missing_on_new_head = next_expected_set
+                .iter()
+                .any(|name| !known_registered.contains(name));
+            expected_set = next_expected;
+            registered = known_registered;
+            if expected_set.is_empty() && matches!(report.status, PrChecksStatus::None) {
                 finish_spinner(&spinner);
-                let elapsed = ui::format_elapsed(started.elapsed());
-                ui::success(&format!("checks passed ({elapsed})"));
-                return Ok(status);
+                ui::info("PR head changed; no CI checks on new head, proceeding");
+                return Ok(PrChecksStatus::None);
             }
-            PrChecksStatus::Failed => {
+            if missing_on_new_head {
+                grace_started = Instant::now();
+            }
+        }
+
+        let expected_names = expected_set
+            .iter()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>();
+        let report_registered = report
+            .registered
+            .iter()
+            .filter(|name| expected_names.contains(*name))
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>();
+        registered.extend(report_registered);
+
+        let missing = expected_names
+            .difference(&registered)
+            .cloned()
+            .collect::<Vec<_>>();
+
+        if !missing.is_empty() {
+            update_spinner(
+                &spinner,
+                &format!("registering: {}/{}", registered.len(), expected_set.len()),
+            );
+            if grace_started.elapsed() >= registration_grace {
+                finish_spinner(&spinner);
+                return Err(RiptaskError::General(format!(
+                    "required checks did not register: [{}]",
+                    missing.join(", ")
+                )));
+            }
+        } else {
+            let finished = report
+                .items
+                .iter()
+                .filter(|item| expected_names.contains(&item.name))
+                .filter(|item| {
+                    matches!(item.state, PrChecksStatus::Passed | PrChecksStatus::Failed)
+                })
+                .count();
+            update_spinner(
+                &spinner,
+                &format!("checks: {}/{}", finished, expected_set.len()),
+            );
+
+            if report.items.iter().any(|item| {
+                expected_names.contains(&item.name) && item.state == PrChecksStatus::Failed
+            }) || report.status == PrChecksStatus::Failed
+            {
                 finish_spinner(&spinner);
                 let elapsed = ui::format_elapsed(started.elapsed());
                 ui::error(&format!("checks failed ({elapsed})"));
-                return Err(RiptaskError::General(format!(
-                    "checks failed for PR #{pr_number}"
-                )));
+                return Ok(PrChecksStatus::Failed);
             }
-            PrChecksStatus::Pending => {
-                saw_checks = true;
-                update_spinner(&spinner, "checks: pending");
+
+            if report.status == PrChecksStatus::Passed {
+                finish_spinner(&spinner);
+                let elapsed = ui::format_elapsed(started.elapsed());
+                ui::success(&format!("checks passed ({elapsed})"));
+                return Ok(PrChecksStatus::Passed);
             }
-            PrChecksStatus::None => {
-                if saw_checks {
-                    update_spinner(&spinner, "checks: waiting for checks to reappear");
-                } else {
-                    update_spinner(&spinner, "checks: waiting for checks to register");
-                }
+
+            if expected_set.is_empty() && matches!(report.status, PrChecksStatus::None) {
+                finish_spinner(&spinner);
+                ui::info("no CI checks configured for this PR, proceeding");
+                return Ok(PrChecksStatus::None);
             }
         }
+
         if started.elapsed() >= timeout {
             finish_spinner(&spinner);
-            if saw_checks {
-                return Err(RiptaskError::General(format!(
-                    "timed out after {}s waiting for checks on PR #{pr_number}",
-                    timeout.as_secs()
-                )));
-            }
-            ui::info("no CI checks detected, proceeding");
-            return Ok(PrChecksStatus::None);
+            return Err(RiptaskError::General(format!(
+                "timed out after {}s waiting for checks on PR #{pr_number}",
+                timeout.as_secs()
+            )));
         }
-        tokio::time::sleep(poll_interval).await;
+
+        if poll_interval.is_zero() {
+            tokio::task::yield_now().await;
+        } else {
+            tokio::time::sleep(poll_interval).await;
+        }
     }
+}
+
+#[cfg(test)]
+fn report_from_status(
+    status: PrChecksStatus,
+    head_sha: &str,
+    expected: &[String],
+    registered: &[String],
+) -> PrChecksReport {
+    let items = expected
+        .iter()
+        .chain(registered.iter())
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .map(|name| PrChecksReportItemState {
+            name,
+            state: status,
+            url: None,
+        })
+        .collect::<Vec<_>>();
+    PrChecksReport {
+        head_sha: head_sha.to_owned(),
+        expected: expected.to_vec(),
+        registered: registered.to_vec(),
+        items: items
+            .into_iter()
+            .map(|item| crate::adapters::backend::PrCheckItem {
+                name: item.name,
+                state: item.state,
+                url: item.url,
+            })
+            .collect(),
+        status,
+        warnings: Vec::new(),
+    }
+}
+
+#[cfg(test)]
+struct PrChecksReportItemState {
+    name: String,
+    state: PrChecksStatus,
+    url: Option<String>,
 }
 
 async fn wait_for_pr_head_update(
@@ -949,46 +1018,33 @@ pub(crate) fn parse_pr_number_from_url(url: &str) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::{
-        MergeOptions, default_body, default_title, handle_ci_checks, merge_method_label,
-        parse_editor_buffer, parse_pr_number_from_url, pr_checks_status_label, pr_head_matches,
-        wait_for_checks_inner, wait_for_pr_head_update,
+        InitialChecksState, MergeOptions, default_body, default_title, handle_ci_checks,
+        merge_method_label, parse_editor_buffer, parse_pr_number_from_url, pr_checks_status_label,
+        pr_head_matches, report_from_status, wait_for_checks_inner, wait_for_pr_head_update,
     };
     use crate::adapters::backend::{
-        BackendPrRecord, CiPresence, MergeMethod, PrChecksStatus, VersionControl,
+        BackendPrRecord, MergeMethod, PrChecksReport, PrChecksStatus, VersionControl,
     };
-    use crate::adapters::prompts::PromptBackend;
     use crate::error::RiptaskError;
-    use crate::models::BackendKind;
     use async_trait::async_trait;
     use std::collections::VecDeque;
-    use std::fs;
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
     #[derive(Clone)]
     struct FakeChecksProvider {
-        statuses: Arc<Mutex<VecDeque<PrChecksStatus>>>,
-        ci_presence: CiPresence,
+        reports: Arc<Mutex<VecDeque<PrChecksReport>>>,
         polls: Arc<Mutex<usize>>,
         head_shas: Arc<Mutex<VecDeque<String>>>,
     }
 
     impl FakeChecksProvider {
-        fn new(statuses: Vec<PrChecksStatus>) -> Self {
+        fn new(reports: Vec<PrChecksReport>) -> Self {
             Self {
-                statuses: Arc::new(Mutex::new(VecDeque::from(statuses))),
-                ci_presence: CiPresence {
-                    has_remote_ci: false,
-                    remote_workflow_names: Vec::new(),
-                },
+                reports: Arc::new(Mutex::new(VecDeque::from(reports))),
                 polls: Arc::new(Mutex::new(0)),
                 head_shas: Arc::new(Mutex::new(VecDeque::new())),
             }
-        }
-
-        fn with_ci_presence(mut self, ci_presence: CiPresence) -> Self {
-            self.ci_presence = ci_presence;
-            self
         }
 
         fn with_head_shas(mut self, shas: Vec<String>) -> Self {
@@ -998,49 +1054,6 @@ mod tests {
 
         fn poll_count(&self) -> usize {
             *self.polls.lock().expect("lock")
-        }
-    }
-
-    #[derive(Clone)]
-    struct FakePrompts {
-        confirms: Arc<Mutex<VecDeque<bool>>>,
-        confirm_calls: Arc<Mutex<usize>>,
-    }
-
-    impl FakePrompts {
-        fn new(confirms: Vec<bool>) -> Self {
-            Self {
-                confirms: Arc::new(Mutex::new(VecDeque::from(confirms))),
-                confirm_calls: Arc::new(Mutex::new(0)),
-            }
-        }
-
-        fn confirm_calls(&self) -> usize {
-            *self.confirm_calls.lock().expect("lock")
-        }
-    }
-
-    impl PromptBackend for FakePrompts {
-        fn input(&self, _prompt: &str, _default: Option<&str>) -> Result<String, RiptaskError> {
-            unimplemented!()
-        }
-
-        fn confirm(&self, _prompt: &str, _default: bool) -> Result<bool, RiptaskError> {
-            *self.confirm_calls.lock().expect("lock") += 1;
-            self.confirms
-                .lock()
-                .expect("lock")
-                .pop_front()
-                .ok_or_else(|| RiptaskError::General("missing confirm response".into()))
-        }
-
-        fn select(
-            &self,
-            _prompt: &str,
-            _items: &[String],
-            _default: usize,
-        ) -> Result<String, RiptaskError> {
-            unimplemented!()
         }
     }
 
@@ -1109,23 +1122,19 @@ mod tests {
             unimplemented!()
         }
 
-        async fn get_pr_checks_status(
+        async fn get_pr_checks_report(
             &self,
             _repo: &str,
             _number: u64,
-        ) -> Result<PrChecksStatus, RiptaskError> {
+        ) -> Result<PrChecksReport, RiptaskError> {
             *self.polls.lock().expect("lock") += 1;
-            let mut statuses = self.statuses.lock().expect("lock");
-            let status = if statuses.len() > 1 {
-                statuses.pop_front().expect("status")
+            let mut reports = self.reports.lock().expect("lock");
+            let report = if reports.len() > 1 {
+                reports.pop_front().expect("report")
             } else {
-                statuses.front().copied().expect("status")
+                reports.front().cloned().expect("report")
             };
-            Ok(status)
-        }
-
-        async fn get_ci_presence(&self, _repo: &str) -> Result<CiPresence, RiptaskError> {
-            Ok(self.ci_presence.clone())
+            Ok(report)
         }
 
         async fn create_branch(
@@ -1225,36 +1234,50 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn no_checks_exits_after_timeout() {
-        let provider = FakeChecksProvider::new(vec![PrChecksStatus::None]);
-        let poll = Duration::from_millis(10);
-        let timeout = Duration::from_millis(50);
+    async fn empty_expected_skips_immediately() {
+        let provider = FakeChecksProvider::new(vec![report_from_status(
+            PrChecksStatus::None,
+            "sha-1",
+            &[],
+            &[],
+        )]);
         let started = Instant::now();
 
-        let result = wait_for_checks_inner(&provider, "owner/repo", 42, timeout, poll).await;
+        let result = handle_ci_checks(&provider, "owner/repo", 42, &merge_options(false, 1)).await;
 
-        let elapsed = started.elapsed();
-        assert_eq!(result.expect("no checks"), PrChecksStatus::None);
-        assert!(
-            elapsed >= timeout,
-            "elapsed {elapsed:?} should be at least {timeout:?}"
-        );
+        assert_eq!(result.expect("skip"), PrChecksStatus::None);
+        assert!(started.elapsed() < Duration::from_millis(10));
+        assert_eq!(provider.poll_count(), 1);
     }
 
     #[tokio::test(flavor = "current_thread")]
     async fn checks_register_late_then_pass() {
         let provider = FakeChecksProvider::new(vec![
-            PrChecksStatus::None,
-            PrChecksStatus::None,
-            PrChecksStatus::Pending,
-            PrChecksStatus::Passed,
+            report_from_status(PrChecksStatus::Pending, "sha-1", &["ci".into()], &[]),
+            report_from_status(
+                PrChecksStatus::Pending,
+                "sha-1",
+                &["ci".into()],
+                &["ci".into()],
+            ),
+            report_from_status(
+                PrChecksStatus::Passed,
+                "sha-1",
+                &["ci".into()],
+                &["ci".into()],
+            ),
         ]);
         let result = wait_for_checks_inner(
             &provider,
             "owner/repo",
             42,
             Duration::from_millis(200),
+            Duration::from_millis(30),
             Duration::from_millis(10),
+            InitialChecksState {
+                expected: vec!["ci".into()],
+                head_sha: "sha-1".into(),
+            },
         )
         .await;
 
@@ -1262,58 +1285,140 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn checks_disappear_after_seen_times_out() {
-        let provider = FakeChecksProvider::new(vec![PrChecksStatus::Pending, PrChecksStatus::None]);
-        let timeout = Duration::from_millis(200);
-        let started = Instant::now();
+    async fn missing_required_check_fails_after_registration_grace() {
+        let provider = FakeChecksProvider::new(vec![report_from_status(
+            PrChecksStatus::Pending,
+            "sha-1",
+            &["ci".into()],
+            &[],
+        )]);
 
         let result = wait_for_checks_inner(
             &provider,
             "owner/repo",
             42,
-            timeout,
+            Duration::from_millis(100),
             Duration::from_millis(10),
+            Duration::from_millis(10),
+            InitialChecksState {
+                expected: vec!["ci".into()],
+                head_sha: "sha-1".into(),
+            },
         )
         .await;
 
-        let elapsed = started.elapsed();
-        let error = result.expect_err("checks should time out");
+        let error = result.expect_err("checks should fail registration");
         assert!(
-            error.to_string().contains("timed out"),
+            error
+                .to_string()
+                .contains("required checks did not register"),
             "unexpected error: {error}"
-        );
-        assert!(
-            elapsed >= timeout,
-            "elapsed {elapsed:?} should be at least timeout {timeout:?}"
         );
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn timeout_without_checks_proceeds() {
-        let provider = FakeChecksProvider::new(vec![PrChecksStatus::None]);
-        let timeout = Duration::from_millis(30);
-        let started = Instant::now();
+    async fn head_sha_change_restarts_registration_and_can_skip_new_head() {
+        let provider = FakeChecksProvider::new(vec![
+            report_from_status(PrChecksStatus::Pending, "sha-1", &["ci".into()], &[]),
+            report_from_status(PrChecksStatus::None, "sha-2", &[], &[]),
+        ]);
 
         let result = wait_for_checks_inner(
             &provider,
             "owner/repo",
             42,
-            timeout,
+            Duration::from_millis(100),
+            Duration::from_millis(25),
             Duration::from_millis(10),
+            InitialChecksState {
+                expected: vec!["ci".into()],
+                head_sha: "sha-1".into(),
+            },
         )
         .await;
 
-        let elapsed = started.elapsed();
         assert_eq!(result.expect("no checks"), PrChecksStatus::None);
-        assert!(
-            elapsed >= timeout,
-            "elapsed {elapsed:?} should be at least timeout {timeout:?}"
+    }
+
+    // Regression: after a force-push the expected check names typically stay
+    // the same, but the new SHA has zero registrations until CI re-fires.
+    // The grace window must reset so we give the new head its own grace
+    // period instead of failing on "did not register" because the old
+    // head's grace has already expired.
+    //
+    // Timing is calibrated so the *old* (pre-fix) code would observe
+    // elapsed_since(grace_started) >= grace while ci is still unregistered
+    // on sha-2, while the *new* (post-fix) code resets grace on the SHA
+    // drift and stays within the grace until ci registers. The window has
+    // some slack so that scheduling jitter does not flip the outcome.
+    #[tokio::test(flavor = "current_thread")]
+    async fn head_sha_change_with_same_expected_resets_grace() {
+        // Poll cadence relative to t=0 (loop start):
+        //   poll 1 ~  0ms  sha-1, ci registered, pending
+        //   poll 2 ~ 40ms  sha-2 drift, nothing registered yet
+        //   poll 3 ~ 80ms  sha-2, nothing registered yet
+        //   poll 4 ~120ms  sha-2, ci registered, pending
+        //   poll 5 ~160ms  sha-2, passed
+        //
+        // grace = 70ms:
+        //   OLD code: grace_started stays at t=0. At poll 3 (t~80ms) the
+        //   missing set is still {ci} and 80ms >= 70ms -> fails with
+        //   "required checks did not register".
+        //   NEW code: grace_started resets at poll 2 (t~40ms). At poll 3
+        //   (t~80ms) elapsed_since_reset is ~40ms < 70ms, so the loop
+        //   continues; at poll 4 ci registers (missing empty); poll 5 passes.
+        let provider = FakeChecksProvider::new(vec![
+            report_from_status(
+                PrChecksStatus::Pending,
+                "sha-1",
+                &["ci".into()],
+                &["ci".into()],
+            ),
+            report_from_status(PrChecksStatus::Pending, "sha-2", &["ci".into()], &[]),
+            report_from_status(PrChecksStatus::Pending, "sha-2", &["ci".into()], &[]),
+            report_from_status(
+                PrChecksStatus::Pending,
+                "sha-2",
+                &["ci".into()],
+                &["ci".into()],
+            ),
+            report_from_status(
+                PrChecksStatus::Passed,
+                "sha-2",
+                &["ci".into()],
+                &["ci".into()],
+            ),
+        ]);
+
+        let result = wait_for_checks_inner(
+            &provider,
+            "owner/repo",
+            42,
+            Duration::from_millis(2_000),
+            Duration::from_millis(70),
+            Duration::from_millis(40),
+            InitialChecksState {
+                expected: vec!["ci".into()],
+                head_sha: "sha-1".into(),
+            },
+        )
+        .await;
+
+        assert_eq!(
+            result.expect("grace should reset on SHA drift and checks should pass"),
+            PrChecksStatus::Passed,
         );
     }
 
     #[tokio::test(flavor = "current_thread")]
     async fn pr_head_update_waits_for_matching_sha() {
-        let provider = FakeChecksProvider::new(vec![PrChecksStatus::None]).with_head_shas(vec![
+        let provider = FakeChecksProvider::new(vec![report_from_status(
+            PrChecksStatus::None,
+            "old-sha",
+            &[],
+            &[],
+        )])
+        .with_head_shas(vec![
             "old-sha".into(),
             "older-sha".into(),
             "expected-sha".into(),
@@ -1334,8 +1439,13 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn pr_head_update_times_out_on_stale_sha() {
-        let provider = FakeChecksProvider::new(vec![PrChecksStatus::None])
-            .with_head_shas(vec!["old-sha".into()]);
+        let provider = FakeChecksProvider::new(vec![report_from_status(
+            PrChecksStatus::None,
+            "old-sha",
+            &[],
+            &[],
+        )])
+        .with_head_shas(vec!["old-sha".into()]);
 
         let result = wait_for_pr_head_update(
             &provider,
@@ -1358,8 +1468,13 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn pr_head_update_passes_immediately_when_sha_matches() {
-        let provider = FakeChecksProvider::new(vec![PrChecksStatus::None])
-            .with_head_shas(vec!["expected-sha".into()]);
+        let provider = FakeChecksProvider::new(vec![report_from_status(
+            PrChecksStatus::None,
+            "expected-sha",
+            &[],
+            &[],
+        )])
+        .with_head_shas(vec!["expected-sha".into()]);
 
         let started = Instant::now();
         let result = wait_for_pr_head_update(
@@ -1380,168 +1495,26 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn no_ci_skips_immediately() {
-        let provider =
-            FakeChecksProvider::new(vec![PrChecksStatus::Pending]).with_ci_presence(CiPresence {
-                has_remote_ci: false,
-                remote_workflow_names: Vec::new(),
-            });
-        let prompts = FakePrompts::new(vec![]);
-        let repo = tempfile::tempdir().expect("tempdir");
+    async fn handle_ci_checks_waits_when_expected_checks_exist() {
+        let provider = FakeChecksProvider::new(vec![
+            report_from_status(PrChecksStatus::Pending, "sha-1", &["ci".into()], &[]),
+            report_from_status(
+                PrChecksStatus::Pending,
+                "sha-1",
+                &["ci".into()],
+                &["ci".into()],
+            ),
+            report_from_status(
+                PrChecksStatus::Passed,
+                "sha-1",
+                &["ci".into()],
+                &["ci".into()],
+            ),
+        ]);
 
-        let result = handle_ci_checks(
-            &provider,
-            &prompts,
-            repo.path(),
-            "owner/repo",
-            42,
-            &BackendKind::Github,
-            &merge_options(false, 1),
-        )
-        .await;
-
-        assert_eq!(result.expect("skip"), PrChecksStatus::None);
-        assert_eq!(provider.poll_count(), 0);
-        assert_eq!(prompts.confirm_calls(), 0);
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn local_ci_no_remote_waits() {
-        let provider =
-            FakeChecksProvider::new(vec![PrChecksStatus::Pending, PrChecksStatus::Passed])
-                .with_ci_presence(CiPresence {
-                    has_remote_ci: false,
-                    remote_workflow_names: Vec::new(),
-                });
-        let prompts = FakePrompts::new(vec![]);
-        let repo = tempfile::tempdir().expect("tempdir");
-        let workflow_dir = repo.path().join(".github").join("workflows");
-        fs::create_dir_all(&workflow_dir).expect("create workflow dir");
-        fs::write(workflow_dir.join("ci.yml"), "name: CI\n").expect("write workflow");
-
-        let result = handle_ci_checks(
-            &provider,
-            &prompts,
-            repo.path(),
-            "owner/repo",
-            42,
-            &BackendKind::Github,
-            &merge_options(false, 1),
-        )
-        .await;
+        let result = handle_ci_checks(&provider, "owner/repo", 42, &merge_options(false, 1)).await;
 
         assert_eq!(result.expect("checks should pass"), PrChecksStatus::Passed);
-        assert!(provider.poll_count() > 0);
-        assert_eq!(prompts.confirm_calls(), 0);
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn remote_ci_no_local_prompts_wait() {
-        let provider =
-            FakeChecksProvider::new(vec![PrChecksStatus::Pending, PrChecksStatus::Passed])
-                .with_ci_presence(CiPresence {
-                    has_remote_ci: true,
-                    remote_workflow_names: vec!["ci".into()],
-                });
-        let prompts = FakePrompts::new(vec![true]);
-        let repo = tempfile::tempdir().expect("tempdir");
-
-        let result = handle_ci_checks(
-            &provider,
-            &prompts,
-            repo.path(),
-            "owner/repo",
-            42,
-            &BackendKind::Github,
-            &merge_options(false, 1),
-        )
-        .await;
-
-        assert_eq!(result.expect("checks should pass"), PrChecksStatus::Passed);
-        assert!(provider.poll_count() > 0);
-        assert_eq!(prompts.confirm_calls(), 1);
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn remote_ci_no_local_prompts_bypass() {
-        let provider =
-            FakeChecksProvider::new(vec![PrChecksStatus::Pending]).with_ci_presence(CiPresence {
-                has_remote_ci: true,
-                remote_workflow_names: vec!["ci".into()],
-            });
-        let prompts = FakePrompts::new(vec![false]);
-        let repo = tempfile::tempdir().expect("tempdir");
-
-        let result = handle_ci_checks(
-            &provider,
-            &prompts,
-            repo.path(),
-            "owner/repo",
-            42,
-            &BackendKind::Github,
-            &merge_options(false, 1),
-        )
-        .await;
-
-        assert_eq!(result.expect("bypass"), PrChecksStatus::None);
-        assert_eq!(provider.poll_count(), 0);
-        assert_eq!(prompts.confirm_calls(), 1);
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn both_ci_waits_normally() {
-        let provider =
-            FakeChecksProvider::new(vec![PrChecksStatus::Pending, PrChecksStatus::Passed])
-                .with_ci_presence(CiPresence {
-                    has_remote_ci: true,
-                    remote_workflow_names: vec!["ci".into()],
-                });
-        let prompts = FakePrompts::new(vec![]);
-        let repo = tempfile::tempdir().expect("tempdir");
-        let workflow_dir = repo.path().join(".github").join("workflows");
-        fs::create_dir_all(&workflow_dir).expect("create workflow dir");
-        fs::write(workflow_dir.join("ci.yml"), "name: CI\n").expect("write workflow");
-
-        let result = handle_ci_checks(
-            &provider,
-            &prompts,
-            repo.path(),
-            "owner/repo",
-            42,
-            &BackendKind::Github,
-            &merge_options(false, 1),
-        )
-        .await;
-
-        assert_eq!(result.expect("checks should pass"), PrChecksStatus::Passed);
-        assert!(provider.poll_count() > 0);
-        assert_eq!(prompts.confirm_calls(), 0);
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn yes_flag_skips_prompt() {
-        let provider =
-            FakeChecksProvider::new(vec![PrChecksStatus::Pending, PrChecksStatus::Passed])
-                .with_ci_presence(CiPresence {
-                    has_remote_ci: true,
-                    remote_workflow_names: vec!["ci".into()],
-                });
-        let prompts = FakePrompts::new(vec![]);
-        let repo = tempfile::tempdir().expect("tempdir");
-
-        let result = handle_ci_checks(
-            &provider,
-            &prompts,
-            repo.path(),
-            "owner/repo",
-            42,
-            &BackendKind::Github,
-            &merge_options(true, 1),
-        )
-        .await;
-
-        assert_eq!(result.expect("checks should pass"), PrChecksStatus::Passed);
-        assert!(provider.poll_count() > 0);
-        assert_eq!(prompts.confirm_calls(), 0);
+        assert!(provider.poll_count() > 1);
     }
 }

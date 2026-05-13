@@ -1,12 +1,20 @@
 use crate::adapters::backend::{
-    BackendIssueRecord, BackendIssueUpsert, BackendPrRecord, CiPresence, DeleteOutcome,
-    IssueTracker, MergeMethod, PrChecksStatus, VersionControl,
+    BackendIssueRecord, BackendIssueUpsert, BackendPrRecord, DeleteOutcome, IssueTracker,
+    MergeMethod, PrCheckItem, PrChecksReport, PrChecksStatus, VersionControl,
 };
 use crate::error::RiptaskError;
 use async_trait::async_trait;
+use base64::Engine;
 use chrono::SecondsFormat;
 use octocrab::models;
+use octocrab::models::workflows::WorkFlow;
 use octocrab::params::LockReason;
+use octocrab::params::repos::Commitish;
+use regex::Regex;
+use serde::Deserialize;
+use serde_json::Value;
+use std::collections::{BTreeSet, HashMap, HashSet};
+use tokio::try_join;
 
 /// Format an octocrab error with full detail.
 ///
@@ -40,6 +48,167 @@ impl GithubProvider {
     fn split_owner_repo<'a>(&self, repo: &'a str) -> Result<(&'a str, &'a str), RiptaskError> {
         repo.split_once('/')
             .ok_or_else(|| RiptaskError::Config(format!("invalid github repo: {repo}")))
+    }
+
+    async fn fetch_optional_json(
+        &self,
+        route: String,
+        forbidden_warning: &str,
+    ) -> Result<(Option<Value>, Option<String>), RiptaskError> {
+        match self.client.get::<Value, _, _>(route, None::<&()>).await {
+            Ok(value) => Ok((Some(value), None)),
+            Err(octocrab::Error::GitHub { source, .. })
+                if matches!(source.status_code.as_u16(), 403 | 404) =>
+            {
+                let warning =
+                    (source.status_code.as_u16() == 403).then(|| forbidden_warning.to_owned());
+                Ok((None, warning))
+            }
+            Err(error) => Err(RiptaskError::Unreachable(format_octocrab_error(&error))),
+        }
+    }
+
+    async fn list_all_check_runs(
+        &self,
+        owner: &str,
+        repo_name: &str,
+        head_sha: &str,
+    ) -> Result<Vec<models::checks::CheckRun>, RiptaskError> {
+        let mut page = 1u32;
+        let mut runs = Vec::new();
+        loop {
+            let response = self
+                .client
+                .checks(owner.to_string(), repo_name.to_string())
+                .list_check_runs_for_git_ref(Commitish(head_sha.to_owned()))
+                .per_page(100u8)
+                .page(page)
+                .send()
+                .await
+                .map_err(|error| RiptaskError::Unreachable(format_octocrab_error(&error)))?;
+            let count = response.check_runs.len();
+            runs.extend(response.check_runs);
+            if count < 100 {
+                break;
+            }
+            page += 1;
+        }
+        Ok(runs)
+    }
+
+    async fn list_all_check_suites(
+        &self,
+        owner: &str,
+        repo_name: &str,
+        head_sha: &str,
+    ) -> Result<Vec<models::checks::CheckSuite>, RiptaskError> {
+        let mut page = 1u32;
+        let mut suites = Vec::new();
+        loop {
+            let response = self
+                .client
+                .checks(owner.to_string(), repo_name.to_string())
+                .list_check_suites_for_git_ref(Commitish(head_sha.to_owned()))
+                .per_page(100u8)
+                .page(page)
+                .send()
+                .await
+                .map_err(|error| RiptaskError::Unreachable(format_octocrab_error(&error)))?;
+            let count = response.check_suites.len();
+            suites.extend(response.check_suites);
+            if count < 100 {
+                break;
+            }
+            page += 1;
+        }
+        Ok(suites)
+    }
+
+    async fn list_all_workflow_runs(
+        &self,
+        owner: &str,
+        repo_name: &str,
+        head_sha: &str,
+    ) -> Result<Vec<models::workflows::Run>, RiptaskError> {
+        let first_page = self
+            .client
+            .workflows(owner, repo_name)
+            .list_all_runs()
+            .head_sha(head_sha.to_owned())
+            .per_page(100u8)
+            .send()
+            .await
+            .map_err(|error| RiptaskError::Unreachable(format_octocrab_error(&error)))?;
+        self.client
+            .all_pages(first_page)
+            .await
+            .map_err(|error| RiptaskError::Unreachable(format_octocrab_error(&error)))
+    }
+
+    async fn list_all_workflows(
+        &self,
+        owner: &str,
+        repo_name: &str,
+    ) -> Result<Vec<WorkFlow>, RiptaskError> {
+        let first_page = self
+            .client
+            .workflows(owner, repo_name)
+            .list()
+            .per_page(100u8)
+            .send()
+            .await
+            .map_err(|error| RiptaskError::Unreachable(format_octocrab_error(&error)))?;
+        self.client
+            .all_pages(first_page)
+            .await
+            .map_err(|error| RiptaskError::Unreachable(format_octocrab_error(&error)))
+    }
+
+    async fn load_head_workflow_specs(
+        &self,
+        owner: &str,
+        repo_name: &str,
+        head_sha: &str,
+        contents: Option<Value>,
+    ) -> Result<(Vec<WorkflowSpec>, Vec<String>), RiptaskError> {
+        let entries = workflow_entries_from_contents(contents);
+        let mut specs = Vec::new();
+        let mut warnings = Vec::new();
+        for entry in entries {
+            let route = format!(
+                "/repos/{owner}/{repo_name}/contents/{}?ref={head_sha}",
+                entry.path
+            );
+            match self.client.get::<Value, _, _>(route, None::<&()>).await {
+                Ok(value) => {
+                    let yaml = decode_workflow_content(&value);
+                    match yaml.and_then(parse_workflow_spec) {
+                        Some(mut spec) => {
+                            spec.path = entry.path.clone();
+                            if spec.name.is_none() {
+                                spec.name = Some(entry.path.clone());
+                            }
+                            specs.push(spec);
+                        }
+                        None => {
+                            warnings.push(format!(
+                                "could not parse workflow {}; including conservatively",
+                                entry.path
+                            ));
+                            specs.push(WorkflowSpec::conservative_default(entry.path.clone()));
+                        }
+                    }
+                }
+                Err(_) => {
+                    warnings.push(format!(
+                        "could not read workflow {}; including conservatively",
+                        entry.path
+                    ));
+                    specs.push(WorkflowSpec::conservative_default(entry.path.clone()));
+                }
+            }
+        }
+        Ok((specs, warnings))
     }
 }
 
@@ -360,172 +529,147 @@ impl VersionControl for GithubProvider {
         Ok(())
     }
 
-    async fn get_pr_checks_status(
+    async fn get_pr_checks_report(
         &self,
         repo: &str,
         number: u64,
-    ) -> Result<PrChecksStatus, RiptaskError> {
+    ) -> Result<PrChecksReport, RiptaskError> {
         let (owner, repo_name) = self.split_owner_repo(repo)?;
-        let pr = self.get_pr(repo, number).await?;
-        let head_sha = pr
-            .head_sha
-            .ok_or_else(|| RiptaskError::General("PR head SHA not available".into()))?;
-
-        // Check commit statuses (legacy integrations)
-        let status_result = self
+        let pull = self
             .client
-            .get::<octocrab::models::CombinedStatus, _, _>(
-                format!("/repos/{owner}/{repo_name}/commits/{head_sha}/status"),
-                None::<&()>,
-            )
+            .pulls(owner, repo_name)
+            .get(number)
             .await
-            .ok();
+            .map_err(|error| RiptaskError::Unreachable(format_octocrab_error(&error)))?;
+        let head_sha = pull.head.sha.clone();
+        let base_ref = pull.base.ref_field.clone();
+        let head_ref = pull.head.ref_field.clone();
+        let base_full_name = format!("{owner}/{repo_name}");
+        let head_repo = pull.head.repo.as_ref();
+        let head_repo_full = head_repo.and_then(|repo| repo.full_name.clone());
+        let is_fork = head_repo_full
+            .as_deref()
+            .map(|name| name != base_full_name)
+            .unwrap_or_else(|| head_repo.and_then(|repo| repo.fork).unwrap_or(false));
 
-        // Check runs (GitHub Actions, third-party apps)
-        let check_runs_result = self
-            .client
-            .checks(owner.to_string(), repo_name.to_string())
-            .list_check_runs_for_git_ref(octocrab::params::repos::Commitish(head_sha))
-            .send()
-            .await
-            .ok();
+        let (
+            check_suites,
+            check_runs,
+            workflow_runs,
+            combined_status,
+            rulesets,
+            classic_protection,
+            workflow_contents,
+            workflows_api,
+        ) = try_join!(
+            self.list_all_check_suites(owner, repo_name, &head_sha),
+            self.list_all_check_runs(owner, repo_name, &head_sha),
+            self.list_all_workflow_runs(owner, repo_name, &head_sha),
+            async {
+                self.client
+                    .get::<octocrab::models::CombinedStatus, _, _>(
+                        format!("/repos/{owner}/{repo_name}/commits/{head_sha}/status"),
+                        None::<&()>,
+                    )
+                    .await
+                    .map(Some)
+                    .or_else(|error| match error {
+                        octocrab::Error::GitHub { source, .. }
+                            if source.status_code.as_u16() == 404 =>
+                        {
+                            Ok(None)
+                        }
+                        _ => Err(RiptaskError::Unreachable(format_octocrab_error(&error))),
+                    })
+            },
+            self.fetch_optional_json(
+                format!("/repos/{owner}/{repo_name}/rules/branches/{base_ref}"),
+                "could not read GitHub rulesets for this branch; continuing without ruleset-required contexts",
+            ),
+            self.fetch_optional_json(
+                format!(
+                    "/repos/{owner}/{repo_name}/branches/{base_ref}/protection/required_status_checks"
+                ),
+                "could not read GitHub branch protection required checks; continuing without classic required contexts",
+            ),
+            self.fetch_optional_json(
+                format!("/repos/{owner}/{repo_name}/contents/.github/workflows?ref={head_sha}"),
+                "could not read workflow files at the PR head; continuing without workflow-derived expectations",
+            ),
+            async {
+                self.list_all_workflows(owner, repo_name)
+                    .await
+                    .map(Some)
+                    .or_else(|error| match error {
+                        RiptaskError::Unreachable(message)
+                            if message.contains("HTTP 403") || message.contains("HTTP 404") =>
+                        {
+                            Ok(None)
+                        }
+                        other => Err(other),
+                    })
+            }
+        )?;
 
-        // Evaluate check runs
-        let checks_status = check_runs_result.and_then(|page| {
-            let runs = page.check_runs;
-            if runs.is_empty() {
-                return None;
-            }
-            let any_in_progress = runs.iter().any(|r| r.completed_at.is_none());
-            if any_in_progress {
-                return Some(PrChecksStatus::Pending);
-            }
-            // All completed — only success/skipped/neutral count as passed
-            let all_passed = runs.iter().all(|r| {
-                matches!(
-                    r.conclusion.as_deref(),
-                    Some("success" | "skipped" | "neutral")
-                )
-            });
-            if all_passed {
-                Some(PrChecksStatus::Passed)
-            } else {
-                Some(PrChecksStatus::Failed)
-            }
+        let mut warnings = Vec::new();
+        warnings.extend(rulesets.1);
+        warnings.extend(classic_protection.1);
+        warnings.extend(workflow_contents.1);
+        if is_fork {
+            warnings.push(
+                "fork PR: workflow-derived expectations may not run for first-time contributors"
+                    .into(),
+            );
+        }
+
+        let disabled_workflows = workflows_api
+            .as_ref()
+            .map(|workflows| disabled_workflow_paths(workflows))
+            .unwrap_or_default();
+        let (workflow_specs, workflow_warnings) = self
+            .load_head_workflow_specs(owner, repo_name, &head_sha, workflow_contents.0)
+            .await?;
+        warnings.extend(workflow_warnings);
+        let ruleset_expected = rulesets
+            .0
+            .as_ref()
+            .map(extract_ruleset_required_contexts)
+            .unwrap_or_default();
+        let classic_expected = classic_protection
+            .0
+            .as_ref()
+            .map(extract_classic_required_contexts)
+            .unwrap_or_default();
+        let workflow_expected = workflow_specs
+            .iter()
+            .filter(|spec| !disabled_workflows.contains(&spec.path))
+            .filter(|_| !is_fork)
+            .filter(|spec| workflow_matches_pr(spec, &base_ref, &head_ref))
+            .map(WorkflowSpec::resolved_name)
+            .collect::<Vec<_>>();
+
+        let expected =
+            merge_expected_names([ruleset_expected, classic_expected, workflow_expected]);
+        let combined_statuses = combined_status
+            .map(|status| status.statuses)
+            .unwrap_or_default();
+        let registered = collect_registered_names(&check_runs, &workflow_runs, &combined_statuses);
+        let suite_activity = check_suites.iter().any(|suite| {
+            suite
+                .status
+                .as_deref()
+                .is_some_and(|status| is_pending_state(status) || is_pass_state(status))
         });
+        let items = collect_github_check_items(&check_runs, &workflow_runs, &combined_statuses);
+        let status = rollup_report_status(&expected, &registered, &items, suite_activity);
 
-        // Evaluate legacy commit statuses.
-        // GitHub returns state:"pending" with an empty statuses array when no
-        // legacy statuses exist. Treat that as None, not Pending, so it does
-        // not override a valid Passed/Failed from check runs.
-        let status_state = status_result.and_then(|combined| {
-            if combined.statuses.is_empty() {
-                return None;
-            }
-            Some(match combined.state {
-                octocrab::models::StatusState::Success => PrChecksStatus::Passed,
-                octocrab::models::StatusState::Failure | octocrab::models::StatusState::Error => {
-                    PrChecksStatus::Failed
-                }
-                octocrab::models::StatusState::Pending => PrChecksStatus::Pending,
-                _ => PrChecksStatus::None,
-            })
-        });
-
-        // Merge both signals: worst status wins
-        match (checks_status, status_state) {
-            (Some(PrChecksStatus::Failed), _) | (_, Some(PrChecksStatus::Failed)) => {
-                Ok(PrChecksStatus::Failed)
-            }
-            (Some(PrChecksStatus::Pending), _) | (_, Some(PrChecksStatus::Pending)) => {
-                Ok(PrChecksStatus::Pending)
-            }
-            (Some(PrChecksStatus::Passed), _) | (_, Some(PrChecksStatus::Passed)) => {
-                Ok(PrChecksStatus::Passed)
-            }
-            _ => Ok(PrChecksStatus::None),
-        }
-    }
-
-    async fn get_ci_presence(&self, repo: &str) -> Result<CiPresence, RiptaskError> {
-        let (owner, repo_name) = self.split_owner_repo(repo)?;
-
-        // Try GitHub Actions workflows API. This may fail with 403 if the token
-        // lacks Actions:read permission — that's fine, we fall back below.
-        let mut names: Vec<String> = Vec::new();
-        if let Ok(response) = self
-            .client
-            .get::<serde_json::Value, _, _>(
-                format!("/repos/{owner}/{repo_name}/actions/workflows"),
-                None::<&()>,
-            )
-            .await
-            && let Some(arr) = response.get("workflows").and_then(|w| w.as_array())
-        {
-            names = arr
-                .iter()
-                .filter_map(|workflow| {
-                    workflow
-                        .get("path")
-                        .and_then(|path| path.as_str())
-                        .map(|path| {
-                            std::path::Path::new(path)
-                                .file_stem()
-                                .unwrap_or_default()
-                                .to_string_lossy()
-                                .to_string()
-                        })
-                })
-                .collect();
-        }
-
-        if !names.is_empty() {
-            return Ok(CiPresence {
-                has_remote_ci: true,
-                remote_workflow_names: names,
-            });
-        }
-
-        // Fallback: check if the repo has any check runs OR legacy commit
-        // statuses on the default branch. This covers third-party CI (Jenkins,
-        // CircleCI, etc.) and tokens that lack Actions:read permission.
-        let has_third_party_ci =
-            if let Ok(repo_info) = self.client.repos(owner, repo_name).get().await {
-                let default_branch = repo_info.default_branch.unwrap_or_default();
-                if !default_branch.is_empty() {
-                    let has_check_runs = self
-                        .client
-                        .checks(owner.to_string(), repo_name.to_string())
-                        .list_check_runs_for_git_ref(octocrab::params::repos::Commitish(
-                            default_branch.clone(),
-                        ))
-                        .send()
-                        .await
-                        .ok()
-                        .is_some_and(|page| !page.check_runs.is_empty());
-
-                    let encoded_ref = default_branch.replace('/', "%2F");
-                    let has_commit_statuses = self
-                        .client
-                        .get::<octocrab::models::CombinedStatus, _, _>(
-                            format!("/repos/{owner}/{repo_name}/commits/{encoded_ref}/status"),
-                            None::<&()>,
-                        )
-                        .await
-                        .ok()
-                        .is_some_and(|combined| !combined.statuses.is_empty());
-
-                    has_check_runs || has_commit_statuses
-                } else {
-                    false
-                }
-            } else {
-                false
-            };
-
-        Ok(CiPresence {
-            has_remote_ci: has_third_party_ci,
-            remote_workflow_names: Vec::new(),
+        Ok(PrChecksReport {
+            head_sha,
+            expected,
+            registered,
+            items,
+            status,
+            warnings,
         })
     }
 
@@ -658,6 +802,474 @@ impl VersionControl for GithubProvider {
     }
 }
 
+#[derive(Debug, Clone)]
+struct WorkflowSpec {
+    name: Option<String>,
+    path: String,
+    on: OnTriggers,
+}
+
+impl WorkflowSpec {
+    fn conservative_default(path: String) -> Self {
+        Self {
+            name: Some(path.clone()),
+            path,
+            on: OnTriggers::Map(WorkflowTriggerMap::pull_request_any()),
+        }
+    }
+
+    fn resolved_name(&self) -> String {
+        self.name.clone().unwrap_or_else(|| self.path.clone())
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+enum OnTriggers {
+    #[default]
+    None,
+    Single(String),
+    List(Vec<String>),
+    Map(WorkflowTriggerMap),
+}
+
+#[derive(Debug, Clone, Default)]
+struct WorkflowTriggerMap {
+    pull_request: Option<BranchFilter>,
+    pull_request_target: Option<BranchFilter>,
+    push: Option<BranchFilter>,
+    workflow_dispatch: bool,
+    schedule: bool,
+    repository_dispatch: bool,
+}
+
+impl WorkflowTriggerMap {
+    fn pull_request_any() -> Self {
+        Self {
+            pull_request: Some(BranchFilter::default()),
+            ..Self::default()
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct BranchFilter {
+    branches: Vec<String>,
+    branches_ignore: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WorkflowEntry {
+    path: String,
+    #[serde(rename = "type")]
+    item_type: String,
+}
+
+fn workflow_entries_from_contents(contents: Option<Value>) -> Vec<WorkflowEntry> {
+    contents
+        .and_then(|value| serde_json::from_value::<Vec<WorkflowEntry>>(value).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|entry| {
+            entry.item_type == "file"
+                && (entry.path.ends_with(".yml") || entry.path.ends_with(".yaml"))
+        })
+        .collect()
+}
+
+fn decode_workflow_content(value: &Value) -> Option<String> {
+    let content = value.get("content")?.as_str()?;
+    let encoding = value.get("encoding").and_then(Value::as_str).unwrap_or("");
+    if encoding != "base64" {
+        return None;
+    }
+    let compact = content.lines().collect::<String>();
+    base64::engine::general_purpose::STANDARD
+        .decode(compact)
+        .ok()
+        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+}
+
+fn parse_workflow_spec(yaml: String) -> Option<WorkflowSpec> {
+    let value = serde_yaml_ng::from_str::<serde_yaml_ng::Value>(&yaml).ok()?;
+    let mapping = value.as_mapping()?;
+    let name = mapping
+        .get(serde_yaml_ng::Value::String("name".into()))
+        .and_then(serde_yaml_ng::Value::as_str)
+        .map(ToOwned::to_owned);
+    let on = mapping
+        .get(serde_yaml_ng::Value::String("on".into()))
+        .map(parse_on_triggers)
+        .unwrap_or_default();
+    Some(WorkflowSpec {
+        name,
+        path: String::new(),
+        on,
+    })
+}
+
+fn parse_on_triggers(value: &serde_yaml_ng::Value) -> OnTriggers {
+    match value {
+        serde_yaml_ng::Value::String(single) => OnTriggers::Single(single.clone()),
+        serde_yaml_ng::Value::Sequence(sequence) => OnTriggers::List(
+            sequence
+                .iter()
+                .filter_map(serde_yaml_ng::Value::as_str)
+                .map(ToOwned::to_owned)
+                .collect(),
+        ),
+        serde_yaml_ng::Value::Mapping(mapping) => OnTriggers::Map(parse_trigger_map(mapping)),
+        _ => OnTriggers::None,
+    }
+}
+
+fn parse_trigger_map(mapping: &serde_yaml_ng::Mapping) -> WorkflowTriggerMap {
+    let mut triggers = WorkflowTriggerMap::default();
+    for (key, value) in mapping {
+        let Some(key) = key.as_str() else {
+            continue;
+        };
+        match key {
+            "pull_request" => triggers.pull_request = Some(parse_branch_filter(value)),
+            "pull_request_target" => {
+                triggers.pull_request_target = Some(parse_branch_filter(value));
+            }
+            "push" => triggers.push = Some(parse_branch_filter(value)),
+            "workflow_dispatch" => triggers.workflow_dispatch = true,
+            "schedule" => triggers.schedule = true,
+            "repository_dispatch" => triggers.repository_dispatch = true,
+            _ => {}
+        }
+    }
+    triggers
+}
+
+fn parse_branch_filter(value: &serde_yaml_ng::Value) -> BranchFilter {
+    let Some(mapping) = value.as_mapping() else {
+        return BranchFilter::default();
+    };
+    BranchFilter {
+        branches: yaml_string_list(mapping.get(serde_yaml_ng::Value::String("branches".into()))),
+        branches_ignore: yaml_string_list(
+            mapping.get(serde_yaml_ng::Value::String("branches-ignore".into())),
+        ),
+    }
+}
+
+fn yaml_string_list(value: Option<&serde_yaml_ng::Value>) -> Vec<String> {
+    match value {
+        Some(serde_yaml_ng::Value::String(value)) => vec![value.clone()],
+        Some(serde_yaml_ng::Value::Sequence(values)) => values
+            .iter()
+            .filter_map(serde_yaml_ng::Value::as_str)
+            .map(ToOwned::to_owned)
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn workflow_matches_pr(spec: &WorkflowSpec, base_ref: &str, head_ref: &str) -> bool {
+    match &spec.on {
+        OnTriggers::Single(trigger) => is_supported_single_trigger(trigger),
+        OnTriggers::List(triggers) => triggers
+            .iter()
+            .any(|trigger| is_supported_single_trigger(trigger)),
+        OnTriggers::Map(triggers) => {
+            let pull_matches = triggers
+                .pull_request
+                .as_ref()
+                .is_some_and(|filter| filter.matches(base_ref));
+            let target_matches = triggers
+                .pull_request_target
+                .as_ref()
+                .is_some_and(|filter| filter.matches(base_ref));
+            let push_matches = triggers
+                .push
+                .as_ref()
+                .is_some_and(|filter| filter.matches(head_ref));
+            pull_matches || target_matches || push_matches
+        }
+        OnTriggers::None => false,
+    }
+}
+
+fn is_supported_single_trigger(trigger: &str) -> bool {
+    matches!(trigger, "pull_request" | "pull_request_target" | "push")
+}
+
+impl BranchFilter {
+    fn matches(&self, branch: &str) -> bool {
+        let branches_match = if self.branches.is_empty() {
+            true
+        } else {
+            self.branches
+                .iter()
+                .any(|pattern| github_pattern_matches(pattern, branch))
+        };
+        let ignored = self
+            .branches_ignore
+            .iter()
+            .any(|pattern| github_pattern_matches(pattern, branch));
+        branches_match && !ignored
+    }
+}
+
+fn github_pattern_matches(pattern: &str, value: &str) -> bool {
+    let mut regex = String::from("^");
+    let mut chars = pattern.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '*' => {
+                if chars.peek() == Some(&'*') {
+                    chars.next();
+                    regex.push_str(".*");
+                } else {
+                    regex.push_str("[^/]*");
+                }
+            }
+            '?' => regex.push('.'),
+            _ => regex.push_str(&regex::escape(&ch.to_string())),
+        }
+    }
+    regex.push('$');
+    Regex::new(&regex)
+        .map(|compiled| compiled.is_match(value))
+        .unwrap_or(false)
+}
+
+fn disabled_workflow_paths(workflows: &[WorkFlow]) -> HashSet<String> {
+    workflows
+        .iter()
+        .filter(|workflow| {
+            matches!(
+                workflow.state.as_str(),
+                "disabled_manually" | "disabled_inactivity"
+            )
+        })
+        .map(|workflow| workflow.path.clone())
+        .collect()
+}
+
+fn extract_ruleset_required_contexts(value: &Value) -> Vec<String> {
+    let rules = value
+        .as_array()
+        .cloned()
+        .or_else(|| value.get("rules").and_then(Value::as_array).cloned())
+        .unwrap_or_default();
+    rules
+        .into_iter()
+        .filter(|rule| rule.get("type").and_then(Value::as_str) == Some("required_status_checks"))
+        .flat_map(|rule| {
+            rule.get("parameters")
+                .and_then(|parameters| parameters.get("required_status_checks"))
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default()
+        })
+        .filter_map(|check| {
+            check
+                .get("context")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        })
+        .collect()
+}
+
+fn extract_classic_required_contexts(value: &Value) -> Vec<String> {
+    value
+        .get("contexts")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|entry| entry.as_str().map(ToOwned::to_owned))
+        .collect()
+}
+
+fn merge_expected_names(groups: [Vec<String>; 3]) -> Vec<String> {
+    let mut names = BTreeSet::new();
+    for group in groups {
+        names.extend(group);
+    }
+    names.into_iter().collect()
+}
+
+fn collect_registered_names(
+    check_runs: &[models::checks::CheckRun],
+    workflow_runs: &[models::workflows::Run],
+    statuses: &[models::Status],
+) -> Vec<String> {
+    let mut names = BTreeSet::new();
+    for run in check_runs {
+        names.insert(run.name.clone());
+    }
+    for run in workflow_runs {
+        names.insert(run.name.clone());
+    }
+    for status in statuses {
+        if let Some(context) = &status.context {
+            names.insert(context.clone());
+        }
+    }
+    names.into_iter().collect()
+}
+
+fn collect_github_check_items(
+    check_runs: &[models::checks::CheckRun],
+    workflow_runs: &[models::workflows::Run],
+    statuses: &[models::Status],
+) -> Vec<PrCheckItem> {
+    let mut items = HashMap::<String, PrCheckItem>::new();
+    for run in check_runs {
+        merge_pr_check_item(
+            &mut items,
+            run.name.clone(),
+            check_run_state(run),
+            run.details_url.clone().or(run.html_url.clone()),
+        );
+    }
+    for run in workflow_runs {
+        merge_pr_check_item(
+            &mut items,
+            run.name.clone(),
+            workflow_run_state(run),
+            Some(run.html_url.to_string()),
+        );
+    }
+    for status in statuses {
+        if let Some(context) = &status.context {
+            merge_pr_check_item(
+                &mut items,
+                context.clone(),
+                commit_status_state(status),
+                status.target_url.clone(),
+            );
+        }
+    }
+    let mut values = items.into_values().collect::<Vec<_>>();
+    values.sort_by(|left, right| left.name.cmp(&right.name));
+    values
+}
+
+fn merge_pr_check_item(
+    items: &mut HashMap<String, PrCheckItem>,
+    name: String,
+    state: PrChecksStatus,
+    url: Option<String>,
+) {
+    items
+        .entry(name.clone())
+        .and_modify(|item| {
+            item.state = merge_pr_check_states(item.state, state);
+            if item.url.is_none() {
+                item.url = url.clone();
+            }
+        })
+        .or_insert(PrCheckItem { name, state, url });
+}
+
+fn check_run_state(run: &models::checks::CheckRun) -> PrChecksStatus {
+    match run.conclusion.as_deref() {
+        Some(conclusion) if is_fail_state(conclusion) => PrChecksStatus::Failed,
+        Some(conclusion) if is_pass_state(conclusion) => PrChecksStatus::Passed,
+        Some(_) => PrChecksStatus::Pending,
+        None => PrChecksStatus::Pending,
+    }
+}
+
+fn workflow_run_state(run: &models::workflows::Run) -> PrChecksStatus {
+    if run.status != "completed" {
+        return PrChecksStatus::Pending;
+    }
+    match run.conclusion.as_deref() {
+        Some(conclusion) if is_fail_state(conclusion) => PrChecksStatus::Failed,
+        Some(conclusion) if is_pass_state(conclusion) => PrChecksStatus::Passed,
+        Some(_) => PrChecksStatus::Pending,
+        None => PrChecksStatus::Pending,
+    }
+}
+
+fn commit_status_state(status: &models::Status) -> PrChecksStatus {
+    match status.state {
+        models::StatusState::Success => PrChecksStatus::Passed,
+        models::StatusState::Failure | models::StatusState::Error => PrChecksStatus::Failed,
+        models::StatusState::Pending => PrChecksStatus::Pending,
+        _ => PrChecksStatus::None,
+    }
+}
+
+fn merge_pr_check_states(current: PrChecksStatus, next: PrChecksStatus) -> PrChecksStatus {
+    use PrChecksStatus::{Failed, None, Passed, Pending};
+    match (current, next) {
+        (Failed, _) | (_, Failed) => Failed,
+        (Pending, _) | (_, Pending) => Pending,
+        (Passed, _) | (_, Passed) => Passed,
+        _ => None,
+    }
+}
+
+fn rollup_report_status(
+    expected: &[String],
+    registered: &[String],
+    items: &[PrCheckItem],
+    suite_activity: bool,
+) -> PrChecksStatus {
+    if expected.is_empty() && registered.is_empty() && !suite_activity {
+        return PrChecksStatus::None;
+    }
+
+    let expected_set = expected.iter().cloned().collect::<HashSet<_>>();
+    let registered_set = registered.iter().cloned().collect::<HashSet<_>>();
+    let mut any_failed = false;
+    let mut all_expected_passed = !expected.is_empty();
+
+    for item in items {
+        if !(expected_set.contains(&item.name) || registered_set.contains(&item.name)) {
+            continue;
+        }
+        match item.state {
+            PrChecksStatus::Failed => any_failed = true,
+            PrChecksStatus::Passed => {}
+            _ => {
+                if expected_set.contains(&item.name) {
+                    all_expected_passed = false;
+                }
+            }
+        }
+    }
+
+    if any_failed {
+        return PrChecksStatus::Failed;
+    }
+    if !expected.is_empty() && expected_set.is_subset(&registered_set) && all_expected_passed {
+        return PrChecksStatus::Passed;
+    }
+    PrChecksStatus::Pending
+}
+
+fn is_pass_state(state: &str) -> bool {
+    matches!(state, "success" | "skipped" | "neutral")
+}
+
+fn is_fail_state(state: &str) -> bool {
+    matches!(
+        state,
+        "failure"
+            | "error"
+            | "cancelled"
+            | "timed_out"
+            | "action_required"
+            | "startup_failure"
+            | "stale"
+    )
+}
+
+fn is_pending_state(state: &str) -> bool {
+    matches!(
+        state,
+        "pending" | "in_progress" | "queued" | "requested" | "waiting"
+    )
+}
+
 fn map_issue(issue: models::issues::Issue) -> BackendIssueRecord {
     let milestone = issue
         .milestone
@@ -778,5 +1390,95 @@ fn parse_lock_reason(reason: &str) -> Option<LockReason> {
         "resolved" => Some(LockReason::Resolved),
         "spam" => Some(LockReason::Spam),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        BranchFilter, OnTriggers, PrCheckItem, PrChecksStatus, WorkflowSpec, WorkflowTriggerMap,
+        extract_classic_required_contexts, extract_ruleset_required_contexts,
+        merge_pr_check_states, rollup_report_status, workflow_matches_pr,
+    };
+    use serde_json::json;
+
+    #[test]
+    fn workflow_dispatch_only_is_not_expected() {
+        let spec = WorkflowSpec {
+            name: Some("dispatch".into()),
+            path: ".github/workflows/dispatch.yml".into(),
+            on: OnTriggers::Map(WorkflowTriggerMap {
+                workflow_dispatch: true,
+                ..WorkflowTriggerMap::default()
+            }),
+        };
+        assert!(!workflow_matches_pr(&spec, "main", "feature"));
+    }
+
+    #[test]
+    fn pull_request_trigger_matches_base_branch() {
+        let spec = WorkflowSpec {
+            name: Some("ci".into()),
+            path: ".github/workflows/ci.yml".into(),
+            on: OnTriggers::Map(WorkflowTriggerMap {
+                pull_request: Some(BranchFilter {
+                    branches: vec!["main".into()],
+                    branches_ignore: Vec::new(),
+                }),
+                ..WorkflowTriggerMap::default()
+            }),
+        };
+        assert!(workflow_matches_pr(&spec, "main", "feature"));
+        assert!(!workflow_matches_pr(&spec, "release", "feature"));
+    }
+
+    #[test]
+    fn extracts_required_contexts_from_rulesets() {
+        let contexts = extract_ruleset_required_contexts(&json!([
+            {
+                "type": "required_status_checks",
+                "parameters": {
+                    "required_status_checks": [
+                        {"context": "ci"},
+                        {"context": "lint"}
+                    ]
+                }
+            }
+        ]));
+        assert_eq!(contexts, vec!["ci".to_string(), "lint".to_string()]);
+    }
+
+    #[test]
+    fn extracts_classic_required_contexts() {
+        let contexts = extract_classic_required_contexts(&json!({
+            "contexts": ["build", "test"]
+        }));
+        assert_eq!(contexts, vec!["build".to_string(), "test".to_string()]);
+    }
+
+    #[test]
+    fn rollup_prefers_failed_over_passed() {
+        let items = vec![
+            PrCheckItem {
+                name: "ci".into(),
+                state: PrChecksStatus::Passed,
+                url: None,
+            },
+            PrCheckItem {
+                name: "lint".into(),
+                state: PrChecksStatus::Failed,
+                url: None,
+            },
+        ];
+        let expected = vec!["ci".to_string(), "lint".to_string()];
+        let registered = expected.clone();
+        assert_eq!(
+            rollup_report_status(&expected, &registered, &items, false),
+            PrChecksStatus::Failed
+        );
+        assert_eq!(
+            merge_pr_check_states(PrChecksStatus::Passed, PrChecksStatus::Failed),
+            PrChecksStatus::Failed
+        );
     }
 }

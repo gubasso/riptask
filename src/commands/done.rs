@@ -356,9 +356,7 @@ fn is_branch_not_found_error(error: &RiptaskError) -> bool {
 #[cfg(test)]
 mod tests {
     use super::ensure_pr_number;
-    use crate::adapters::backend::{
-        BackendPrRecord, CiPresence, MergeMethod, PrChecksStatus, VersionControl,
-    };
+    use crate::adapters::backend::{BackendPrRecord, MergeMethod, PrChecksReport, VersionControl};
     use crate::domain::issue::IssueDocument;
     use crate::error::RiptaskError;
     use crate::storage::frontmatter;
@@ -460,15 +458,11 @@ mod tests {
             unimplemented!()
         }
 
-        async fn get_pr_checks_status(
+        async fn get_pr_checks_report(
             &self,
             _repo: &str,
             _number: u64,
-        ) -> Result<PrChecksStatus, RiptaskError> {
-            unimplemented!()
-        }
-
-        async fn get_ci_presence(&self, _repo: &str) -> Result<CiPresence, RiptaskError> {
+        ) -> Result<PrChecksReport, RiptaskError> {
             unimplemented!()
         }
 
