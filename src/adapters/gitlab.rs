@@ -1,11 +1,12 @@
 use crate::adapters::backend::{
-    BackendIssueRecord, BackendIssueUpsert, BackendPrRecord, CiPresence, DeleteOutcome,
-    IssueTracker, MergeMethod, PrChecksStatus, VersionControl,
+    BackendIssueRecord, BackendIssueUpsert, BackendPrRecord, DeleteOutcome, IssueTracker,
+    MergeMethod, PrCheckItem, PrChecksReport, PrChecksStatus, VersionControl,
 };
 use crate::error::RiptaskError;
 use async_trait::async_trait;
 use chrono::NaiveDate;
-use gitlab::api::AsyncQuery;
+use gitlab::api::{ApiError, AsyncQuery};
+use reqwest::StatusCode;
 use serde::Deserialize;
 
 #[derive(Clone)]
@@ -509,11 +510,11 @@ impl VersionControl for GitlabProvider {
         Ok(())
     }
 
-    async fn get_pr_checks_status(
+    async fn get_pr_checks_report(
         &self,
         repo: &str,
         number: u64,
-    ) -> Result<PrChecksStatus, RiptaskError> {
+    ) -> Result<PrChecksReport, RiptaskError> {
         let client = self.client().await?;
         let endpoint = gitlab::api::projects::merge_requests::MergeRequest::builder()
             .project(repo)
@@ -524,41 +525,96 @@ impl VersionControl for GitlabProvider {
             .query_async(&client)
             .await
             .map_err(|error| RiptaskError::Unreachable(error.to_string()))?;
-        match merge_request.head_pipeline {
-            Some(pipeline) => match pipeline.status.as_str() {
-                "success" => Ok(PrChecksStatus::Passed),
-                "failed" | "canceled" => Ok(PrChecksStatus::Failed),
-                "running"
-                | "pending"
-                | "created"
-                | "waiting_for_resource"
-                | "preparing"
-                | "manual"
-                | "scheduled" => Ok(PrChecksStatus::Pending),
-                _ => Ok(PrChecksStatus::None),
-            },
-            None => Ok(PrChecksStatus::None),
-        }
-    }
-
-    async fn get_ci_presence(&self, repo: &str) -> Result<CiPresence, RiptaskError> {
-        let client = self.client().await?;
-        let endpoint = gitlab::api::projects::pipelines::Pipelines::builder()
-            .project(repo)
-            .build()
-            .map_err(|error| RiptaskError::General(error.to_string()))?;
-        let pipelines: Vec<serde_json::Value> =
-            gitlab::api::paged(endpoint, gitlab::api::Pagination::Limit(1))
+        let pipelines_endpoint =
+            gitlab::api::projects::merge_requests::pipelines::MergeRequestPipelines::builder()
+                .project(repo)
+                .merge_request(number)
+                .build()
+                .map_err(|error| RiptaskError::General(error.to_string()))?;
+        let pipelines: Vec<GitlabMergeRequestPipeline> =
+            gitlab::api::paged(pipelines_endpoint, gitlab::api::Pagination::All)
                 .query_async(&client)
                 .await
                 .map_err(|error| RiptaskError::Unreachable(error.to_string()))?;
-        Ok(CiPresence {
-            has_remote_ci: !pipelines.is_empty(),
-            remote_workflow_names: if pipelines.is_empty() {
-                vec![]
+
+        let head_sha = merge_request.sha.clone().unwrap_or_default();
+        let has_gitlab_ci = if head_sha.is_empty() {
+            false
+        } else {
+            let endpoint = gitlab::api::projects::repository::files::FileRaw::builder()
+                .project(repo)
+                .file_path(".gitlab-ci.yml")
+                .ref_(head_sha.clone())
+                .build()
+                .map_err(|error| RiptaskError::General(error.to_string()))?;
+            match gitlab::api::raw(endpoint).query_async(&client).await {
+                Ok(bytes) => !bytes.is_empty(),
+                Err(ApiError::GitlabWithStatus { status, .. })
+                | Err(ApiError::GitlabService { status, .. })
+                    if status == StatusCode::NOT_FOUND =>
+                {
+                    false
+                }
+                Err(error) => return Err(RiptaskError::Unreachable(error.to_string())),
+            }
+        };
+
+        let detailed_status = merge_request.detailed_merge_status.as_deref();
+        let ci_blocking = gitlab_detailed_merge_status_requires_ci(detailed_status);
+        let pipeline_exists = merge_request.head_pipeline.is_some() || !pipelines.is_empty();
+        let pipeline_name = "pipeline".to_string();
+        let mut warnings = Vec::new();
+        let (expected, registered, status) = if ci_blocking {
+            if !has_gitlab_ci && !pipeline_exists {
+                warnings.push(format!(
+                    "detailed_merge_status={} but no pipeline and no .gitlab-ci.yml at head; skipping CI wait",
+                    detailed_status.unwrap_or("unknown")
+                ));
+                (Vec::new(), Vec::new(), PrChecksStatus::None)
             } else {
-                vec!["pipeline".into()]
-            },
+                let expected = vec![pipeline_name.clone()];
+                let registered = if pipeline_exists {
+                    vec![pipeline_name.clone()]
+                } else {
+                    Vec::new()
+                };
+                let status = gitlab_pipeline_rollup(
+                    merge_request.head_pipeline.as_ref(),
+                    has_gitlab_ci,
+                    ci_blocking,
+                    !pipelines.is_empty(),
+                );
+                (expected, registered, status)
+            }
+        } else {
+            (Vec::new(), Vec::new(), PrChecksStatus::None)
+        };
+
+        let items = if expected.is_empty() && registered.is_empty() {
+            Vec::new()
+        } else {
+            vec![PrCheckItem {
+                name: pipeline_name,
+                state: status,
+                url: merge_request
+                    .head_pipeline
+                    .as_ref()
+                    .and_then(|pipeline| pipeline.web_url.clone())
+                    .or_else(|| {
+                        pipelines
+                            .first()
+                            .and_then(|pipeline| pipeline.web_url.clone())
+                    }),
+            }]
+        };
+
+        Ok(PrChecksReport {
+            head_sha,
+            expected,
+            registered,
+            items,
+            status,
+            warnings,
         })
     }
 
@@ -687,6 +743,8 @@ struct GitlabMergeRequest {
     #[serde(default)]
     head_pipeline: Option<GitlabPipeline>,
     #[serde(default)]
+    detailed_merge_status: Option<String>,
+    #[serde(default)]
     rebase_in_progress: Option<bool>,
     #[serde(default)]
     merge_error: Option<String>,
@@ -697,6 +755,14 @@ struct GitlabMergeRequest {
 #[derive(Debug, Clone, Deserialize)]
 struct GitlabPipeline {
     status: String,
+    #[serde(default)]
+    web_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct GitlabMergeRequestPipeline {
+    #[serde(default)]
+    web_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -758,6 +824,50 @@ fn map_merge_request(merge_request: GitlabMergeRequest) -> BackendPrRecord {
     }
 }
 
+fn gitlab_detailed_merge_status_requires_ci(status: Option<&str>) -> bool {
+    matches!(
+        status,
+        Some(
+            "ci_must_pass"
+                | "ci_still_running"
+                | "security_policy_pipeline_check"
+                | "status_checks_must_pass"
+                | "checking"
+                | "preparing"
+                | "unchecked"
+        )
+    )
+}
+
+fn gitlab_pipeline_rollup(
+    head_pipeline: Option<&GitlabPipeline>,
+    has_gitlab_ci: bool,
+    ci_blocking: bool,
+    has_mr_pipelines: bool,
+) -> PrChecksStatus {
+    match head_pipeline.map(|pipeline| pipeline.status.as_str()) {
+        Some("success") => PrChecksStatus::Passed,
+        Some("failed" | "canceled") => PrChecksStatus::Failed,
+        Some(
+            "running"
+            | "pending"
+            | "created"
+            | "waiting_for_resource"
+            | "preparing"
+            | "manual"
+            | "scheduled",
+        ) => PrChecksStatus::Pending,
+        Some(_) => PrChecksStatus::None,
+        // No head_pipeline status, but GitLab still considers the MR blocked
+        // on CI and a pipeline exists for the MR (or .gitlab-ci.yml exists at
+        // head). Treat as pending so the wait loop keeps polling instead of
+        // seeing an indeterminate `None` and either timing out or falling
+        // through prematurely.
+        None if ci_blocking && (has_gitlab_ci || has_mr_pipelines) => PrChecksStatus::Pending,
+        None => PrChecksStatus::None,
+    }
+}
+
 fn normalize_timestamp(ts: &str) -> String {
     chrono::DateTime::parse_from_rfc3339(ts)
         .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
@@ -791,5 +901,66 @@ fn is_weight_error(error: &RiptaskError) -> bool {
             msg.to_lowercase().contains("weight")
         }
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        GitlabPipeline, PrChecksStatus, gitlab_detailed_merge_status_requires_ci,
+        gitlab_pipeline_rollup,
+    };
+
+    #[test]
+    fn mergeable_without_pipeline_is_not_ci_blocking() {
+        assert!(!gitlab_detailed_merge_status_requires_ci(Some("mergeable")));
+        assert_eq!(
+            gitlab_pipeline_rollup(None, false, false, false),
+            PrChecksStatus::None
+        );
+    }
+
+    #[test]
+    fn ci_still_running_waits_without_head_pipeline() {
+        assert!(gitlab_detailed_merge_status_requires_ci(Some(
+            "ci_still_running"
+        )));
+        assert_eq!(
+            gitlab_pipeline_rollup(None, true, true, false),
+            PrChecksStatus::Pending
+        );
+    }
+
+    #[test]
+    fn successful_head_pipeline_passes() {
+        let pipeline = GitlabPipeline {
+            status: "success".into(),
+            web_url: None,
+        };
+        assert_eq!(
+            gitlab_pipeline_rollup(Some(&pipeline), true, true, false),
+            PrChecksStatus::Passed
+        );
+    }
+
+    // Regression: when GitLab considers CI blocking, an MR has pipelines but
+    // no `head_pipeline` status, and the head SHA has no `.gitlab-ci.yml` (for
+    // example pipelines triggered via parent-include / API), the rollup must
+    // still wait rather than returning an indeterminate `None`. Otherwise the
+    // wait loop sees a registered "pipeline" check whose state is None and
+    // spins until timeout.
+    #[test]
+    fn ci_blocking_with_mr_pipelines_but_no_head_pipeline_is_pending() {
+        assert_eq!(
+            gitlab_pipeline_rollup(None, false, true, true),
+            PrChecksStatus::Pending
+        );
+    }
+
+    #[test]
+    fn security_policy_pipeline_check_is_ci_blocking() {
+        assert!(gitlab_detailed_merge_status_requires_ci(Some(
+            "security_policy_pipeline_check"
+        )));
     }
 }
