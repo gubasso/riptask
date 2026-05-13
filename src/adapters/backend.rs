@@ -112,18 +112,30 @@ pub enum MergeMethod {
     Rebase,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PrChecksStatus {
+    #[default]
     None,
     Pending,
     Passed,
     Failed,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CiPresence {
-    pub has_remote_ci: bool,
-    pub remote_workflow_names: Vec<String>,
+#[derive(Debug, Clone, Default)]
+pub struct PrChecksReport {
+    pub head_sha: String,
+    pub expected: Vec<String>,
+    pub registered: Vec<String>,
+    pub items: Vec<PrCheckItem>,
+    pub status: PrChecksStatus,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PrCheckItem {
+    pub name: String,
+    pub state: PrChecksStatus,
+    pub url: Option<String>,
 }
 
 /// Issue tracking operations — implemented by GitHub, GitLab, and Jira.
@@ -210,12 +222,11 @@ pub trait VersionControl: Send + Sync {
         commit_title: Option<&str>,
         commit_message: Option<&str>,
     ) -> Result<(), RiptaskError>;
-    async fn get_pr_checks_status(
+    async fn get_pr_checks_report(
         &self,
         repo: &str,
         number: u64,
-    ) -> Result<PrChecksStatus, RiptaskError>;
-    async fn get_ci_presence(&self, repo: &str) -> Result<CiPresence, RiptaskError>;
+    ) -> Result<PrChecksReport, RiptaskError>;
     /// Create a branch. `issue_id` is passed through so GitHub can create a
     /// linked branch (GraphQL `createLinkedBranch`). GitLab may ignore it.
     /// This is data flow from the calling command, not trait coupling.
