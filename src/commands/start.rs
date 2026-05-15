@@ -30,6 +30,7 @@ pub async fn run(paths: &AppPaths, mut args: StartArgs) -> Result<(), RiptaskErr
             title: None,
             description: None,
             ai: false,
+            ai_prompt: None,
             project: args.scope.projects.first().cloned(),
             board: args.board.clone(),
             status: args.status.clone(),
@@ -79,6 +80,7 @@ pub async fn run(paths: &AppPaths, mut args: StartArgs) -> Result<(), RiptaskErr
                 title: args.title_pos.or(args.title),
                 description: None,
                 ai: false,
+                ai_prompt: None,
                 project,
                 board: args.board,
                 status: args.status,
@@ -117,6 +119,7 @@ pub async fn run(paths: &AppPaths, mut args: StartArgs) -> Result<(), RiptaskErr
             scope: ScopeArgs::default(),
             id: Some(id),
             no_ai: false,
+            ai_prompt: None,
         },
     )
     .await?;

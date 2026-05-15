@@ -123,6 +123,7 @@ fn run_due(paths: &AppPaths, date: Option<String>) -> Result<(), RiptaskError> {
             title: Some(expanded_title.clone()),
             description: None,
             ai: false,
+            ai_prompt: None,
             project: definition.project.clone(),
             board: definition.board.clone(),
             status: definition.status.as_ref().map(|s| s.as_str().to_owned()),

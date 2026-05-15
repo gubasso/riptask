@@ -332,7 +332,11 @@ pub(crate) async fn create_issue_from_args(
             }
         };
         match crate::ui::spin_on("Generating issue content", || {
-            crate::commands::ai::generate_issue_content(paths, &ai_context)
+            crate::commands::ai::generate_issue_content(
+                paths,
+                &ai_context,
+                args.ai_prompt.as_deref(),
+            )
         }) {
             Ok(generated) => {
                 args.title = Some(generated.title);
@@ -349,13 +353,19 @@ pub(crate) async fn create_issue_from_args(
     } else if description.is_none() && args.ai {
         should_generate_body = true;
     }
+    let ai_prompt_hint = args.ai_prompt.clone();
     let service = IssueService::new(paths, &config);
     let mut draft = service.prepare_issue_draft(args)?;
     if let Some(description) = description.as_ref() {
         draft.body = description.clone();
     } else if should_generate_body {
         match crate::ui::spin_on("Generating issue description", || {
-            crate::commands::ai::generate_body(paths, &draft.title, &draft.project)
+            crate::commands::ai::generate_body(
+                paths,
+                &draft.title,
+                &draft.project,
+                ai_prompt_hint.as_deref(),
+            )
         }) {
             Ok(body) => generated_body = Some(body),
             Err(error) => {
