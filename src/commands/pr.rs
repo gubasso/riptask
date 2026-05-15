@@ -36,9 +36,25 @@ struct InitialChecksState {
 }
 
 pub async fn run(paths: &AppPaths, args: PrArgs) -> Result<(), RiptaskError> {
+    // The parent `tsk pr` carries `--ai-prompt` so the no-subcommand shorthand
+    // (`tsk pr <ID> --ai-prompt ...`) works. When an explicit subcommand is
+    // present, forward the parent-level flag into Create/Edit so flag order
+    // (`tsk pr --ai-prompt ... create ...`) does not silently drop the hint.
+    // The subcommand-level value, if set, wins.
+    let parent_ai_prompt = args.ai_prompt;
     match args.subcommand {
-        Some(PrSubcommand::Create(args)) => create(paths, args).await,
-        Some(PrSubcommand::Edit(args)) => edit(paths, args).await,
+        Some(PrSubcommand::Create(mut sub)) => {
+            if sub.ai_prompt.is_none() {
+                sub.ai_prompt = parent_ai_prompt;
+            }
+            create(paths, sub).await
+        }
+        Some(PrSubcommand::Edit(mut sub)) => {
+            if sub.ai_prompt.is_none() {
+                sub.ai_prompt = parent_ai_prompt;
+            }
+            edit(paths, sub).await
+        }
         Some(PrSubcommand::Show(args)) => show(paths, args).await,
         Some(PrSubcommand::Merge(args)) => merge(paths, args).await,
         None => {
@@ -48,6 +64,7 @@ pub async fn run(paths: &AppPaths, args: PrArgs) -> Result<(), RiptaskError> {
                     scope: args.scope,
                     id: args.id,
                     no_ai: args.no_ai,
+                    ai_prompt: parent_ai_prompt,
                 },
             )
             .await
@@ -166,8 +183,10 @@ pub(crate) async fn create(paths: &AppPaths, args: PrCreateArgs) -> Result<(), R
         if let Some(ai) = optional_backend(&config) {
             let context =
                 build_create_ai_context(&issue, &git, repo.as_path(), &default_branch, &branch)?;
+            let ai_input =
+                crate::adapters::ai::compose_ai_user_input(&context, args.ai_prompt.as_deref());
             match ui::spin_on("Generating PR description", || {
-                ai.generate_pr_description(&context)
+                ai.generate_pr_description(&ai_input)
             }) {
                 Ok(description) if !description.trim().is_empty() => {
                     body = format!("{body}\n\n{}", description.trim());
@@ -359,8 +378,12 @@ async fn edit(paths: &AppPaths, args: PrEditArgs) -> Result<(), RiptaskError> {
         let draft_body = if let Some(context) = ai_context {
             match optional_backend(&config) {
                 Some(ai) => {
+                    let ai_input = crate::adapters::ai::compose_ai_user_input(
+                        &context,
+                        args.ai_prompt.as_deref(),
+                    );
                     match ui::spin_on("Generating PR description update", || {
-                        ai.update_pr_description(&context)
+                        ai.update_pr_description(&ai_input)
                     }) {
                         Ok(description) => description,
                         Err(error) => {

@@ -66,9 +66,10 @@ pub fn run(paths: &AppPaths, args: CommitArgs) -> Result<(), RiptaskError> {
             "staged diff is empty, cannot generate commit message".into(),
         ));
     }
+    let ai_input = crate::adapters::ai::compose_ai_user_input(&diff, args.ai_prompt.as_deref());
 
     let generated = match crate::ui::spin_on("Generating commit message", || {
-        backend.generate_commit_message(&diff)
+        backend.generate_commit_message(&ai_input)
     }) {
         Ok(message) => {
             let trimmed = message.trim().to_owned();

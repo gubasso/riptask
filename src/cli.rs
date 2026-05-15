@@ -286,6 +286,9 @@ pub struct PrArgs {
     /// Disable AI-assisted description generation
     #[arg(long)]
     pub no_ai: bool,
+    /// Extra context for the AI helper. Additive only — does not change the helper's task, format, or output discipline.
+    #[arg(long = "ai-prompt")]
+    pub ai_prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, Args, Default)]
@@ -365,6 +368,9 @@ pub struct PrCreateArgs {
     /// Skip AI-assisted description generation
     #[arg(long)]
     pub no_ai: bool,
+    /// Extra context for the AI helper. Additive only — does not change the helper's task, format, or output discipline.
+    #[arg(long = "ai-prompt")]
+    pub ai_prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, Args, Default)]
@@ -384,6 +390,9 @@ pub struct PrEditArgs {
     /// Edit manually without AI assistance
     #[arg(long)]
     pub no_ai: bool,
+    /// Extra context for the AI helper. Additive only — does not change the helper's task, format, or output discipline.
+    #[arg(long = "ai-prompt")]
+    pub ai_prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, Args, Default)]
@@ -429,6 +438,9 @@ pub struct NewArgs {
     /// Force AI helper to fill missing fields (e.g. description) when --title is set
     #[arg(long)]
     pub ai: bool,
+    /// Extra context for the AI helper. Additive only — does not change the helper's task, format, or output discipline.
+    #[arg(long = "ai-prompt")]
+    pub ai_prompt: Option<String>,
     /// Target RepoProject
     #[arg(short = 'p', long)]
     pub project: Option<String>,
@@ -621,6 +633,9 @@ pub struct CommitArgs {
     /// Stage all changes before committing (like git commit -a)
     #[arg(short = 'a', long)]
     pub all: bool,
+    /// Extra context for the AI helper. Additive only — does not change the helper's task, format, or output discipline.
+    #[arg(long = "ai-prompt")]
+    pub ai_prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -779,12 +794,18 @@ pub struct SummarizeArgs {
     /// Limit summary to a specific RepoProject
     #[arg(short = 'p', long)]
     pub project: Option<String>,
+    /// Extra context for the AI helper. Additive only — does not change the helper's task, format, or output discipline.
+    #[arg(long = "ai-prompt")]
+    pub ai_prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, Args, Default)]
 pub struct AskArgs {
     /// Natural-language question about your issues
     pub question: String,
+    /// Extra context for the AI helper. Additive only — does not change the helper's task, format, or output discipline.
+    #[arg(long = "ai-prompt")]
+    pub ai_prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, Args, Default)]
@@ -1045,6 +1066,90 @@ mod tests {
         };
         assert!(create.id.is_none());
         assert!(create.no_ai);
+    }
+
+    #[test]
+    fn ai_prompt_parses_on_all_target_commands() {
+        let cli =
+            Cli::try_parse_from(["tsk", "new", "--ai", "--ai-prompt", "hint"]).expect("parse");
+        let Commands::New(args) = cli.command.expect("command") else {
+            panic!("expected new command");
+        };
+        assert_eq!(args.ai_prompt, Some("hint".into()));
+
+        let cli = Cli::try_parse_from(["tsk", "commit", "--ai-prompt", "hint"]).expect("parse");
+        let Commands::Commit(args) = cli.command.expect("command") else {
+            panic!("expected commit command");
+        };
+        assert_eq!(args.ai_prompt, Some("hint".into()));
+
+        let cli = Cli::try_parse_from(["tsk", "pr", "--ai-prompt", "hint", "42"]).expect("parse");
+        let Commands::Pr(args) = cli.command.expect("command") else {
+            panic!("expected pr command");
+        };
+        assert_eq!(args.ai_prompt, Some("hint".into()));
+
+        let cli = Cli::try_parse_from(["tsk", "pr", "create", "42", "--ai-prompt", "hint"])
+            .expect("parse");
+        let Commands::Pr(args) = cli.command.expect("command") else {
+            panic!("expected pr command");
+        };
+        let Some(PrSubcommand::Create(create)) = args.subcommand else {
+            panic!("expected pr create subcommand");
+        };
+        assert_eq!(create.ai_prompt, Some("hint".into()));
+
+        let cli =
+            Cli::try_parse_from(["tsk", "pr", "edit", "42", "--ai-prompt", "hint"]).expect("parse");
+        let Commands::Pr(args) = cli.command.expect("command") else {
+            panic!("expected pr command");
+        };
+        let Some(PrSubcommand::Edit(edit)) = args.subcommand else {
+            panic!("expected pr edit subcommand");
+        };
+        assert_eq!(edit.ai_prompt, Some("hint".into()));
+
+        let cli = Cli::try_parse_from(["tsk", "summarize", "--ai-prompt", "hint"]).expect("parse");
+        let Commands::Summarize(args) = cli.command.expect("command") else {
+            panic!("expected summarize command");
+        };
+        assert_eq!(args.ai_prompt, Some("hint".into()));
+
+        let cli =
+            Cli::try_parse_from(["tsk", "ask", "what?", "--ai-prompt", "hint"]).expect("parse");
+        let Commands::Ask(args) = cli.command.expect("command") else {
+            panic!("expected ask command");
+        };
+        assert_eq!(args.ai_prompt, Some("hint".into()));
+    }
+
+    #[test]
+    fn pr_parent_ai_prompt_parses_before_subcommand() {
+        // `tsk pr --ai-prompt "hint" create 42` parses successfully: the
+        // parent `PrArgs` captures `ai_prompt`. `commands/pr.rs::run` then
+        // forwards it into the child Create/Edit when the child did not set
+        // its own value, so the hint is never silently dropped.
+        let cli = Cli::try_parse_from(["tsk", "pr", "--ai-prompt", "hint", "create", "42"])
+            .expect("parse");
+        let Commands::Pr(args) = cli.command.expect("command") else {
+            panic!("expected pr command");
+        };
+        assert_eq!(args.ai_prompt, Some("hint".into()));
+        let Some(PrSubcommand::Create(create)) = args.subcommand else {
+            panic!("expected pr create subcommand");
+        };
+        assert!(create.ai_prompt.is_none());
+
+        let cli =
+            Cli::try_parse_from(["tsk", "pr", "--ai-prompt", "hint", "edit", "42"]).expect("parse");
+        let Commands::Pr(args) = cli.command.expect("command") else {
+            panic!("expected pr command");
+        };
+        assert_eq!(args.ai_prompt, Some("hint".into()));
+        let Some(PrSubcommand::Edit(edit)) = args.subcommand else {
+            panic!("expected pr edit subcommand");
+        };
+        assert!(edit.ai_prompt.is_none());
     }
 
     #[test]
