@@ -191,6 +191,7 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptaskError> {
                         scope: args.scope.clone(),
                         id: Some(id.clone()),
                         no_ai: false,
+                        ai_prompt: None,
                     },
                 )
                 .await

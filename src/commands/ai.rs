@@ -1,4 +1,6 @@
-use crate::adapters::ai::{AiBackend, GeneratedIssueContent, TemplateAiBackend};
+use crate::adapters::ai::{
+    AiBackend, GeneratedIssueContent, TemplateAiBackend, compose_ai_user_input,
+};
 use crate::cli::{AskArgs, SummarizeArgs};
 use crate::config::load_effective_config;
 use crate::error::RiptaskError;
@@ -57,9 +59,10 @@ pub fn summarize(paths: &AppPaths, args: SummarizeArgs) -> Result<(), RiptaskErr
         ));
     }
     tracing::debug!(context_len = context.len(), "requesting issue summary");
+    let user_input = compose_ai_user_input(&context, args.ai_prompt.as_deref());
     println!(
         "{}",
-        crate::ui::spin_on("Summarizing issues", || backend.summarize(&context))?
+        crate::ui::spin_on("Summarizing issues", || backend.summarize(&user_input))?
     );
     Ok(())
 }
@@ -103,14 +106,20 @@ pub fn ask(paths: &AppPaths, args: AskArgs) -> Result<(), RiptaskError> {
         context_len = context.len(),
         "requesting AI answer"
     );
+    let user_context = compose_ai_user_input(&context, args.ai_prompt.as_deref());
     println!(
         "{}",
-        crate::ui::spin_on("Thinking", || backend.ask(&args.question, &context))?
+        crate::ui::spin_on("Thinking", || backend.ask(&args.question, &user_context))?
     );
     Ok(())
 }
 
-pub fn generate_body(paths: &AppPaths, title: &str, project: &str) -> Result<String, RiptaskError> {
+pub fn generate_body(
+    paths: &AppPaths,
+    title: &str,
+    project: &str,
+    ai_prompt: Option<&str>,
+) -> Result<String, RiptaskError> {
     paths.require_shared_layer()?;
     let config = load_effective_config(
         paths,
@@ -125,12 +134,15 @@ pub fn generate_body(paths: &AppPaths, title: &str, project: &str) -> Result<Str
         return Err(RiptaskError::General("AI features disabled".into()));
     }
     let backend = backend(&config)?;
-    backend.generate_body(&format!("Title: {title}\n\nContext:\n{project}"))
+    let user_input =
+        compose_ai_user_input(&format!("Title: {title}\n\nContext:\n{project}"), ai_prompt);
+    backend.generate_body(&user_input)
 }
 
 pub fn generate_issue_content(
     paths: &AppPaths,
     context: &str,
+    ai_prompt: Option<&str>,
 ) -> Result<GeneratedIssueContent, RiptaskError> {
     paths.require_shared_layer()?;
     let config = load_effective_config(
@@ -146,7 +158,8 @@ pub fn generate_issue_content(
         return Err(RiptaskError::General("AI features disabled".into()));
     }
     let backend = backend(&config)?;
-    backend.generate_issue_content(context)
+    let user_input = compose_ai_user_input(context, ai_prompt);
+    backend.generate_issue_content(&user_input)
 }
 
 fn backend(config: &crate::config::Config) -> Result<TemplateAiBackend, RiptaskError> {
