@@ -1,6 +1,6 @@
 use crate::adapters::backend::{
-    BackendIssueRecord, BackendIssueUpsert, BackendPrRecord, DeleteOutcome, IssueTracker,
-    MergeMethod, PrCheckItem, PrChecksReport, PrChecksStatus, VersionControl,
+    BackendIssueRecord, BackendIssueUpsert, BackendPrRecord, BranchCreateOutcome, DeleteOutcome,
+    IssueTracker, MergeMethod, PrCheckItem, PrChecksReport, PrChecksStatus, VersionControl,
 };
 use crate::error::RiptaskError;
 use async_trait::async_trait;
@@ -28,6 +28,20 @@ fn format_octocrab_error(error: &octocrab::Error) -> String {
         }
         other => other.to_string(),
     }
+}
+
+fn classify_get_ref_failure(status_code: u16, message: &str) -> Option<BranchCreateOutcome> {
+    (status_code == 409 && message.to_lowercase().contains("git repository is empty"))
+        .then_some(BranchCreateOutcome::EmptyRemote)
+}
+
+fn classify_graphql_branch_errors(errors: &serde_json::Value) -> Option<BranchCreateOutcome> {
+    errors.as_array()?.iter().find_map(|error| {
+        let message = error.get("message")?.as_str()?.to_lowercase();
+        message
+            .contains("already exists")
+            .then_some(BranchCreateOutcome::AlreadyExists)
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -679,18 +693,32 @@ impl VersionControl for GithubProvider {
         branch_name: &str,
         base_ref: &str,
         issue_id: Option<u64>,
-    ) -> Result<(), RiptaskError> {
+    ) -> Result<BranchCreateOutcome, RiptaskError> {
         let (owner, repo_name) = self.split_owner_repo(repo)?;
 
         // Resolve base branch to SHA
-        let base = self
+        let base = match self
             .client
             .repos(owner, repo_name)
             .get_ref(&octocrab::params::repos::Reference::Branch(
                 base_ref.to_owned(),
             ))
             .await
-            .map_err(|e| RiptaskError::Unreachable(format_octocrab_error(&e)))?;
+        {
+            Ok(base) => base,
+            Err(octocrab::Error::GitHub { source, .. }) => {
+                if let Some(outcome) =
+                    classify_get_ref_failure(source.status_code.as_u16(), &source.message)
+                {
+                    return Ok(outcome);
+                }
+                return Err(RiptaskError::Unreachable(format!(
+                    "{source} (HTTP {})",
+                    source.status_code.as_u16()
+                )));
+            }
+            Err(error) => return Err(RiptaskError::Unreachable(format_octocrab_error(&error))),
+        };
         let sha = match base.object {
             octocrab::models::repos::Object::Commit { sha, .. }
             | octocrab::models::repos::Object::Tag { sha, .. } => sha,
@@ -732,6 +760,9 @@ impl VersionControl for GithubProvider {
                 .map_err(|e| RiptaskError::Unreachable(format_octocrab_error(&e)))?;
 
             if let Some(errors) = response.get("errors") {
+                if let Some(outcome) = classify_graphql_branch_errors(errors) {
+                    return Ok(outcome);
+                }
                 return Err(RiptaskError::Unreachable(format!(
                     "GitHub createLinkedBranch failed: {errors}"
                 )));
@@ -767,13 +798,16 @@ impl VersionControl for GithubProvider {
                 .map_err(|e| RiptaskError::Unreachable(format_octocrab_error(&e)))?;
 
             if let Some(errors) = response.get("errors") {
+                if let Some(outcome) = classify_graphql_branch_errors(errors) {
+                    return Ok(outcome);
+                }
                 return Err(RiptaskError::Unreachable(format!(
                     "GitHub createRef failed: {errors}"
                 )));
             }
         }
 
-        Ok(())
+        Ok(BranchCreateOutcome::Created)
     }
 
     async fn default_branch(&self, repo: &str) -> Result<String, RiptaskError> {
@@ -1397,9 +1431,11 @@ fn parse_lock_reason(reason: &str) -> Option<LockReason> {
 mod tests {
     use super::{
         BranchFilter, OnTriggers, PrCheckItem, PrChecksStatus, WorkflowSpec, WorkflowTriggerMap,
-        extract_classic_required_contexts, extract_ruleset_required_contexts,
-        merge_pr_check_states, rollup_report_status, workflow_matches_pr,
+        classify_get_ref_failure, extract_classic_required_contexts,
+        extract_ruleset_required_contexts, merge_pr_check_states, rollup_report_status,
+        workflow_matches_pr,
     };
+    use crate::adapters::backend::BranchCreateOutcome;
     use serde_json::json;
 
     #[test]
@@ -1480,5 +1516,32 @@ mod tests {
             merge_pr_check_states(PrChecksStatus::Passed, PrChecksStatus::Failed),
             PrChecksStatus::Failed
         );
+    }
+
+    #[test]
+    fn classifies_empty_remote_from_409_message() {
+        assert_eq!(
+            classify_get_ref_failure(409, "Git Repository is empty."),
+            Some(BranchCreateOutcome::EmptyRemote)
+        );
+    }
+
+    #[test]
+    fn classifies_empty_remote_case_insensitively() {
+        assert_eq!(
+            classify_get_ref_failure(409, "git repository is empty"),
+            Some(BranchCreateOutcome::EmptyRemote)
+        );
+    }
+
+    #[test]
+    fn ignores_unrelated_409_messages() {
+        assert_eq!(classify_get_ref_failure(409, "Conflict"), None);
+    }
+
+    #[test]
+    fn ignores_non_409_statuses() {
+        assert_eq!(classify_get_ref_failure(404, "Not Found"), None);
+        assert_eq!(classify_get_ref_failure(500, "Server Error"), None);
     }
 }

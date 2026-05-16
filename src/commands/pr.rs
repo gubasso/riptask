@@ -27,6 +27,8 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 const EMPTY_BRANCH_COMMIT_MESSAGE: &str = "chore: initialize branch for PR\n\n\
                                           Empty commit to allow PR creation on a branch with no changes yet.";
+const REPO_INIT_COMMIT_MESSAGE: &str = "chore: initialize repository\n\n\
+                                        Empty commit to bootstrap an empty repository so a PR can be created.";
 const CHECKS_POLL_INTERVAL: Duration = Duration::from_secs(10);
 const REGISTRATION_GRACE: Duration = Duration::from_secs(90);
 
@@ -91,17 +93,24 @@ pub(crate) async fn create(paths: &AppPaths, args: PrCreateArgs) -> Result<(), R
         .branch
         .clone()
         .ok_or_else(|| RiptaskError::General("run `tsk branch` first".into()))?;
-    if current_branch != branch {
-        return Err(RiptaskError::General(
-            "current branch does not match issue branch".into(),
-        ));
-    }
-
     let repo_project = resolve_hosted_repo_project(&config, &issue)?;
     let git = CliGit::with_auth(resolve_git_auth(
         &repo_project.vc_backend,
         &repo_project.name,
     ));
+    let has_head_commit = git.has_head_commit(repo.as_path())?;
+    // Probe the remote up front: if it has no refs we must route through the
+    // bootstrap path regardless of `has_head_commit`. This covers three states
+    // that all reach `tsk pr` with an empty remote: (a) unborn HEAD (issue
+    // #155's primary case), (b) the user committed locally before pushing,
+    // and (c) recovery from a partial bootstrap (e.g. first push failed).
+    let remote_empty = !git.remote_has_any_refs(repo.as_path())?;
+    if has_head_commit && !remote_empty && current_branch != branch {
+        return Err(RiptaskError::General(
+            "current branch does not match issue branch".into(),
+        ));
+    }
+
     let provider = build_hosted_provider(&repo_project.vc_backend, &repo_project.name)?;
     let repo_name = repo_project.vc_backend.repo.as_deref().unwrap_or_default();
     let default_branch = ui::spin_on_async("Fetching default branch", async {
@@ -109,56 +118,102 @@ pub(crate) async fn create(paths: &AppPaths, args: PrCreateArgs) -> Result<(), R
     })
     .await?;
 
-    // Check local metadata first, then remote, for idempotent create
-    let local_pr_number = issue.frontmatter.pr_number.or_else(|| {
-        issue
-            .frontmatter
-            .pr_url
-            .as_deref()
-            .and_then(parse_pr_number_from_url)
-    });
-    let existing_pr = ui::spin_on_async("Checking for existing PR", async {
-        let existing_pr = if let Some(pr_number) = local_pr_number
-            && let Ok(existing) = provider.get_pr(repo_name, pr_number).await
-            && pr_head_matches(&existing.head, &branch)
-            && existing.base == default_branch
-        {
-            Some(existing)
-        } else {
-            provider
-                .find_pr_by_branch(repo_name, &branch, &default_branch)
-                .await?
-        };
-        Ok::<_, RiptaskError>(existing_pr)
-    })
-    .await?;
-    if let Some(existing) = existing_pr {
-        tracing::info!(pr_number = existing.number, branch = %branch, "reused existing PR");
-        sync_and_commit_pr(&config, &git, paths, &path, &mut issue, &existing)?;
-        println!("{}", existing.url);
-        return Ok(());
+    // Refuse early when the issue branch is the remote's default branch: a PR
+    // cannot have the same head and base. This happens on brand-new GitHub
+    // repos when the very first ref pushed was the issue branch (GitHub then
+    // promotes it to `default_branch`). The user must push a separate base
+    // branch on the remote and set it as default before opening a PR.
+    if !remote_empty && branch == default_branch {
+        return Err(RiptaskError::General(format!(
+            "cannot open a PR from branch `{branch}` because it is the remote's default branch \
+             (head and base would be identical); push a separate base branch (e.g. `main`) \
+             on the remote and set it as the default, then re-run `tsk pr`"
+        )));
     }
 
-    ui::spin_on("Fetching from remote", || git.fetch(repo.as_path()))?;
-    ui::spin_on("Pushing to remote", || {
-        git.push_with_upstream(repo.as_path(), &branch)
-    })?;
-
     let mut skip_ai = false;
-    if repo_project.vc_backend.kind == BackendKind::Github
-        && git.commits_ahead_of_base(repo.as_path(), &branch, &default_branch)? == 0
-    {
-        if git.has_staged_changes(repo.as_path())? {
+    if remote_empty {
+        // Require real commits on the issue branch before opening a PR. The
+        // user is expected to have committed their first changes between
+        // `tsk start` and `tsk pr`; without commits there is nothing to
+        // review.
+        if !has_head_commit {
             return Err(RiptaskError::General(
-                "branch has no commits but has staged changes; commit or unstage them first".into(),
+                "no commits on the issue branch yet — commit your work first, then re-run `tsk pr`"
+                    .into(),
             ));
         }
-        ui::info("branch has no commits; creating empty commit for PR...");
-        git.create_empty_commit(repo.as_path(), EMPTY_BRANCH_COMMIT_MESSAGE)?;
+        if current_branch != branch {
+            return Err(RiptaskError::General(format!(
+                "current branch `{current_branch}` does not match issue branch `{branch}`; \
+                 switch to it (`git switch {branch}`) and re-run"
+            )));
+        }
+        ui::info("remote repository is empty; bootstrapping default branch...");
+        bootstrap_empty_remote(&git, repo.as_path(), &default_branch, &branch)?;
+        skip_ai = true;
+    } else if has_head_commit {
+        // Check local metadata first, then remote, for idempotent create
+        let local_pr_number = issue.frontmatter.pr_number.or_else(|| {
+            issue
+                .frontmatter
+                .pr_url
+                .as_deref()
+                .and_then(parse_pr_number_from_url)
+        });
+        let existing_pr = ui::spin_on_async("Checking for existing PR", async {
+            let existing_pr = if let Some(pr_number) = local_pr_number
+                && let Ok(existing) = provider.get_pr(repo_name, pr_number).await
+                && pr_head_matches(&existing.head, &branch)
+                && existing.base == default_branch
+            {
+                Some(existing)
+            } else {
+                provider
+                    .find_pr_by_branch(repo_name, &branch, &default_branch)
+                    .await?
+            };
+            Ok::<_, RiptaskError>(existing_pr)
+        })
+        .await?;
+        if let Some(existing) = existing_pr {
+            tracing::info!(pr_number = existing.number, branch = %branch, "reused existing PR");
+            sync_and_commit_pr(&config, &git, paths, &path, &mut issue, &existing)?;
+            println!("{}", existing.url);
+            return Ok(());
+        }
+
+        ui::spin_on("Fetching from remote", || git.fetch(repo.as_path()))?;
         ui::spin_on("Pushing to remote", || {
             git.push_with_upstream(repo.as_path(), &branch)
         })?;
-        skip_ai = true;
+
+        if repo_project.vc_backend.kind == BackendKind::Github
+            && git.commits_ahead_of_base(repo.as_path(), &branch, &default_branch)? == 0
+        {
+            // Previously we synthesized an empty "chore: initialize branch for PR"
+            // commit here so `tsk pr` could open a PR on a freshly branched, not-yet-
+            // committed branch. That trick was unsound: at merge time the placeholder
+            // was rebase-dropped, and whenever the user's real work was already
+            // reachable from `default_branch` (e.g. they created the base branch from
+            // the issue branch's HEAD) the drop exposed a zero-diff branch and the
+            // user was trapped with a half-rewritten local/remote pair. Refuse early
+            // instead — the user must commit before opening a PR.
+            return Err(RiptaskError::General(format!(
+                "branch `{branch}` has no commits ahead of `{default_branch}`; \
+                 commit your work first, then re-run `tsk pr`"
+            )));
+        }
+    } else {
+        // !remote_empty && !has_head_commit: remote has refs but local repo
+        // has none. This means the user ran `tsk start` before fetching the
+        // remote. Push is impossible from an unborn HEAD against a non-empty
+        // remote; instruct the user to fetch first.
+        return Err(RiptaskError::General(
+            "local repository has no commits but the remote is non-empty; \
+             run `git fetch` or `git pull` first"
+                .into(),
+        ));
     }
 
     // For Jira issues, use the Jira issue key for PR title/body (not a numeric GitHub issue number)
@@ -219,6 +274,25 @@ pub(crate) async fn create(paths: &AppPaths, args: PrCreateArgs) -> Result<(), R
     frontmatter::save_issue(path.as_std_path(), &issue).map_err(RiptaskError::Other)?;
     sync_and_commit_pr(&config, &git, paths, &path, &mut issue, &record)?;
     println!("{}", record.url);
+    Ok(())
+}
+
+fn bootstrap_empty_remote(
+    git: &dyn GitBackend,
+    repo: &Path,
+    default_branch: &str,
+    branch: &str,
+) -> Result<(), RiptaskError> {
+    // Push a fresh orphan empty commit directly as the remote's default
+    // branch. No local refs are created, the index is not touched, and the
+    // user's working tree is untouched. The resulting remote `default_branch`
+    // has unrelated history from the issue branch, which GitHub accepts as a
+    // valid PR base; the PR diff is the entire content of the issue branch,
+    // which is exactly what the user did.
+    git.push_orphan_initial_branch(repo, default_branch, REPO_INIT_COMMIT_MESSAGE)?;
+    // Then push the user's actual issue branch. Their real commits become
+    // the PR head.
+    git.push_with_upstream(repo, branch)?;
     Ok(())
 }
 
@@ -483,6 +557,19 @@ pub(crate) async fn merge_pr_workflow(
         if let Some(sha) =
             git.find_commit_by_subject(repo_path, branch, &default_branch, subject)?
         {
+            // Pre-check: refuse to destructively rewrite the branch when the
+            // placeholder is the ONLY commit ahead of base. Rebasing it away
+            // would rewind the local branch to base while leaving the remote
+            // ahead — a confusing local/remote drift. Fail fast so the user
+            // can close the PR manually.
+            let ahead = git.commits_ahead_of_base(repo_path, branch, &default_branch)?;
+            if ahead <= 1 {
+                return Err(RiptaskError::General(format!(
+                    "PR #{pr_number} for branch `{branch}` only contains a bootstrap \
+                     commit (no real work ahead of `{default_branch}`); close PR #{pr_number} \
+                     on the remote, commit real work, then re-run"
+                )));
+            }
             // Ensure we are on the issue branch before rewriting history
             let current = git.current_branch(repo_path)?;
             if current != branch {
@@ -490,12 +577,6 @@ pub(crate) async fn merge_pr_workflow(
             }
             ui::info("dropping empty bootstrap commit...");
             git.rebase_drop_commit(repo_path, &sha, branch)?;
-
-            if git.commits_ahead_of_base(repo_path, branch, &default_branch)? == 0 {
-                return Err(RiptaskError::General(
-                    "branch has no real commits; nothing to merge".into(),
-                ));
-            }
 
             ui::spin_on("Force-pushing rebased branch", || {
                 if opts.force_push {
@@ -1041,16 +1122,20 @@ pub(crate) fn parse_pr_number_from_url(url: &str) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::{
-        InitialChecksState, MergeOptions, default_body, default_title, handle_ci_checks,
-        merge_method_label, parse_editor_buffer, parse_pr_number_from_url, pr_checks_status_label,
-        pr_head_matches, report_from_status, wait_for_checks_inner, wait_for_pr_head_update,
+        InitialChecksState, MergeOptions, REPO_INIT_COMMIT_MESSAGE, bootstrap_empty_remote,
+        default_body, default_title, handle_ci_checks, merge_method_label, parse_editor_buffer,
+        parse_pr_number_from_url, pr_checks_status_label, pr_head_matches, report_from_status,
+        wait_for_checks_inner, wait_for_pr_head_update,
     };
     use crate::adapters::backend::{
-        BackendPrRecord, MergeMethod, PrChecksReport, PrChecksStatus, VersionControl,
+        BackendPrRecord, BranchCreateOutcome, MergeMethod, PrChecksReport, PrChecksStatus,
+        VersionControl,
     };
+    use crate::adapters::git::GitBackend;
     use crate::error::RiptaskError;
     use async_trait::async_trait;
     use std::collections::VecDeque;
+    use std::path::Path;
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
@@ -1166,7 +1251,7 @@ mod tests {
             _branch_name: &str,
             _base_ref: &str,
             _issue_id: Option<u64>,
-        ) -> Result<(), RiptaskError> {
+        ) -> Result<BranchCreateOutcome, RiptaskError> {
             unimplemented!()
         }
 
@@ -1186,6 +1271,200 @@ mod tests {
             yes,
             timeout,
             force_push: false,
+        }
+    }
+
+    #[derive(Clone, Default)]
+    struct FakeGit {
+        calls: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl FakeGit {
+        fn record(&self, call: impl Into<String>) {
+            self.calls.lock().expect("lock").push(call.into());
+        }
+    }
+
+    impl GitBackend for FakeGit {
+        fn init(&self, _path: &Path) -> Result<(), RiptaskError> {
+            unimplemented!()
+        }
+        fn add(&self, _repo: &Path, _files: &[&Path]) -> Result<(), RiptaskError> {
+            unimplemented!()
+        }
+        fn commit(&self, _repo: &Path, _message: &str) -> Result<(), RiptaskError> {
+            unimplemented!()
+        }
+        fn repo_root(&self, _cwd: &Path) -> Result<std::path::PathBuf, RiptaskError> {
+            unimplemented!()
+        }
+        fn merge_file(
+            &self,
+            _local: &Path,
+            _base: &Path,
+            _remote: &Path,
+        ) -> Result<String, RiptaskError> {
+            unimplemented!()
+        }
+        fn has_changes(&self, _repo: &Path) -> Result<bool, RiptaskError> {
+            unimplemented!()
+        }
+        fn has_uncommitted_changes(&self, _repo: &Path) -> Result<bool, RiptaskError> {
+            unimplemented!()
+        }
+        fn pull(&self, _repo: &Path) -> Result<(), RiptaskError> {
+            unimplemented!()
+        }
+        fn push(&self, _repo: &Path) -> Result<(), RiptaskError> {
+            unimplemented!()
+        }
+        fn checkout(&self, _repo: &Path, _branch: &str) -> Result<(), RiptaskError> {
+            unimplemented!()
+        }
+        fn create_branch(&self, _repo: &Path, _name: &str) -> Result<(), RiptaskError> {
+            unimplemented!()
+        }
+        fn ensure_on_local_branch(&self, _repo: &Path, _slug: &str) -> Result<(), RiptaskError> {
+            unimplemented!()
+        }
+        fn branch_exists(&self, _repo: &Path, _name: &str) -> Result<bool, RiptaskError> {
+            unimplemented!()
+        }
+        fn fetch_and_checkout_tracking(
+            &self,
+            _repo: &Path,
+            _branch: &str,
+        ) -> Result<(), RiptaskError> {
+            unimplemented!()
+        }
+        fn push_with_upstream(&self, _repo: &Path, branch: &str) -> Result<(), RiptaskError> {
+            self.record(format!("push_with_upstream:{branch}"));
+            Ok(())
+        }
+        fn has_working_tree_changes(&self, _repo: &Path) -> Result<bool, RiptaskError> {
+            unimplemented!()
+        }
+        fn diff_names(&self, _repo: &Path) -> Result<Vec<String>, RiptaskError> {
+            unimplemented!()
+        }
+        fn current_branch(&self, _repo: &Path) -> Result<String, RiptaskError> {
+            unimplemented!()
+        }
+        fn remote_url(&self, _repo: &Path, _remote: &str) -> Result<String, RiptaskError> {
+            unimplemented!()
+        }
+        fn delete_local_branch(
+            &self,
+            _repo: &Path,
+            _branch: &str,
+            _force: bool,
+        ) -> Result<(), RiptaskError> {
+            unimplemented!()
+        }
+        fn has_staged_changes(&self, _repo: &Path) -> Result<bool, RiptaskError> {
+            unimplemented!()
+        }
+        fn stage_all(&self, _repo: &Path) -> Result<(), RiptaskError> {
+            unimplemented!()
+        }
+        fn is_branch_merged(
+            &self,
+            _repo: &Path,
+            _branch: &str,
+            _base: &str,
+        ) -> Result<bool, RiptaskError> {
+            unimplemented!()
+        }
+        fn fetch(&self, _repo: &Path) -> Result<(), RiptaskError> {
+            unimplemented!()
+        }
+        fn commits_ahead_of_base(
+            &self,
+            _repo: &Path,
+            _branch: &str,
+            _base: &str,
+        ) -> Result<u64, RiptaskError> {
+            unimplemented!()
+        }
+        fn create_empty_commit(&self, _repo: &Path, _message: &str) -> Result<(), RiptaskError> {
+            unimplemented!()
+        }
+        fn push_orphan_initial_branch(
+            &self,
+            _repo: &Path,
+            ref_name: &str,
+            message: &str,
+        ) -> Result<(), RiptaskError> {
+            self.record(format!("push_orphan_initial_branch:{ref_name}:{message}"));
+            Ok(())
+        }
+        fn find_commit_by_subject(
+            &self,
+            _repo: &Path,
+            _branch: &str,
+            _base: &str,
+            _subject: &str,
+        ) -> Result<Option<String>, RiptaskError> {
+            unimplemented!()
+        }
+        fn rebase_drop_commit(
+            &self,
+            _repo: &Path,
+            _commit_sha: &str,
+            _branch: &str,
+        ) -> Result<(), RiptaskError> {
+            unimplemented!()
+        }
+        fn force_push_with_lease(&self, _repo: &Path, _branch: &str) -> Result<(), RiptaskError> {
+            unimplemented!()
+        }
+        fn force_push(&self, _repo: &Path, _branch: &str) -> Result<(), RiptaskError> {
+            unimplemented!()
+        }
+        fn log_between(
+            &self,
+            _repo: &Path,
+            _base: &str,
+            _head: &str,
+        ) -> Result<String, RiptaskError> {
+            unimplemented!()
+        }
+        fn diff_between(
+            &self,
+            _repo: &Path,
+            _base: &str,
+            _head: &str,
+        ) -> Result<String, RiptaskError> {
+            unimplemented!()
+        }
+        fn working_tree_diff(&self, _repo: &Path) -> Result<String, RiptaskError> {
+            unimplemented!()
+        }
+        fn staged_diff(&self, _repo: &Path) -> Result<String, RiptaskError> {
+            unimplemented!()
+        }
+        fn head_sha(&self, _repo: &Path) -> Result<String, RiptaskError> {
+            unimplemented!()
+        }
+        fn has_head_commit(&self, _repo: &Path) -> Result<bool, RiptaskError> {
+            unimplemented!()
+        }
+        fn remote_has_any_refs(&self, _repo: &Path) -> Result<bool, RiptaskError> {
+            unimplemented!()
+        }
+        fn clone_with_reference(
+            &self,
+            _reference_repo: &Path,
+            _remote_url: &str,
+            _target_dir: &Path,
+        ) -> Result<(), RiptaskError> {
+            unimplemented!()
+        }
+        fn stash_push(&self, _repo: &Path, _message: &str) -> Result<bool, RiptaskError> {
+            unimplemented!()
+        }
+        fn stash_pop(&self, _repo: &Path) -> Result<bool, RiptaskError> {
+            unimplemented!()
         }
     }
 
@@ -1539,5 +1818,37 @@ mod tests {
 
         assert_eq!(result.expect("checks should pass"), PrChecksStatus::Passed);
         assert!(provider.poll_count() > 1);
+    }
+
+    #[test]
+    fn bootstrap_empty_remote_pushes_orphan_then_branch() {
+        let git = FakeGit::default();
+        bootstrap_empty_remote(&git, Path::new("."), "main", "123-test").expect("bootstrap");
+        let expected = vec![
+            format!("push_orphan_initial_branch:main:{REPO_INIT_COMMIT_MESSAGE}"),
+            "push_with_upstream:123-test".to_string(),
+        ];
+        assert_eq!(
+            git.calls.lock().expect("lock").as_slice(),
+            expected.as_slice()
+        );
+    }
+
+    #[test]
+    fn bootstrap_empty_remote_uses_remote_default_branch_name() {
+        // The bootstrap pushes to whatever the remote's configured default
+        // branch is, NOT the local symbolic-ref. This means the user can be
+        // on `1-foo` locally and the remote default can be `develop` and
+        // bootstrap still creates `refs/heads/develop` on the remote.
+        let git = FakeGit::default();
+        bootstrap_empty_remote(&git, Path::new("."), "develop", "1-foo").expect("bootstrap");
+        let expected = vec![
+            format!("push_orphan_initial_branch:develop:{REPO_INIT_COMMIT_MESSAGE}"),
+            "push_with_upstream:1-foo".to_string(),
+        ];
+        assert_eq!(
+            git.calls.lock().expect("lock").as_slice(),
+            expected.as_slice()
+        );
     }
 }

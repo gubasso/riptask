@@ -16,6 +16,15 @@ pub trait GitBackend {
     fn push(&self, repo: &Path) -> Result<(), RiptaskError>;
     fn checkout(&self, repo: &Path, branch: &str) -> Result<(), RiptaskError>;
     fn create_branch(&self, repo: &Path, name: &str) -> Result<(), RiptaskError>;
+    /// Put the local repository on a branch named `slug`.
+    ///
+    /// Works for three states:
+    /// - Unborn HEAD: rewrites `HEAD` as a symbolic-ref to `refs/heads/<slug>`
+    ///   without making a commit. The index and working tree are untouched, so
+    ///   any staged or unstaged files survive the rename.
+    /// - Existing local branch: switches to it.
+    /// - Otherwise: creates a new local branch off the current commit.
+    fn ensure_on_local_branch(&self, repo: &Path, slug: &str) -> Result<(), RiptaskError>;
     fn branch_exists(&self, repo: &Path, name: &str) -> Result<bool, RiptaskError>;
     fn fetch_and_checkout_tracking(&self, repo: &Path, branch: &str) -> Result<(), RiptaskError>;
     fn push_with_upstream(&self, repo: &Path, branch: &str) -> Result<(), RiptaskError>;
@@ -41,6 +50,20 @@ pub trait GitBackend {
         base: &str,
     ) -> Result<u64, RiptaskError>;
     fn create_empty_commit(&self, repo: &Path, message: &str) -> Result<(), RiptaskError>;
+    /// Push a fresh orphan empty commit to `origin/<ref_name>` without
+    /// touching any local refs, the index, or the working tree.
+    ///
+    /// Used to bootstrap an empty remote: we materialize `git`'s empty tree
+    /// via `mktree`, create an orphan commit with `commit-tree`, and push
+    /// the resulting SHA directly with a `<sha>:refs/heads/<ref_name>`
+    /// refspec. The remote ends up with a single empty-content commit on
+    /// `ref_name`; locally nothing changes.
+    fn push_orphan_initial_branch(
+        &self,
+        repo: &Path,
+        ref_name: &str,
+        message: &str,
+    ) -> Result<(), RiptaskError>;
     fn find_commit_by_subject(
         &self,
         repo: &Path,
@@ -61,6 +84,12 @@ pub trait GitBackend {
     fn working_tree_diff(&self, repo: &Path) -> Result<String, RiptaskError>;
     fn staged_diff(&self, repo: &Path) -> Result<String, RiptaskError>;
     fn head_sha(&self, repo: &Path) -> Result<String, RiptaskError>;
+    fn has_head_commit(&self, repo: &Path) -> Result<bool, RiptaskError>;
+    /// Returns `true` if `origin` advertises at least one branch ref.
+    ///
+    /// Used to detect the "empty remote" state when local commits already
+    /// exist (so `has_head_commit` is `true`) but the remote has no refs.
+    fn remote_has_any_refs(&self, repo: &Path) -> Result<bool, RiptaskError>;
     fn clone_with_reference(
         &self,
         reference_repo: &Path,
@@ -117,7 +146,12 @@ impl CliGit {
         for arg in args {
             command.arg(arg);
         }
-        status_to_result(command.output()?.status)
+        let output = command.output()?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(RiptaskError::General(git_failure_message(args, &output)))
+        }
     }
 
     fn prepare_auth_command(&self) -> Result<(Command, Option<tempfile::TempPath>), RiptaskError> {
@@ -173,7 +207,15 @@ impl GitBackend for CliGit {
         for file in files {
             command.arg(file);
         }
-        status_to_result(command.output()?.status)
+        let output = command.output()?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            let args = std::iter::once("add")
+                .chain(files.iter().map(|f| f.to_str().unwrap_or("<non-utf8>")))
+                .collect::<Vec<_>>();
+            Err(RiptaskError::General(git_failure_message(&args, &output)))
+        }
     }
 
     fn commit(&self, repo: &Path, message: &str) -> Result<(), RiptaskError> {
@@ -237,14 +279,33 @@ impl GitBackend for CliGit {
         run_git(repo, ["checkout", "-b", name])
     }
 
+    fn ensure_on_local_branch(&self, repo: &Path, slug: &str) -> Result<(), RiptaskError> {
+        if !has_head_commit(repo)? {
+            // Unborn HEAD: rewrite the symbolic-ref so HEAD points at
+            // refs/heads/<slug> without committing anything. The index and
+            // working tree are unaffected.
+            let target = format!("refs/heads/{slug}");
+            return run_git_dynamic(repo, &["symbolic-ref", "HEAD", &target]);
+        }
+        if self.branch_exists(repo, slug)? {
+            return run_git_dynamic(repo, &["switch", slug]);
+        }
+        run_git_dynamic(repo, &["switch", "-c", slug])
+    }
+
     fn branch_exists(&self, repo: &Path, name: &str) -> Result<bool, RiptaskError> {
         let refname = format!("refs/heads/{name}");
-        let status = git_command()
+        // `git show-ref --quiet --verify <ref>` is silent on missing refs and
+        // exits non-zero — exactly the probe semantics we want here.
+        // Using `rev-parse --verify` instead leaks "fatal: Needed a single
+        // revision" to stderr, which surfaces as a scary user-facing message
+        // for what is really just a routine existence check.
+        let output = git_command()
             .arg("-C")
             .arg(repo)
-            .args(["rev-parse", "--verify", &refname])
-            .status()?;
-        Ok(status.success())
+            .args(["show-ref", "--quiet", "--verify", &refname])
+            .output()?;
+        Ok(output.status.success())
     }
 
     fn fetch_and_checkout_tracking(&self, repo: &Path, branch: &str) -> Result<(), RiptaskError> {
@@ -277,6 +338,15 @@ impl GitBackend for CliGit {
     }
 
     fn current_branch(&self, repo: &Path) -> Result<String, RiptaskError> {
+        let symbolic = git_command()
+            .arg("-C")
+            .arg(repo)
+            .args(["symbolic-ref", "--short", "HEAD"])
+            .output()?;
+        if symbolic.status.success() {
+            return Ok(String::from_utf8_lossy(&symbolic.stdout).trim().to_owned());
+        }
+
         let output = git_command()
             .arg("-C")
             .arg(repo)
@@ -324,6 +394,26 @@ impl GitBackend for CliGit {
         }
     }
 
+    fn has_head_commit(&self, repo: &Path) -> Result<bool, RiptaskError> {
+        has_head_commit(repo)
+    }
+
+    fn remote_has_any_refs(&self, repo: &Path) -> Result<bool, RiptaskError> {
+        let (mut command, _askpass) = self.prepare_auth_command()?;
+        let output = command
+            .arg("-C")
+            .arg(repo)
+            .args(["ls-remote", "--heads", "origin"])
+            .output()?;
+        if !output.status.success() {
+            return Err(RiptaskError::Unreachable(format!(
+                "failed to probe remote refs: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            )));
+        }
+        Ok(!output.stdout.iter().all(u8::is_ascii_whitespace))
+    }
+
     fn delete_local_branch(
         &self,
         repo: &Path,
@@ -335,13 +425,32 @@ impl GitBackend for CliGit {
     }
 
     fn has_staged_changes(&self, repo: &Path) -> Result<bool, RiptaskError> {
+        // "Staged changes" means the index differs from HEAD. The probe must be
+        // HEAD-aware: against a real HEAD use `diff-index --cached --quiet HEAD`
+        // (the plumbing form documented in git-diff-index(1)); on an unborn HEAD
+        // there is no committed tree to compare against, so fall back to the
+        // empty-tree SHA so any index entry counts as "staged". A previous
+        // version used the empty-tree base unconditionally, which made the
+        // predicate "is anything tracked at all?" and returned true on every
+        // clean repo with at least one committed file.
+        let base: &str = if has_head_commit(repo)? {
+            "HEAD"
+        } else {
+            "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+        };
         let output = git_command()
             .arg("-C")
             .arg(repo)
-            .args(["diff", "--cached", "--quiet"])
-            .status()?;
-        // exit 0 = no staged changes, exit 1 = staged changes exist
-        Ok(!output.success())
+            .args(["diff-index", "--cached", "--quiet", base])
+            .output()?;
+        match output.status.code() {
+            Some(0) => Ok(false),
+            Some(1) => Ok(true),
+            _ => Err(RiptaskError::General(git_failure_message(
+                &["diff-index", "--cached", "--quiet", base],
+                &output,
+            ))),
+        }
     }
 
     fn stage_all(&self, repo: &Path) -> Result<(), RiptaskError> {
@@ -354,12 +463,12 @@ impl GitBackend for CliGit {
         branch: &str,
         base: &str,
     ) -> Result<bool, RiptaskError> {
-        let status = git_command()
+        let output = git_command()
             .arg("-C")
             .arg(repo)
             .args(["merge-base", "--is-ancestor", branch, base])
-            .status()?;
-        Ok(status.success())
+            .output()?;
+        Ok(output.status.success())
     }
 
     fn fetch(&self, repo: &Path) -> Result<(), RiptaskError> {
@@ -398,6 +507,88 @@ impl GitBackend for CliGit {
             args.push(part);
         }
         run_git_dynamic(repo, &args)
+    }
+
+    fn push_orphan_initial_branch(
+        &self,
+        repo: &Path,
+        ref_name: &str,
+        message: &str,
+    ) -> Result<(), RiptaskError> {
+        // Step 1: materialize git's empty tree as a real object. `git mktree`
+        // reads tree entries from stdin; an empty stdin produces the
+        // well-known empty-tree SHA `4b825dc642cb6eb9a060e54bf8d69288fbee4904`.
+        let mktree = git_command()
+            .arg("-C")
+            .arg(repo)
+            .args(["mktree"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()?;
+        let mktree_out = mktree.wait_with_output()?;
+        if !mktree_out.status.success() {
+            return Err(RiptaskError::General(git_failure_message(
+                &["mktree"],
+                &mktree_out,
+            )));
+        }
+        let empty_tree = String::from_utf8_lossy(&mktree_out.stdout)
+            .trim()
+            .to_owned();
+
+        // Step 2: create an orphan commit (no parents) pointing at the empty
+        // tree. The object lands in the local objstore but is not yet
+        // referenced by any ref.
+        let mut commit_args: Vec<&str> = vec!["commit-tree", &empty_tree];
+        for part in message.split("\n\n") {
+            commit_args.push("-m");
+            commit_args.push(part);
+        }
+        let commit_out = git_command()
+            .arg("-C")
+            .arg(repo)
+            .args(&commit_args)
+            .output()?;
+        if !commit_out.status.success() {
+            return Err(RiptaskError::General(git_failure_message(
+                &commit_args,
+                &commit_out,
+            )));
+        }
+        let commit_sha = String::from_utf8_lossy(&commit_out.stdout)
+            .trim()
+            .to_owned();
+
+        // Step 3: refuse to clobber an existing local branch of the same
+        // name; the user may have real work there.
+        if self.branch_exists(repo, ref_name)? {
+            return Err(RiptaskError::General(format!(
+                "cannot bootstrap remote `{ref_name}`: a local branch named \
+                 `{ref_name}` already exists. Push it yourself (\
+                 `git push -u origin {ref_name}`) or remove it (\
+                 `git branch -D {ref_name}`) and re-run."
+            )));
+        }
+
+        // Step 4: create the local ref pointing at the orphan commit, then
+        // push that named ref via the normal `git push` machinery. Pushing a
+        // named ref is what every git tool does and is what GitHub's smart
+        // HTTP server expects for the first push to an empty repository; a
+        // bare `<sha>:<dst>` refspec works against local bare remotes but
+        // GitHub silently rejects it with no actionable error.
+        let ref_path = format!("refs/heads/{ref_name}");
+        run_git_dynamic(repo, &["update-ref", &ref_path, &commit_sha])?;
+
+        let push_result = self.run_git_remote(repo, &["push", "-u", "origin", ref_name]);
+
+        // If the push failed, roll back the local ref so a retry starts from
+        // a clean state. We deliberately ignore the rollback error: the push
+        // error is what the user needs to see.
+        if push_result.is_err() {
+            let _ = run_git_dynamic(repo, &["update-ref", "-d", &ref_path]);
+        }
+        push_result
     }
 
     fn find_commit_by_subject(
@@ -574,7 +765,15 @@ impl GitBackend for CliGit {
             .arg(reference_repo)
             .arg(remote_url)
             .arg(target_dir);
-        status_to_result(command.output()?.status)
+        let output = command.output()?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(RiptaskError::General(git_failure_message(
+                &["clone", "--reference", "<ref>", remote_url, "<target>"],
+                &output,
+            )))
+        }
     }
 
     fn stash_push(&self, repo: &Path, message: &str) -> Result<bool, RiptaskError> {
@@ -632,7 +831,23 @@ fn run_git_dynamic(repo: &Path, args: &[&str]) -> Result<(), RiptaskError> {
     for arg in args {
         command.arg(arg);
     }
-    status_to_result(command.output()?.status)
+    let output = command.output()?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(RiptaskError::General(git_failure_message(args, &output)))
+    }
+}
+
+fn git_failure_message(args: &[&str], output: &std::process::Output) -> String {
+    let cmd = args.join(" ");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = stderr.trim();
+    if stderr.is_empty() {
+        format!("`git {cmd}` failed (exit {})", output.status)
+    } else {
+        format!("`git {cmd}` failed: {stderr}")
+    }
 }
 
 /// Build a `git` `Command` with inherited override environment variables
@@ -662,14 +877,6 @@ fn git_command() -> Command {
         cmd.env_remove(var);
     }
     cmd
-}
-
-fn status_to_result(status: std::process::ExitStatus) -> Result<(), RiptaskError> {
-    if status.success() {
-        Ok(())
-    } else {
-        Err(RiptaskError::General("git command failed".into()))
-    }
 }
 
 fn has_head_commit(repo: &Path) -> Result<bool, RiptaskError> {
@@ -1019,6 +1226,179 @@ mod tests {
         let ok = git.stash_pop(temp.path()).expect("stash pop");
         assert!(ok);
         assert!(temp.path().join("untracked.txt").exists());
+    }
+
+    #[test]
+    fn has_head_commit_is_false_on_unborn_head() {
+        let temp = tempdir().expect("temp dir");
+        run_git(temp.path(), &["init", "-b", "main"]);
+
+        let git = CliGit::new();
+        assert!(!git.has_head_commit(temp.path()).expect("has head commit"));
+        assert_eq!(
+            git.current_branch(temp.path()).expect("current branch"),
+            "main"
+        );
+    }
+
+    #[test]
+    fn has_head_commit_and_current_branch_work_after_first_commit() {
+        let temp = tempdir().expect("temp dir");
+        run_git(temp.path(), &["init", "-b", "main"]);
+        run_git(temp.path(), &["config", "user.name", "Test User"]);
+        run_git(temp.path(), &["config", "user.email", "test@example.com"]);
+
+        let git = CliGit::new();
+        assert_eq!(
+            git.current_branch(temp.path()).expect("current branch"),
+            "main"
+        );
+        assert!(!git.has_head_commit(temp.path()).expect("has head commit"));
+
+        git.create_empty_commit(temp.path(), "initial")
+            .expect("empty commit");
+
+        assert!(git.has_head_commit(temp.path()).expect("has head commit"));
+        assert_eq!(
+            git.current_branch(temp.path()).expect("current branch"),
+            "main"
+        );
+    }
+
+    #[test]
+    fn has_staged_changes_is_false_on_clean_tree_with_committed_files() {
+        let temp = tempdir().expect("temp dir");
+        run_git(temp.path(), &["init", "-b", "main"]);
+        run_git(temp.path(), &["config", "user.name", "Test User"]);
+        run_git(temp.path(), &["config", "user.email", "test@example.com"]);
+
+        fs::write(temp.path().join("file.txt"), "content\n").expect("write file");
+        run_git(temp.path(), &["add", "file.txt"]);
+        run_git(temp.path(), &["commit", "-m", "initial"]);
+
+        let git = CliGit::new();
+        assert!(
+            !git.has_staged_changes(temp.path())
+                .expect("has staged changes"),
+            "clean tree with committed files must not be reported as staged"
+        );
+    }
+
+    #[test]
+    fn has_staged_changes_is_true_on_unborn_head_with_staged_file() {
+        let temp = tempdir().expect("temp dir");
+        run_git(temp.path(), &["init", "-b", "main"]);
+        run_git(temp.path(), &["config", "user.name", "Test User"]);
+        run_git(temp.path(), &["config", "user.email", "test@example.com"]);
+
+        fs::write(temp.path().join("staged.txt"), "hello").expect("write");
+        run_git(temp.path(), &["add", "staged.txt"]);
+
+        let git = CliGit::new();
+        assert!(!git.has_head_commit(temp.path()).expect("has head commit"));
+        assert!(
+            git.has_staged_changes(temp.path())
+                .expect("has staged changes")
+        );
+    }
+
+    #[test]
+    fn has_staged_changes_is_false_on_unborn_head_with_empty_index() {
+        let temp = tempdir().expect("temp dir");
+        run_git(temp.path(), &["init", "-b", "main"]);
+
+        let git = CliGit::new();
+        assert!(!git.has_head_commit(temp.path()).expect("has head commit"));
+        assert!(
+            !git.has_staged_changes(temp.path())
+                .expect("has staged changes")
+        );
+    }
+
+    #[test]
+    fn has_staged_changes_is_true_after_commit_then_modify_and_stage() {
+        let temp = tempdir().expect("temp dir");
+        run_git(temp.path(), &["init", "-b", "main"]);
+        run_git(temp.path(), &["config", "user.name", "Test User"]);
+        run_git(temp.path(), &["config", "user.email", "test@example.com"]);
+
+        fs::write(temp.path().join("file.txt"), "initial\n").expect("write file");
+        run_git(temp.path(), &["add", "file.txt"]);
+        run_git(temp.path(), &["commit", "-m", "initial"]);
+
+        fs::write(temp.path().join("file.txt"), "modified\n").expect("modify file");
+        run_git(temp.path(), &["add", "file.txt"]);
+
+        let git = CliGit::new();
+        assert!(
+            git.has_staged_changes(temp.path())
+                .expect("has staged changes")
+        );
+    }
+
+    #[test]
+    fn ensure_on_local_branch_on_unborn_head_preserves_staged_files() {
+        let temp = tempdir().expect("temp dir");
+        run_git(temp.path(), &["init", "-b", "main"]);
+        run_git(temp.path(), &["config", "user.name", "Test User"]);
+        run_git(temp.path(), &["config", "user.email", "test@example.com"]);
+
+        // User has done `git add` before tsk start.
+        std::fs::write(temp.path().join("staged.txt"), "hello").expect("write");
+        run_git(temp.path(), &["add", "staged.txt"]);
+
+        let git = CliGit::new();
+        assert!(!git.has_head_commit(temp.path()).expect("has head commit"));
+
+        git.ensure_on_local_branch(temp.path(), "123-test")
+            .expect("rename unborn branch");
+
+        // HEAD is still unborn but now points at refs/heads/123-test.
+        assert!(!git.has_head_commit(temp.path()).expect("has head commit"));
+        assert_eq!(
+            git.current_branch(temp.path()).expect("current branch"),
+            "123-test"
+        );
+
+        // The staged file is still in the index, untouched.
+        let cached = git_command()
+            .arg("-C")
+            .arg(temp.path())
+            .args(["ls-files", "--cached"])
+            .output()
+            .expect("ls-files");
+        let cached = String::from_utf8_lossy(&cached.stdout);
+        assert!(
+            cached.contains("staged.txt"),
+            "staged file must remain in the index, got: {cached:?}"
+        );
+    }
+
+    #[test]
+    fn ensure_on_local_branch_with_existing_history_switches_to_new_branch() {
+        let temp = tempdir().expect("temp dir");
+        run_git(temp.path(), &["init", "-b", "main"]);
+        run_git(temp.path(), &["config", "user.name", "Test User"]);
+        run_git(temp.path(), &["config", "user.email", "test@example.com"]);
+
+        let git = CliGit::new();
+        git.create_empty_commit(temp.path(), "initial")
+            .expect("initial commit");
+
+        git.ensure_on_local_branch(temp.path(), "123-test")
+            .expect("switch to new branch");
+        assert_eq!(
+            git.current_branch(temp.path()).expect("current branch"),
+            "123-test"
+        );
+
+        // Switching to the same branch again is a no-op (idempotent).
+        git.ensure_on_local_branch(temp.path(), "123-test")
+            .expect("re-switch");
+        assert_eq!(
+            git.current_branch(temp.path()).expect("current branch"),
+            "123-test"
+        );
     }
 
     fn run_git(repo: &std::path::Path, args: &[&str]) {

@@ -1,3 +1,4 @@
+use crate::adapters::backend::BranchCreateOutcome;
 use crate::adapters::git::{CliGit, GitBackend};
 use crate::adapters::prompts::{DialoguerPrompts, PromptBackend};
 use crate::cli::BranchArgs;
@@ -199,22 +200,15 @@ pub(crate) async fn create_branch_for_issue(
     if let Some(ref pb) = branch_spinner {
         pb.finish_and_clear();
     }
-    match create_branch_result {
-        Ok(()) => {}
-        Err(ref e) if e.to_string().to_lowercase().contains("already exists") => {
-            crate::ui::info("remote branch already exists, continuing with local checkout");
-        }
-        Err(e) => return Err(e),
+    let outcome = create_branch_result?;
+    if outcome == BranchCreateOutcome::AlreadyExists {
+        crate::ui::info("remote branch already exists, continuing with local checkout");
     }
-    tracing::info!(branch = %slug, backend = %repo_project.name, "ensured remote branch exists");
-
-    if !git.branch_exists(repo.as_path(), &slug)? {
-        crate::ui::spin_on("Checking out branch", || {
-            git.fetch_and_checkout_tracking(repo.as_path(), &slug)
-        })?;
-    } else {
-        git.checkout(repo.as_path(), &slug)?;
+    if outcome == BranchCreateOutcome::EmptyRemote {
+        crate::ui::info("remote repository is empty; deferring remote setup until `tsk pr` runs");
     }
+    tracing::info!(branch = %slug, backend = %repo_project.name, ?outcome, "ensured remote branch exists");
+    checkout_branch_after_create(&git, repo.as_path(), &slug, outcome)?;
 
     issue.frontmatter.id_slug = Some(slug.clone());
     issue.frontmatter.branch = Some(slug.clone());
@@ -230,6 +224,34 @@ pub(crate) async fn create_branch_for_issue(
         &[path.as_std_path()],
     )?;
     Ok(slug)
+}
+
+fn checkout_branch_after_create(
+    git: &dyn GitBackend,
+    repo: &std::path::Path,
+    slug: &str,
+    outcome: BranchCreateOutcome,
+) -> Result<(), RiptaskError> {
+    match outcome {
+        BranchCreateOutcome::Created | BranchCreateOutcome::AlreadyExists => {
+            if !git.branch_exists(repo, slug)? {
+                crate::ui::spin_on("Checking out branch", || {
+                    git.fetch_and_checkout_tracking(repo, slug)
+                })?;
+            } else {
+                git.checkout(repo, slug)?;
+            }
+        }
+        BranchCreateOutcome::EmptyRemote => {
+            // Local-only setup: works for both unborn HEAD (renames the
+            // symbolic-ref) and existing-history (creates a new branch off
+            // the current commit).
+            crate::ui::spin_on("Setting up local branch", || {
+                git.ensure_on_local_branch(repo, slug)
+            })?;
+        }
+    }
+    Ok(())
 }
 
 async fn delete_branch(paths: &AppPaths, args: BranchArgs) -> Result<(), RiptaskError> {
@@ -449,7 +471,215 @@ pub(crate) fn is_protected_branch(branch: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_leading_issue_number;
+    use super::{checkout_branch_after_create, parse_leading_issue_number};
+    use crate::adapters::backend::BranchCreateOutcome;
+    use crate::adapters::git::GitBackend;
+    use crate::error::RiptaskError;
+    use std::path::Path;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone, Default)]
+    struct FakeGit {
+        branch_exists: bool,
+        has_head_commit: bool,
+        checkout_calls: Arc<Mutex<usize>>,
+        fetch_tracking_calls: Arc<Mutex<usize>>,
+        ensure_on_local_branch_calls: Arc<Mutex<usize>>,
+    }
+
+    impl FakeGit {
+        fn with_state(branch_exists: bool, has_head_commit: bool) -> Self {
+            Self {
+                branch_exists,
+                has_head_commit,
+                ..Self::default()
+            }
+        }
+    }
+
+    impl GitBackend for FakeGit {
+        fn init(&self, _path: &Path) -> Result<(), RiptaskError> {
+            unimplemented!()
+        }
+        fn add(&self, _repo: &Path, _files: &[&Path]) -> Result<(), RiptaskError> {
+            unimplemented!()
+        }
+        fn commit(&self, _repo: &Path, _message: &str) -> Result<(), RiptaskError> {
+            unimplemented!()
+        }
+        fn repo_root(&self, _cwd: &Path) -> Result<std::path::PathBuf, RiptaskError> {
+            unimplemented!()
+        }
+        fn merge_file(
+            &self,
+            _local: &Path,
+            _base: &Path,
+            _remote: &Path,
+        ) -> Result<String, RiptaskError> {
+            unimplemented!()
+        }
+        fn has_changes(&self, _repo: &Path) -> Result<bool, RiptaskError> {
+            unimplemented!()
+        }
+        fn has_uncommitted_changes(&self, _repo: &Path) -> Result<bool, RiptaskError> {
+            unimplemented!()
+        }
+        fn pull(&self, _repo: &Path) -> Result<(), RiptaskError> {
+            unimplemented!()
+        }
+        fn push(&self, _repo: &Path) -> Result<(), RiptaskError> {
+            unimplemented!()
+        }
+        fn checkout(&self, _repo: &Path, _branch: &str) -> Result<(), RiptaskError> {
+            *self.checkout_calls.lock().expect("lock") += 1;
+            Ok(())
+        }
+        fn create_branch(&self, _repo: &Path, _name: &str) -> Result<(), RiptaskError> {
+            unimplemented!()
+        }
+        fn ensure_on_local_branch(&self, _repo: &Path, _slug: &str) -> Result<(), RiptaskError> {
+            *self.ensure_on_local_branch_calls.lock().expect("lock") += 1;
+            Ok(())
+        }
+        fn branch_exists(&self, _repo: &Path, _name: &str) -> Result<bool, RiptaskError> {
+            Ok(self.branch_exists)
+        }
+        fn fetch_and_checkout_tracking(
+            &self,
+            _repo: &Path,
+            _branch: &str,
+        ) -> Result<(), RiptaskError> {
+            *self.fetch_tracking_calls.lock().expect("lock") += 1;
+            Ok(())
+        }
+        fn push_with_upstream(&self, _repo: &Path, _branch: &str) -> Result<(), RiptaskError> {
+            unimplemented!()
+        }
+        fn has_working_tree_changes(&self, _repo: &Path) -> Result<bool, RiptaskError> {
+            unimplemented!()
+        }
+        fn diff_names(&self, _repo: &Path) -> Result<Vec<String>, RiptaskError> {
+            unimplemented!()
+        }
+        fn current_branch(&self, _repo: &Path) -> Result<String, RiptaskError> {
+            unimplemented!()
+        }
+        fn remote_url(&self, _repo: &Path, _remote: &str) -> Result<String, RiptaskError> {
+            unimplemented!()
+        }
+        fn delete_local_branch(
+            &self,
+            _repo: &Path,
+            _branch: &str,
+            _force: bool,
+        ) -> Result<(), RiptaskError> {
+            unimplemented!()
+        }
+        fn has_staged_changes(&self, _repo: &Path) -> Result<bool, RiptaskError> {
+            unimplemented!()
+        }
+        fn stage_all(&self, _repo: &Path) -> Result<(), RiptaskError> {
+            unimplemented!()
+        }
+        fn is_branch_merged(
+            &self,
+            _repo: &Path,
+            _branch: &str,
+            _base: &str,
+        ) -> Result<bool, RiptaskError> {
+            unimplemented!()
+        }
+        fn fetch(&self, _repo: &Path) -> Result<(), RiptaskError> {
+            unimplemented!()
+        }
+        fn commits_ahead_of_base(
+            &self,
+            _repo: &Path,
+            _branch: &str,
+            _base: &str,
+        ) -> Result<u64, RiptaskError> {
+            unimplemented!()
+        }
+        fn create_empty_commit(&self, _repo: &Path, _message: &str) -> Result<(), RiptaskError> {
+            unimplemented!()
+        }
+        fn push_orphan_initial_branch(
+            &self,
+            _repo: &Path,
+            _ref_name: &str,
+            _message: &str,
+        ) -> Result<(), RiptaskError> {
+            unimplemented!()
+        }
+        fn find_commit_by_subject(
+            &self,
+            _repo: &Path,
+            _branch: &str,
+            _base: &str,
+            _subject: &str,
+        ) -> Result<Option<String>, RiptaskError> {
+            unimplemented!()
+        }
+        fn rebase_drop_commit(
+            &self,
+            _repo: &Path,
+            _commit_sha: &str,
+            _branch: &str,
+        ) -> Result<(), RiptaskError> {
+            unimplemented!()
+        }
+        fn force_push_with_lease(&self, _repo: &Path, _branch: &str) -> Result<(), RiptaskError> {
+            unimplemented!()
+        }
+        fn force_push(&self, _repo: &Path, _branch: &str) -> Result<(), RiptaskError> {
+            unimplemented!()
+        }
+        fn log_between(
+            &self,
+            _repo: &Path,
+            _base: &str,
+            _head: &str,
+        ) -> Result<String, RiptaskError> {
+            unimplemented!()
+        }
+        fn diff_between(
+            &self,
+            _repo: &Path,
+            _base: &str,
+            _head: &str,
+        ) -> Result<String, RiptaskError> {
+            unimplemented!()
+        }
+        fn working_tree_diff(&self, _repo: &Path) -> Result<String, RiptaskError> {
+            unimplemented!()
+        }
+        fn staged_diff(&self, _repo: &Path) -> Result<String, RiptaskError> {
+            unimplemented!()
+        }
+        fn head_sha(&self, _repo: &Path) -> Result<String, RiptaskError> {
+            unimplemented!()
+        }
+        fn has_head_commit(&self, _repo: &Path) -> Result<bool, RiptaskError> {
+            Ok(self.has_head_commit)
+        }
+        fn remote_has_any_refs(&self, _repo: &Path) -> Result<bool, RiptaskError> {
+            unimplemented!()
+        }
+        fn clone_with_reference(
+            &self,
+            _reference_repo: &Path,
+            _remote_url: &str,
+            _target_dir: &Path,
+        ) -> Result<(), RiptaskError> {
+            unimplemented!()
+        }
+        fn stash_push(&self, _repo: &Path, _message: &str) -> Result<bool, RiptaskError> {
+            unimplemented!()
+        }
+        fn stash_pop(&self, _repo: &Path) -> Result<bool, RiptaskError> {
+            unimplemented!()
+        }
+    }
 
     #[test]
     fn parses_number_prefix_with_slug() {
@@ -471,5 +701,63 @@ mod tests {
     #[test]
     fn rejects_empty() {
         assert_eq!(parse_leading_issue_number(""), None);
+    }
+
+    #[test]
+    fn created_branch_fetches_tracking_branch() {
+        let git = FakeGit::with_state(false, true);
+        checkout_branch_after_create(
+            &git,
+            Path::new("."),
+            "123-test",
+            BranchCreateOutcome::Created,
+        )
+        .expect("checkout");
+        assert_eq!(*git.fetch_tracking_calls.lock().expect("lock"), 1);
+        assert_eq!(*git.checkout_calls.lock().expect("lock"), 0);
+    }
+
+    #[test]
+    fn already_existing_local_branch_checks_it_out() {
+        let git = FakeGit::with_state(true, true);
+        checkout_branch_after_create(
+            &git,
+            Path::new("."),
+            "123-test",
+            BranchCreateOutcome::AlreadyExists,
+        )
+        .expect("checkout");
+        assert_eq!(*git.fetch_tracking_calls.lock().expect("lock"), 0);
+        assert_eq!(*git.checkout_calls.lock().expect("lock"), 1);
+    }
+
+    #[test]
+    fn empty_remote_with_unborn_head_renames_to_slug() {
+        // On unborn HEAD, ensure_on_local_branch rewrites HEAD's symref so
+        // the user is on the issue branch without making a commit.
+        let git = FakeGit::with_state(false, false);
+        checkout_branch_after_create(
+            &git,
+            Path::new("."),
+            "123-test",
+            BranchCreateOutcome::EmptyRemote,
+        )
+        .expect("checkout");
+        assert_eq!(*git.fetch_tracking_calls.lock().expect("lock"), 0);
+        assert_eq!(*git.ensure_on_local_branch_calls.lock().expect("lock"), 1);
+    }
+
+    #[test]
+    fn empty_remote_with_existing_history_creates_local_branch() {
+        let git = FakeGit::with_state(false, true);
+        checkout_branch_after_create(
+            &git,
+            Path::new("."),
+            "123-test",
+            BranchCreateOutcome::EmptyRemote,
+        )
+        .expect("checkout");
+        assert_eq!(*git.ensure_on_local_branch_calls.lock().expect("lock"), 1);
+        assert_eq!(*git.fetch_tracking_calls.lock().expect("lock"), 0);
     }
 }
