@@ -25,6 +25,13 @@ pub enum DeleteOutcome {
     SoftClosed,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BranchCreateOutcome {
+    Created,
+    AlreadyExists,
+    EmptyRemote,
+}
+
 /// Canonical representation of a remote issue, used as the exchange format
 /// between any backend (GitHub/GitLab/Jira) and the local issue store.
 /// Fields that don't apply to a particular backend are set to `None`/empty.
@@ -236,7 +243,7 @@ pub trait VersionControl: Send + Sync {
         branch_name: &str,
         base_ref: &str,
         issue_id: Option<u64>,
-    ) -> Result<(), RiptaskError>;
+    ) -> Result<BranchCreateOutcome, RiptaskError>;
     async fn default_branch(&self, repo: &str) -> Result<String, RiptaskError>;
     async fn delete_branch(&self, repo: &str, branch_name: &str) -> Result<(), RiptaskError>;
 }

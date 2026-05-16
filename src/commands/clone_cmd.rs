@@ -1,3 +1,4 @@
+use crate::adapters::backend::BranchCreateOutcome;
 use crate::adapters::git::{CliGit, GitBackend};
 use crate::cli::CloneArgs;
 use crate::commands::branch::{backend_issue_number, cwd_utf8};
@@ -69,9 +70,15 @@ pub async fn run(paths: &AppPaths, args: CloneArgs) -> Result<(), RiptaskError> 
         pb.finish_and_clear();
     }
     match create_branch_result {
-        Ok(()) => {}
-        Err(ref error) if error.to_string().to_lowercase().contains("already exists") => {
+        Ok(BranchCreateOutcome::Created) => {}
+        Ok(BranchCreateOutcome::AlreadyExists) => {
             crate::ui::info("remote branch already exists, continuing with work-clone creation");
+        }
+        Ok(BranchCreateOutcome::EmptyRemote) => {
+            return Err(RiptaskError::Config(
+                "cannot clone work-tree for empty remote; bootstrap the repository first by running `tsk pr` in the primary clone"
+                    .into(),
+            ));
         }
         Err(error) => return Err(error),
     }

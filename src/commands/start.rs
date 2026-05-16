@@ -110,7 +110,45 @@ pub async fn run(paths: &AppPaths, mut args: StartArgs) -> Result<(), RiptaskErr
     }
 
     // Create branch
-    let _branch = branch::create_branch_for_issue(paths, &id).await?;
+    let slug = branch::create_branch_for_issue(paths, &id).await?;
+
+    // If the remote has no refs, skip auto-PR creation: there is nothing to
+    // open a PR against yet, and any orphan-bootstrap dance happening here
+    // would just produce an empty PR before the user has done their first
+    // commit. The user commits their actual work, then runs `tsk pr`, which
+    // bootstraps the remote and opens the PR in one shot.
+    let repo = id_resolution::current_repo()?;
+    let git = CliGit::with_auth(crate::services::backend_mapping::resolve_git_auth(
+        &repo_project.vc_backend,
+        &repo_project.name,
+    ));
+    if !git.remote_has_any_refs(repo.as_path())? {
+        crate::ui::info(&format!(
+            "Issue branch `{slug}` ready. Commit your work, then run `tsk pr` to open the PR."
+        ));
+        return Ok(());
+    }
+
+    // Even with a populated remote, skip auto-PR creation when the issue branch
+    // shares its HEAD with the default branch (no commits ahead). Opening a PR
+    // here would require synthesizing a placeholder commit on the issue branch,
+    // which is unsound: at merge time it gets rebase-dropped and exposes the
+    // underlying "nothing to merge" state. The user commits real work first,
+    // then runs `tsk pr` against a branch that has something to diff.
+    let provider = build_version_control(&repo_project.vc_backend, &repo_project.name)?;
+    let repo_name = repo_project.vc_backend.repo.as_deref().unwrap_or_default();
+    let default_branch = crate::ui::spin_on_async("Fetching default branch", async {
+        provider.default_branch(repo_name).await
+    })
+    .await?;
+    if slug != default_branch
+        && git.commits_ahead_of_base(repo.as_path(), &slug, &default_branch)? == 0
+    {
+        crate::ui::info(&format!(
+            "Issue branch `{slug}` ready. Commit your work, then run `tsk pr` to open the PR."
+        ));
+        return Ok(());
+    }
 
     // Create PR
     pr::create(
@@ -148,9 +186,18 @@ async fn should_auto_create_from_changes(
         return false;
     };
     let git = CliGit::new();
+    let Ok(has_head_commit) = git.has_head_commit(repo.as_path()) else {
+        return false;
+    };
+    if !has_head_commit {
+        return false;
+    }
     let Ok(current) = git.current_branch(repo.as_path()) else {
         return false;
     };
+    if current == "HEAD" {
+        return false;
+    }
     let repo_name = repo_project.vc_backend.repo.as_deref().unwrap_or_default();
     let Ok(default) = crate::ui::spin_on_async("Checking default branch", async {
         provider.default_branch(repo_name).await

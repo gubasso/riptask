@@ -1,6 +1,6 @@
 use crate::adapters::backend::{
-    BackendIssueRecord, BackendIssueUpsert, BackendPrRecord, DeleteOutcome, IssueTracker,
-    MergeMethod, PrCheckItem, PrChecksReport, PrChecksStatus, VersionControl,
+    BackendIssueRecord, BackendIssueUpsert, BackendPrRecord, BranchCreateOutcome, DeleteOutcome,
+    IssueTracker, MergeMethod, PrCheckItem, PrChecksReport, PrChecksStatus, VersionControl,
 };
 use crate::error::RiptaskError;
 use async_trait::async_trait;
@@ -213,6 +213,16 @@ impl GitlabProvider {
             }
         }
     }
+}
+
+fn classify_gitlab_branch_error<T>(error: &ApiError<T>) -> Option<BranchCreateOutcome>
+where
+    T: std::error::Error + Send + Sync + 'static,
+{
+    let message = error.to_string().to_lowercase();
+    message
+        .contains("already exists")
+        .then_some(BranchCreateOutcome::AlreadyExists)
 }
 
 #[async_trait]
@@ -624,7 +634,7 @@ impl VersionControl for GitlabProvider {
         branch_name: &str,
         base_ref: &str,
         _issue_id: Option<u64>,
-    ) -> Result<(), RiptaskError> {
+    ) -> Result<BranchCreateOutcome, RiptaskError> {
         let client = self.client().await?;
         let endpoint = gitlab::api::projects::repository::branches::CreateBranch::builder()
             .project(repo)
@@ -632,11 +642,16 @@ impl VersionControl for GitlabProvider {
             .ref_(base_ref)
             .build()
             .map_err(|e| RiptaskError::Config(e.to_string()))?;
-        let _: serde_json::Value = endpoint
-            .query_async(&client)
-            .await
-            .map_err(|e| RiptaskError::Unreachable(e.to_string()))?;
-        Ok(())
+        let _: serde_json::Value = match endpoint.query_async(&client).await {
+            Ok(value) => value,
+            Err(error) => {
+                if let Some(outcome) = classify_gitlab_branch_error(&error) {
+                    return Ok(outcome);
+                }
+                return Err(RiptaskError::Unreachable(error.to_string()));
+            }
+        };
+        Ok(BranchCreateOutcome::Created)
     }
 
     async fn default_branch(&self, repo: &str) -> Result<String, RiptaskError> {
