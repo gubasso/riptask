@@ -352,19 +352,7 @@ async fn merge(paths: &AppPaths, args: PrMergeArgs) -> Result<(), RiptaskError> 
         &repo_project.name,
     ));
     let repo_path = current_repo()?;
-    let stashed = if git.has_working_tree_changes(repo_path.as_path())? {
-        let current_branch = git.current_branch(repo_path.as_path()).unwrap_or_default();
-        let msg = format!(
-            "tsk pr merge: auto-stash ({} on {}) [{}]",
-            issue.frontmatter.id,
-            current_branch,
-            now_utc()
-        );
-        ui::info(&format!("stashing uncommitted changes: {msg}"));
-        git.stash_push(repo_path.as_path(), &msg)?
-    } else {
-        false
-    };
+    crate::adapters::git::require_clean_working_tree(&git, repo_path.as_path(), "tsk pr merge")?;
     let provider = build_hosted_provider(&repo_project.vc_backend, &repo_project.name)?;
     let repo_name = repo_project.vc_backend.repo.as_deref().unwrap_or_default();
     let pr_number = resolve_pr_number(provider.as_ref(), repo_name, &issue).await?;
@@ -388,9 +376,6 @@ async fn merge(paths: &AppPaths, args: PrMergeArgs) -> Result<(), RiptaskError> 
         &opts,
     )
     .await;
-    if stashed {
-        crate::adapters::git::try_stash_pop(&git, repo_path.as_path());
-    }
     result.map(|_| ())
 }
 
