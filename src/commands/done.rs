@@ -156,21 +156,8 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptaskError> {
         &repo_project.name,
     ));
     let repo_dir = current_repo()?;
+    crate::adapters::git::require_clean_working_tree(&git, repo_dir.as_path(), "tsk done")?;
     let original_branch = git.current_branch(repo_dir.as_path()).ok();
-
-    let stashed = if git.has_working_tree_changes(repo_dir.as_path())? {
-        let current_branch = git.current_branch(repo_dir.as_path()).unwrap_or_default();
-        let msg = format!(
-            "tsk done: auto-stash ({} on {}) [{}]",
-            id,
-            current_branch,
-            now_utc()
-        );
-        crate::ui::info(&format!("stashing uncommitted changes: {msg}"));
-        git.stash_push(repo_dir.as_path(), &msg)?
-    } else {
-        false
-    };
 
     let result = async {
         let (issue, pr_number) = ensure_pr_number(
@@ -342,9 +329,6 @@ pub async fn run(paths: &AppPaths, args: DoneArgs) -> Result<(), RiptaskError> {
         crate::ui::warn(&format!(
             "failed to restore original branch {orig}: {error}"
         ));
-    }
-    if stashed {
-        crate::adapters::git::try_stash_pop(&git, repo_dir.as_path());
     }
     result
 }

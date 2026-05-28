@@ -799,8 +799,15 @@ impl GitBackend for CliGit {
             return Ok(true);
         }
         let stderr = String::from_utf8_lossy(&output.stderr);
-        // Conflicts during apply: stash is preserved, user must resolve manually
-        if stderr.contains("CONFLICT") || stderr.contains("could not apply") {
+        // Recoverable failures preserve the stash; user resolves manually.
+        // Covers both apply conflicts ("CONFLICT", "could not apply") and
+        // untracked-file path collisions ("could not restore untracked files
+        // from stash"), which otherwise silently orphan the stash.
+        let lower = stderr.to_ascii_lowercase();
+        if lower.contains("conflict")
+            || lower.contains("could not apply")
+            || lower.contains("could not restore")
+        {
             return Ok(false);
         }
         Err(RiptaskError::General(format!(
@@ -810,14 +817,37 @@ impl GitBackend for CliGit {
     }
 }
 
+/// Refuse to proceed if the working tree has any uncommitted state (staged,
+/// unstaged, or untracked). Names `command` in the error so the user knows
+/// which step refused to run, and lists explicit recovery options.
+pub fn require_clean_working_tree(
+    git: &dyn GitBackend,
+    repo: &Path,
+    command: &str,
+) -> Result<(), RiptaskError> {
+    if git.has_working_tree_changes(repo)? {
+        return Err(RiptaskError::General(format!(
+            "`{command}` refuses to run with uncommitted changes in the working tree. \
+             Inspect with `git status`, then choose one: \
+             `git commit` to keep them, \
+             `git stash push --include-untracked` to set them aside, or \
+             `git reset --hard && git clean -fd` to discard everything (destructive: \
+             drops staged, unstaged, and untracked changes)."
+        )));
+    }
+    Ok(())
+}
+
 /// Attempt to pop an auto-stashed entry, printing a user-friendly message on success or failure.
 pub fn try_stash_pop(git: &dyn GitBackend, repo: &Path) {
     match git.stash_pop(repo) {
         Ok(true) => crate::ui::success("restored auto-stashed changes"),
         Ok(false) => crate::ui::warn(
-            "auto-stashed changes conflicted; resolve the conflicts, then run `git stash drop` to remove the stash entry",
+            "auto-stashed changes were not restored; inspect with `git stash list` and recover with `git stash pop` after resolving any conflicts",
         ),
-        Err(e) => crate::ui::warn(&format!("failed to restore stashed changes: {e}")),
+        Err(e) => crate::ui::warn(&format!(
+            "failed to restore stashed changes: {e}; inspect with `git stash list` and recover with `git stash pop`"
+        )),
     }
 }
 
@@ -934,7 +964,9 @@ fn build_askpass_script(token: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{CliGit, GitBackend, build_askpass_script, git_command};
+    use super::{
+        CliGit, GitBackend, build_askpass_script, git_command, require_clean_working_tree,
+    };
     use std::fs;
     use tempfile::tempdir;
 
@@ -1226,6 +1258,91 @@ mod tests {
         let ok = git.stash_pop(temp.path()).expect("stash pop");
         assert!(ok);
         assert!(temp.path().join("untracked.txt").exists());
+    }
+
+    #[test]
+    fn stash_pop_returns_ok_false_on_untracked_collision() {
+        // Regression for the silent-data-loss bug: when `git stash pop` cannot
+        // restore an untracked entry because a same-named file already exists
+        // in the working tree, git emits "could not restore untracked files
+        // from stash" and exits non-zero. The classifier must treat this as
+        // recoverable (Ok(false)) so callers know the stash is preserved, not
+        // map it to Err which discards the recovery context.
+        let temp = tempdir().expect("temp dir");
+        run_git(temp.path(), &["init"]);
+        run_git(temp.path(), &["config", "user.name", "Test User"]);
+        run_git(temp.path(), &["config", "user.email", "test@example.com"]);
+
+        fs::write(temp.path().join("tracked.txt"), "content\n").expect("write tracked");
+        run_git(temp.path(), &["add", "tracked.txt"]);
+        run_git(temp.path(), &["commit", "-m", "initial"]);
+
+        fs::write(temp.path().join("collide.txt"), "from-stash\n").expect("write untracked");
+
+        let git = CliGit::new();
+        let created = git
+            .stash_push(temp.path(), "untracked collision")
+            .expect("stash push");
+        assert!(created);
+        assert!(!temp.path().join("collide.txt").exists());
+
+        // Recreate the same path so the stash cannot be restored cleanly.
+        fs::write(temp.path().join("collide.txt"), "from-tree\n").expect("recreate collision");
+
+        let outcome = git.stash_pop(temp.path()).expect("stash pop classified");
+        assert!(
+            !outcome,
+            "untracked collision must be reported as recoverable (Ok(false))"
+        );
+
+        // Stash must remain available for manual recovery.
+        let list = git_command()
+            .arg("-C")
+            .arg(temp.path())
+            .args(["stash", "list"])
+            .output()
+            .expect("git stash list");
+        assert!(list.status.success());
+        let stdout = String::from_utf8_lossy(&list.stdout);
+        assert!(
+            !stdout.trim().is_empty(),
+            "stash entry should be preserved after recoverable pop failure, got: {stdout:?}"
+        );
+    }
+
+    #[test]
+    fn require_clean_working_tree_errors_when_dirty() {
+        let temp = tempdir().expect("temp dir");
+        run_git(temp.path(), &["init"]);
+        run_git(temp.path(), &["config", "user.name", "Test User"]);
+        run_git(temp.path(), &["config", "user.email", "test@example.com"]);
+        fs::write(temp.path().join("tracked.txt"), "content\n").expect("write tracked");
+        run_git(temp.path(), &["add", "tracked.txt"]);
+        run_git(temp.path(), &["commit", "-m", "initial"]);
+
+        // Untracked file alone must trip the gate.
+        fs::write(temp.path().join("scratch.log"), "noise\n").expect("write untracked");
+
+        let git = CliGit::new();
+        let err = require_clean_working_tree(&git, temp.path(), "tsk pr merge")
+            .expect_err("dirty tree must error");
+        let msg = err.to_string();
+        assert!(msg.contains("tsk pr merge"), "message names command: {msg}");
+        assert!(msg.contains("git status"), "message hints recovery: {msg}");
+    }
+
+    #[test]
+    fn require_clean_working_tree_passes_on_clean_tree() {
+        let temp = tempdir().expect("temp dir");
+        run_git(temp.path(), &["init"]);
+        run_git(temp.path(), &["config", "user.name", "Test User"]);
+        run_git(temp.path(), &["config", "user.email", "test@example.com"]);
+        fs::write(temp.path().join("tracked.txt"), "content\n").expect("write tracked");
+        run_git(temp.path(), &["add", "tracked.txt"]);
+        run_git(temp.path(), &["commit", "-m", "initial"]);
+
+        let git = CliGit::new();
+        require_clean_working_tree(&git, temp.path(), "tsk done").expect("clean tree allowed");
     }
 
     #[test]
